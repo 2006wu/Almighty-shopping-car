@@ -15,6 +15,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('world', default_value=share+'/worlds/supermarket.sdf'),
         DeclareLaunchArgument('headless', default_value='true'),
+        DeclareLaunchArgument('person', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         SetEnvironmentVariable('IGN_GAZEBO_RESOURCE_PATH', share+'/worlds:'+description+':'+os.environ.get('IGN_GAZEBO_RESOURCE_PATH', '')),
         ExecuteProcess(cmd=['ign', 'gazebo', '-s', '-r', LaunchConfiguration('world')], condition=IfCondition(LaunchConfiguration('headless')), output='screen'),
@@ -23,4 +24,4 @@ def generate_launch_description():
         Node(package='ros_gz_sim', executable='create', arguments=['-world', 'supermarket', '-name', 'shopping_robot', '-topic', '/robot_description', '-x', '0', '-y', '0', '-z', '0.02', '-Y', '0'], parameters=[{'use_sim_time': time}], output='screen'),
         Node(package='ros_gz_bridge', executable='parameter_bridge', parameters=[{'config_file': share+'/config/bridge.yaml', 'use_sim_time': time}], output='screen'),
         Node(package='tf2_ros', executable='static_transform_publisher', arguments=['0', '0', '0', '0', '0', '0', 'odom', 'sim_world'], parameters=[{'use_sim_time': time}]),
-        Node(package='shopping_uwb_follow', executable='person_path_node', parameters=[{'use_sim_time': time, 'person_path': share+'/config/person_path.yaml'}], output='screen')])
+        Node(package='shopping_uwb_follow', executable='person_path_node', condition=IfCondition(LaunchConfiguration('person')), parameters=[{'use_sim_time': time, 'person_path': share+'/config/person_path.yaml'}], output='screen')])

@@ -61,7 +61,7 @@ class FollowController:
             state, reason = 'TOO_CLOSE', 'Target inside stop distance'
         elif math.isnan(obstacle) or obstacle <= p.obstacle_stop_distance:
             state, reason = 'OBSTACLE_STOP', 'Obstacle or unavailable scan'
-        if state != 'FOLLOWING':
+        if state not in ('FOLLOWING', 'OBSTACLE_STOP') or math.isnan(obstacle):
             self.v = self.w = 0.0
             return self.v, self.w, state, reason
         if not math.isfinite(dt) or dt <= 0:
@@ -69,6 +69,9 @@ class FollowController:
             return 0.0, 0.0, 'IDLE', 'Invalid control interval'
         distance, bearing = math.hypot(*target), math.atan2(target[1], target[0])
         v = min(p.max_linear, max(0.0, p.kp_distance*(distance-p.follow_distance))) * max(0.0, math.cos(bearing))
+        if state == 'OBSTACLE_STOP':
+            self.v = v = 0.0
+            reason = 'Obstacle: translation stopped, turning toward target'
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))

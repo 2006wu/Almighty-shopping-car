@@ -58,13 +58,22 @@ def test_zone_free_with_robot_clearance(zone):
 def test_spawn_pose_is_origin_and_free():
     launch = (SRC/'shopping_robot_gazebo/launch/sim.launch.py').read_text()
     assert "'-x', '0', '-y', '0', '-z', '0.02', '-Y', '0'" in launch
-    assert_free(0, 0, 0.55)
+    assert_free(0, 0, 0.7)
+    # Include the laser offset and the full front sector out to 0.7 m.
+    for degrees in range(-30, 31):
+        angle = math.radians(degrees)
+        assert_free(0.18+0.7*math.cos(angle), 0.7*math.sin(angle), 0.01)
 
 
 def test_entire_person_loop_and_initial_model_pose():
     points = PATH['waypoints']
     initial = list(map(float, WORLD.findtext("model[@name='person']/pose").split()))
-    assert initial[:2] == points[0]
+    assert points[0] == [1.5, 0.0]
+    assert points[1][0] > points[0][0] and points[1][1] == 0
+    # The disabled person must be outside the store and the lidar range.
+    assert abs(initial[0]-FLOOR_POSE[0]) > FLOOR_SIZE[0]/2+0.25
+    assert abs(initial[1]-FLOOR_POSE[1]) > FLOOR_SIZE[1]/2+0.25
+    assert math.hypot(*initial[:2])-0.25 > 12
     assert PATH['speed'] > 0
     # Sampling every <=2 cm checks connecting segments and the closing edge too.
     for a, b in zip(points, points[1:]+points[:1]):

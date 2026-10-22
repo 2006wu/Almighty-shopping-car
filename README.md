@@ -72,6 +72,8 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ./scripts/dev.sh follow
 ```
 
+`sim.launch.py`、`mapping.launch.py` 與 `guide.launch.py` 預設 `person:=false`：人物停放在店外 `(20, 20)`，不啟動路徑節點，避免人物碰撞幾何寫入地圖或擋住導航。需要動態障礙測試時可明確啟用，例如 `ros2 launch shopping_robot_bringup guide.launch.py person:=true`。`follow.launch.py` 固定傳入 `person:=true`，人物路徑從出生點正前方約 1.5 公尺的 `(1.5, 0)` 開始，首段沿前方橫向通道向 +x 移動。
+
 人物是本機圓柱幾何模型，不需連線下載 Fuel 素材。路徑唯一來源為 `shopping_robot_gazebo/config/person_path.yaml`；模擬人物與 UWB 使用相同模擬時間插值。人物會循環走過三條走道；測試直接解析 SDF 碰撞盒，驗證區域有 0.55 公尺淨空、人物整條路徑有 0.30 公尺淨空。`uwb_follow.yaml` 可調整噪聲、偏差、NLOS、掉包及錨點陣列；兩錨點實驗須同時縮短 `anchor_x/anchor_y`，並將車體 xacro 的 `anchor_count` 改成 2 或以 xacro 參數產生相符模型。錨點移位時也需同步修改 xacro 的錨點屬性。這是平面測距模型，尚未模擬高度差與完整無線電傳播。
 
 ## 受限網路的 ROS 套件鏡像
@@ -101,7 +103,9 @@ Linux 若需 sudo，可執行 `env DOCKER='sudo docker' ./scripts/dev.sh up`。�
 
 ## 安全與驗證狀態
 
-所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，只有 follow launch 主動啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失、資料過期或前方障礙過近時立即輸出零速度；雷射未收到、前方無有效資料或超時也停止。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，只有 follow launch 主動啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+
+跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它將 base_link 估測值轉到 odom 與真值比較；目前假設 sim_world 與 odom 起點對齊，結果包含里程計漂移及時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
 本階段尚無模式管理器，請勿讓 Nav2、鍵盤控制與跟隨同時發布 `/cmd_vel`。跟隨目前是前方障礙停車，不會自主繞行；模式切換、命令仲裁、獨立命令逾時看門狗與恢復行為列於後續階段。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
 

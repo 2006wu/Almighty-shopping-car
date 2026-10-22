@@ -45,10 +45,10 @@ EOF
     workspace_task colcon test-result --verbose
     ;;
   test) workspace_task bash /repo/scripts/run_unit_tests.sh python3 "$@" ;;
-  sim) run xvfb-run -a ros2 launch shopping_robot_gazebo sim.launch.py "$@" ;;
-  mapping|slam) run xvfb-run -a ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
-  guide|nav) run xvfb-run -a ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
-  follow) run xvfb-run -a ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
+  sim) run xvfb-run -a -n 50 ros2 launch shopping_robot_gazebo sim.launch.py "$@" ;;
+  mapping|slam) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
+  guide|nav) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
+  follow) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
   goto)
     [[ $# == 1 ]] || { echo 'Usage: dev.sh goto ZONE' >&2; exit 2; }
     run ros2 run shopping_zone_manager goto_zone "$1" --ros-args -p use_sim_time:=true

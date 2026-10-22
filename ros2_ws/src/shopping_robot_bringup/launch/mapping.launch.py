@@ -15,5 +15,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument('headless', default_value='true'),
-        include('shopping_robot_gazebo', 'sim.launch.py', {'use_sim_time': time, 'headless': LaunchConfiguration('headless')}),
+        DeclareLaunchArgument('person', default_value='false'),
+        include('shopping_robot_gazebo', 'sim.launch.py', {'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person')}),
         include('shopping_robot_slam', 'slam.launch.py', {'mode': 'mapping', 'use_sim_time': time})])
