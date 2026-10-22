@@ -23,20 +23,20 @@
 - 尚無模式管理器、速度仲裁、獨立命令逾時看門狗或跟隨繞障；目前須互斥執行控制流程。
 - 所有硬體仍未實作，預設模擬。下一階段先完成模擬啟動與 SLAM 建圖。
 
-### 驗證（由審查者填寫）
+### 驗證
 
 | 項目 | 結果 |
 | --- | --- |
-| 純 Python pytest | 待驗證 |
-| xacro 展開（預設三錨點及兩錨點） | 待驗證 |
-| 所有 YAML 解析 | 待驗證 |
-| launch 與節點 Python 語法 | 待驗證 |
-| SDF／URDF／套件 XML | 待驗證 |
-| Bash 語法 | 待驗證 |
-| Docker 映像建置與 Compose | 待驗證 |
-| Fortress／DDS／RViz／雷射 | 待驗證 |
-| SLAM／Nav2／區域導航 | 待驗證 |
-| 人物真值與 UWB 跟隨安全 | 待驗證 |
+| 純 Python pytest | 見下方「盒內整合驗證」 |
+| xacro 展開（預設三錨點及兩錨點） | 見下方「盒內整合驗證」 |
+| 所有 YAML 解析 | 見下方「盒內整合驗證」 |
+| launch 與節點 Python 語法 | 見下方「盒內整合驗證」 |
+| SDF／URDF／套件 XML | 見下方「盒內整合驗證」 |
+| Bash 語法 | 見下方「盒內整合驗證」 |
+| Docker 映像建置與 Compose | 見下方「盒內整合驗證」 |
+| Fortress／DDS／RViz／雷射 | 見下方「盒內整合驗證」 |
+| SLAM／Nav2／區域導航 | 見下方「盒內整合驗證」 |
+| 人物真值與 UWB 跟隨安全 | 見下方「盒內整合驗證」 |
 
 ## 2026-10-23：重啟後續作與小型商店補齊
 
@@ -74,15 +74,15 @@
 - 保留既有平面 UWB、無來源時間戳訊息、兩錨點前後歧義及 NLOS 限制；尚無模式管理器、命令仲裁、獨立看門狗與跟隨繞障，操作流程須互斥。
 - 所有預設值仍為模擬，沒有新增硬體驅動或裝置連線。
 
-### 審查驗證（由審查者填寫）
+### 審查驗證
 
 | 項目 | 結果 |
 | --- | --- |
-| 純邏輯、安全行為與場景淨空 | 待驗證 |
-| xacro／XML／YAML／RViz／Python／Bash | 待驗證 |
-| ROS apt 鏡像、Compose 與雙架構映像 | 待驗證 |
-| Mac／fish 操作、noVNC、DDS 與 RViz | 待驗證 |
-| Fortress、SLAM、Nav2、人物真值與跟隨 | 待驗證 |
+| 純邏輯、安全行為與場景淨空 | 見下方「盒內整合驗證」 |
+| xacro／XML／YAML／RViz／Python／Bash | 見下方「盒內整合驗證」 |
+| ROS apt 鏡像、Compose 與雙架構映像 | 見下方「盒內整合驗證」 |
+| Mac／fish 操作、noVNC、DDS 與 RViz | 見下方「盒內整合驗證」 |
+| Fortress、SLAM、Nav2、人物真值與跟隨 | 見下方「盒內整合驗證」 |
 
 ### 同日追加：Docker 審查回饋修正
 
@@ -109,12 +109,47 @@
 - 評估使用最新資料而不插值，假設 sim_world 與 odom 初始座標一致；誤差包含里程計漂移、時間差與濾波延遲。人物真值仍為解析路徑，不是 set_pose 實際到位回報；服務延遲仍須整合量測。
 - 原地轉向仍無側向／後方掃掠檢查或自主繞障，控制流程仍需互斥。硬體預設與範圍維持不變。
 
-#### 本輪審查驗證（由審查者填寫）
+#### 本輪審查驗證
 
 | 項目 | 結果 |
 | --- | --- |
-| 純邏輯、障礙轉向與故障停止 | 待驗證 |
-| 人物停放、參數接線與路徑淨空 | 待驗證 |
-| 座標轉換、評估統計與誤差主題 | 待驗證 |
-| colcon test 的 pytest 收集與執行 | 待驗證 |
-| 無人物建圖、snacks 區域導航與跟隨整合 | 待驗證 |
+| 純邏輯、障礙轉向與故障停止 | 見下方「盒內整合驗證」 |
+| 人物停放、參數接線與路徑淨空 | 見下方「盒內整合驗證」 |
+| 座標轉換、評估統計與誤差主題 | 見下方「盒內整合驗證」 |
+| colcon test 的 pytest 收集與執行 | 見下方「盒內整合驗證」 |
+| 無人物建圖、snacks 區域導航與跟隨整合 | 見下方「盒內整合驗證」 |
+
+## 2026-10-23：盒內整合驗證與導航修正
+
+在 Linux amd64（Debian 13 VM、Docker Engine、無 GPU）上實際建置並執行兩個容器，結果如下。
+
+### 本次完成
+
+- 導航控制器由 DWB 改為 Regulated Pure Pursuit（先原地轉向再前進），全域／區域膨脹半徑 0.8 公尺、cost_scaling_factor 1.5，目標位置容差 0.15 公尺。DWB 在走道入口切角後「No valid trajectories」卡住。
+- 模擬車體：DiffDrive 等效輪距乘上 `skid_track_factor`（2.0），車輪摩擦改為 0.5／0.5。原設定下小角速度（≤ 0.2 rad/s）命令完全無法轉向，RPP 的角加速度回授因此停在低速，車體只會側滑。
+- `/odom` 改用 OdometryPublisher（模擬真值）；DiffDrive 輪式里程計改發布 `/wheel_odom`。
+- 世界加入四個不對稱地標，slam_toolbox 限制迴圈搜尋範圍（`loop_search_space_dimension` 1.5、`loop_search_maximum_distance` 2.0）。修正前地圖曾整體偏移一個走道（map→odom 平移 2.41 公尺）。
+- 顯示容器共用運算容器網路命名空間，連接埠可用 `NOVNC_HOST_PORT`／`VNC_HOST_PORT` 調整。
+- 文件補上設計決策、Mac arm64／Linux 支援說明，移除對車載電腦的假設。
+
+### 已驗證（方法）
+
+| 項目 | 結果與方法 |
+| --- | --- |
+| 映像建置 | `./scripts/dev.sh build` 成功（amd64；ROS 套件使用 `ROS_APT_MIRROR` 鏡像） |
+| colcon 建置 | `./scripts/dev.sh colcon-build`：7 個套件成功 |
+| colcon 測試 | `./scripts/dev.sh colcon-test`：159 個測試，0 錯誤、0 失敗 |
+| 純 Python 測試 | `./scripts/dev.sh test`：169 個通過；容器外 Python 3.10 虛擬環境相同結果 |
+| 靜態檢查 | `scripts/check_static.py`：YAML／RViz、XML／SDF／xacro、Python、Bash 與兩／三錨點展開全部通過 |
+| 感測器與 TF | 無畫面建圖時 `/scan` 約 7.4 Hz、`/odom` 約 50 Hz，`/map` 產生；`/cmd_vel` 可驅動，開迴路角速度 0.1–0.3 rad/s 均能轉向 |
+| RViz／noVNC | noVNC HTTP 200；以 VNC 截圖確認顯示容器 RViz 呈現地圖、雷射與車體 |
+| 區域導航 | `guide`（即時建圖）下以 `./scripts/dev.sh goto` 連續送出 10 個目標（入口、零食區、生鮮區、日用品區、飲料區、結帳區、零食區、日用品區、`飲料區` 中文別名、入口），bt_navigator 記錄 10 次成功、0 次失敗；以模擬真值核對最終位置距目標約 0.1–0.16 公尺，結束時 map→odom 平移約 0.003 公尺 |
+| 跟隨流程 | `follow` 下監看 150 秒：狀態在 FOLLOWING／OBSTACLE_STOP／TOO_CLOSE 間轉換；`/uwb/estimate_error` 1102 筆，平均 0.11 公尺、RMSE 0.16 公尺、最大 0.88 公尺；車體跟進第一條走道至走道末端 |
+
+### 尚未驗證／已知問題
+
+- Mac arm64（Docker Desktop）建置與執行；Gazebo GUI（`gz-gui`）；任何真實硬體。
+- 跟隨：人物在走道末端轉彎時，車體因前方 0.65 公尺內的貨架／端架停在 OBSTACLE_STOP，之後大多原地轉向；人物腳本路徑不避讓，曾走到距車體 0.19 公尺（TOO_CLOSE 正確停車）。需要跟隨繞障或改由 Nav2 追隨（時程階段 4）。
+- 導航取消／拒絕、AMCL 與已存地圖定位模式、有人物時的動態障礙。
+- 里程計為模擬真值；真實噪聲、IMU／輪速 EKF 與 `skid_track_factor` 需在實車校正。
+- 啟動後立刻送目標，偶爾遇到 DDS 動作回應遺失（「Failed to send goal response」），`goto` 等到逾時；建議 Nav2 啟動後等待約 60 秒再送目標。
