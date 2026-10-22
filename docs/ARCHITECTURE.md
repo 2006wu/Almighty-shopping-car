@@ -40,7 +40,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   map[map] -->|slam_toolbox 或 AMCL，互斥| odom[odom]
-  odom -->|Gazebo DiffDrive| footprint[base_footprint]
+  odom -->|Gazebo OdometryPublisher（模擬真值）| footprint[base_footprint]
   footprint -->|固定| base[base_link]
   base --> fl[front_left_wheel]
   base --> rl[rear_left_wheel]
@@ -65,7 +65,7 @@ flowchart TD
 | shopping_robot_description | 車體尺寸屬性、四輪關節、雷射、IMU 與錨點 TF |
 | shopping_robot_gazebo | 世界、人物路徑、模擬啟動、單向橋接設定 |
 | shopping_robot_slam | 非同步建圖、序列化位姿圖定位 |
-| shopping_robot_navigation | Humble Nav2、DWB、代價地圖、速度平滑、可選 AMCL |
+| shopping_robot_navigation | Humble Nav2、Regulated Pure Pursuit、代價地圖、速度平滑、可選 AMCL |
 | shopping_robot_bringup | 互斥使用的建圖／引導／跟隨入口與 RViz |
 | shopping_zone_manager | 區域資料驗證、別名查詢、NavigateToPose 動作客戶端 |
 | shopping_uwb_follow | 測距、平面估測、濾波、控制及人物位姿模擬節點 |
@@ -79,6 +79,17 @@ flowchart TD
 `follow_metrics.py` 為不匯入 ROS 的評估模組：`FollowSample` 記錄時間、base_link 估測、odom 平面車體姿態與相同世界座標的真值；`sample_metrics` 將估測旋轉平移後計算歐氏誤差及真實跟隨距離。`evaluate_series` 對遞增時間序列產生按樣本加權的誤差平均／RMSE／最大值、距離平均／最小／最大值及樣本數與期間，空序列或非有限資料會拒絕。
 
 `follow` 同時啟動 `uwb_eval_node`，使用最新 `/odom`、`/uwb/person_ground_truth` 及 `/uwb/target`，三筆時間戳最大差不超過 `max_skew`（預設 0.15 秒）才發布 `/uwb/estimate_error`（Float32，公尺）；缺資料、過期或座標框架不符時略過。依既有固定 TF，sim_world 與 odom 平面座標對齊；不插值、不補償里程計漂移，結果也包含取樣時間差、濾波延遲及漂移。人物真值仍為共用路徑的解析值，非圓柱服務實際到位的回報。
+
+## 模擬設計決策
+
+| 決策 | 原因 |
+| --- | --- |
+| `/odom` 與 `odom→base_footprint` 來自 OdometryPublisher（真值） | 滑移轉向的 DiffDrive 輪式里程計 yaw 漂移嚴重（實測短程後誤差超過 100 度）；輪式里程計改發布於 `/wheel_odom` 供比較，噪聲模型與 EKF 列入時程 |
+| DiffDrive 等效輪距 = 幾何輪距 × `skid_track_factor`（2.0），車輪摩擦 0.5 | 四輪側向摩擦讓小角速度命令幾乎無法轉向；實車需重新校正此係數 |
+| Regulated Pure Pursuit，先原地轉向再前進 | DWB 在 1.6 公尺走道切角卡住；RPP 對差速／滑移底盤較穩定 |
+| 世界加入四個不對稱地標、slam_toolbox 縮小迴圈搜尋範圍 | 四排相同貨架間距 2.4 公尺，曾讓地圖整體跳一個走道 |
+| 顯示容器共用運算容器網路命名空間 | Docker 橋接網路的 DDS 多播探索失敗 |
+| `ROS_APT_MIRROR` 建置參數 | 部分網路無法連線 packages.ros.org |
 
 ## 安全邊界與後續整合
 

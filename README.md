@@ -4,9 +4,9 @@
 
 本專案開發購物機器人的「引導購物」與「人物跟隨」功能。2006wu 負責 SLAM、Nav2 與跟隨；購物介面、商品辨識等其他子系統不在此骨架範圍。預計 2027 年 2 月才取得硬體，此前全部使用模擬。
 
-使用 Ubuntu 22.04 容器、ROS 2 Humble、Gazebo Fortress（`ros_gz`）、slam_toolbox 與 Nav2。四輪滑移轉向車體約 0.60 × 0.50 公尺，包含 360 度雷射、IMU、輪式里程計及可調整的兩個或三個 UWB 錨點。容器使用主機原生 amd64／arm64 架構，不指定 `--platform`；未來的 R2 板規格仍待確認。
+使用 Ubuntu 22.04 容器、ROS 2 Humble、Gazebo Fortress（`ros_gz`）、slam_toolbox 與 Nav2。四輪滑移轉向車體約 0.60 × 0.50 公尺，包含 360 度雷射、IMU、輪式里程計及可調整的兩個或三個 UWB 錨點。容器使用主機原生架構，不指定 `--platform`：支援 Mac（Apple Silicon，arm64）的 Docker Desktop 與 Linux（amd64／arm64）的 Docker Engine。車載電腦不在本骨架範圍。
 
-目標展示為 **12 × 10 公尺的小型模擬商店**，配置恰好四排貨架、三條貨架間走道（各寬 1.6 公尺）、入口與結帳區。這是畢業專題的模擬展示場景。機器人出生姿態為世界座標 `(x, y, z, yaw) = (0, 0, 0.02, 0)`，朝向正 x；地面穩定後 base_footprint 接近 z = 0。以此初始原點建立 `odom`／`map`，六個區域目標使用與世界相同的平面座標，既有外部地圖須先對齊，不能直接套用。
+目標展示為 **12 × 10 公尺的小型模擬商店**，配置恰好四排貨架、三條貨架間走道（各寬 1.6 公尺）、入口與結帳區，另有四個不對稱地標（端架、柱子、冷藏櫃、展示台），避免 SLAM 把相同的走道互相誤認。這是畢業專題的模擬展示場景。機器人出生姿態為世界座標 `(x, y, z, yaw) = (0, 0, 0.02, 0)`，朝向正 x；地面穩定後 base_footprint 接近 z = 0。以此初始原點建立 `odom`／`map`，六個區域目標使用與世界相同的平面座標，既有外部地圖須先對齊，不能直接套用。
 
 ## 2027 年 1 月在 Mac 上執行
 
@@ -93,13 +93,13 @@ set -gx ROS_APT_MIRROR https://your-mirror.example/ros2/ubuntu
 
 | 用途 | 主機位置 | 說明 |
 | --- | --- | --- |
-| noVNC | `127.0.0.1:6080` | 瀏覽器桌面 |
-| VNC | `127.0.0.1:5910` | 對應容器 5900 |
-| ROS DDS | 容器橋接網路 | UDPv4；相同 `ROS_DOMAIN_ID`，預設 28 |
+| noVNC | `127.0.0.1:6080` | 瀏覽器桌面；被占用時設定 `NOVNC_HOST_PORT` |
+| VNC | `127.0.0.1:5910` | 對應容器 5900；可用 `VNC_HOST_PORT` 修改 |
+| ROS DDS | 共用網路命名空間 | 顯示容器使用 `network_mode: service:compute`，UDPv4；`ROS_DOMAIN_ID` 預設 28 |
 
-VNC 密碼讀取環境變數，未設定時為 `shopping`；主機連接埠僅綁定迴送介面。兩個容器共享安裝產物，使用 Fast DDS UDPv4，停用共享記憶體傳輸。RViz 與 Gazebo 感測器採軟體繪圖；`sim/mapping/guide/follow` 會為運算容器開啟 Xvfb。`gz-gui` 可從顯示容器啟動 Gazebo GUI，用於觀察既有模擬；容器間的 Gazebo 探索仍需實機環境驗證。`AUTOSTART_RVIZ=1` 需先完成建置再啟動顯示容器。
+VNC 密碼讀取環境變數，未設定時為 `shopping`；主機連接埠僅綁定迴送介面。兩個容器共享安裝產物，使用 Fast DDS UDPv4，停用共享記憶體傳輸。顯示容器共用運算容器的網路命名空間（連接埠因此發布在運算容器上），避免 Docker 橋接網路上的多播探索失敗；運算容器的 Xvfb 使用顯示編號 50 起跳，避免與顯示容器的 `:99` 衝突。RViz 與 Gazebo 感測器採軟體繪圖；`sim/mapping/guide/follow` 會為運算容器開啟 Xvfb。`gz-gui` 可從顯示容器啟動 Gazebo GUI，用於觀察既有模擬；容器間的 Gazebo 探索仍需實機環境驗證。`AUTOSTART_RVIZ=1` 需先完成建置再啟動顯示容器。
 
-Linux 若需 sudo，可執行 `env DOCKER='sudo docker' ./scripts/dev.sh up`。自訂世界須保留 `supermarket` 世界名稱、`person` 模型及對應橋接主題；目前 world 參數提供替換檔案路徑，尚未自動推導世界名稱。
+Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執行 `env DOCKER='sudo docker' ./scripts/dev.sh up`。自訂世界須保留 `supermarket` 世界名稱、`person` 模型及對應橋接主題；目前 world 參數提供替換檔案路徑，尚未自動推導世界名稱。
 
 ## 安全與驗證狀態
 
@@ -109,14 +109,14 @@ Linux 若需 sudo，可執行 `env DOCKER='sudo docker' ./scripts/dev.sh up`。�
 
 本階段尚無模式管理器，請勿讓 Nav2、鍵盤控制與跟隨同時發布 `/cmd_vel`。跟隨目前是前方障礙停車，不會自主繞行；模式切換、命令仲裁、獨立命令逾時看門狗與恢復行為列於後續階段。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
 
-可在容器執行純 Python 測試，也可在指定沙盒環境執行：
+純 Python 測試可在容器執行（`./scripts/dev.sh test`），也可在任何已安裝 pytest、pyyaml、xacro 的 Python 3.10 環境執行：
 
 ```bash
-/workspace/scratch/venv-shop/bin/python -m pytest -q
-./scripts/run_unit_tests.sh /workspace/scratch/venv-shop/bin/python
-/workspace/scratch/venv-shop/bin/python scripts/check_static.py
+python3 -m pytest -q
+./scripts/run_unit_tests.sh python3
+python3 scripts/check_static.py
 ```
 
-此骨架的靜態檢查與純邏輯測試不等於 ROS／Gazebo 整合驗證。Docker 映像建置、DDS、雷射繪圖、SLAM 與導航成功率須在具備 Docker Desktop 的環境實際確認，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
+2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
 
 [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
