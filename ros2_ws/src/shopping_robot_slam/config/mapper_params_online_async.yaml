@@ -26,7 +26,12 @@ slam_toolbox:
     use_scan_matching: true
     use_scan_barycenter: true
     do_loop_closing: true
-    loop_search_maximum_distance: 3.0
+    # Small store with a repeating 2.4 m shelf pitch: keep scan matching and loop search local so a
+    # match cannot jump one aisle over (default loop_search_space_dimension is 8 m).
+    correlation_search_space_dimension: 0.5
+    loop_search_space_dimension: 1.5
+    loop_search_maximum_distance: 2.0
+    loop_match_minimum_chain_size: 10
     link_match_minimum_response_fine: 0.1
     loop_match_minimum_response_coarse: 0.35
     loop_match_minimum_response_fine: 0.45
