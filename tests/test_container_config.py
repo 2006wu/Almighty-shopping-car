@@ -41,4 +41,5 @@ def test_compose_mirror_arguments_and_local_ports():
         assert 'ARG ROS_APT_MIRROR=\n' in dockerfile
         assert dockerfile.index('configure-ros-mirror.py "$ROS_APT_MIRROR"') < dockerfile.index('apt-get update')
         assert '--platform' not in dockerfile
-    assert all(p.startswith('127.0.0.1:') for p in services['display']['ports'])
+    assert services['display']['network_mode'] == 'service:compute'
+    assert all(p.startswith('127.0.0.1:') for p in services['compute']['ports'])
