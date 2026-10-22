@@ -1,0 +1,8 @@
+# Map and world share the initial robot origin (0, 0), yaw 0.
+zones:
+  - {name: drinks, aliases: [飲料區, beverages], x: -2.4, y: 2.0, yaw: 1.5708, frame_id: map}
+  - {name: snacks, aliases: [零食區], x: 0.0, y: 2.0, yaw: 1.5708, frame_id: map}
+  - {name: produce, aliases: [生鮮區], x: 2.4, y: 2.0, yaw: 1.5708, frame_id: map}
+  - {name: household, aliases: [日用品區], x: 0.0, y: 4.5, yaw: 1.5708, frame_id: map}
+  - {name: checkout, aliases: [結帳區], x: 3.0, y: -1.0, yaw: 0.0, frame_id: map}
+  - {name: entrance, aliases: [入口], x: 0.0, y: -1.8, yaw: 1.5708, frame_id: map}

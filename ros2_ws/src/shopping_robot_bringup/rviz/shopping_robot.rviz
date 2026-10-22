@@ -1,0 +1,46 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation 2
+Visualization Manager:
+  Class: ''
+  Global Options:
+    Fixed Frame: odom
+    Background Color: 48; 48; 48
+  Displays:
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+        Durability Policy: Transient Local
+    - {Class: rviz_default_plugins/TF, Name: TF, Enabled: true}
+    - Class: rviz_default_plugins/LaserScan
+      Name: Scan
+      Enabled: true
+      Topic: {Value: /scan, Reliability Policy: Best Effort}
+      Size (m): 0.03
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic: {Value: /map, Durability Policy: Transient Local}
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Zones
+      Enabled: true
+      Marker Topic: {Value: /shopping/zone_markers, Durability Policy: Transient Local}
+    - Class: rviz_default_plugins/MarkerArray
+      Name: UWB
+      Enabled: true
+      Marker Topic: {Value: /uwb/markers}
+  Tools:
+    - {Class: rviz_default_plugins/Interact}
+    - {Class: rviz_default_plugins/MoveCamera}
+    - {Class: rviz_default_plugins/SetInitialPose}
+    - {Class: nav2_rviz_plugins/GoalTool}
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 15.0
+Window Geometry: {Width: 1600, Height: 900}

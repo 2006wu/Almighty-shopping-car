@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+    anchor_x: [0.0, 0.0, -0.25]
+    anchor_y: [0.22, -0.22, 0.0]
+    noise_std: 0.02
+    bias: 0.0
+    nlos_probability: 0.0
+    nlos_bias: 0.5
+    dropout: 0.0
+    seed: 42
+    lost_timeout: 0.5
+    follow_distance: 1.0
+    stop_distance: 0.6
+    obstacle_stop_distance: 0.65
+    max_linear: 0.5
+    max_angular: 1.0
+    max_linear_accel: 0.4
+    max_angular_accel: 1.5
+    kp_distance: 0.7
+    kp_bearing: 1.5
+    enabled: false

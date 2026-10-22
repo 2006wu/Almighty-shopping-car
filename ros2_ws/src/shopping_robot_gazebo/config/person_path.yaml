@@ -1,0 +1,12 @@
+# Shared by the visual person and UWB simulator; metres in the world frame.
+speed: 0.35
+waypoints:
+  - [1.5, 0.0]
+  - [2.4, 0.0]
+  - [2.4, 5.9]
+  - [0.0, 5.9]
+  - [0.0, 0.0]
+  - [-2.4, 0.0]
+  - [-2.4, 5.9]
+  - [0.0, 5.9]
+  - [0.0, 0.0]

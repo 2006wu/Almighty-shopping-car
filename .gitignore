@@ -1,0 +1,16 @@
+build/
+install/
+log/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
+.env
+output/
+rosbags/
+*.db3
+*.mcap
+ros2_ws/src/shopping_robot_navigation/maps/*.yaml
+ros2_ws/src/shopping_robot_navigation/maps/*.pgm
+ros2_ws/src/shopping_robot_navigation/maps/*.posegraph
+ros2_ws/src/shopping_robot_navigation/maps/*.data
