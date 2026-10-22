@@ -12,8 +12,8 @@ from .zones import load_zones, lookup
 
 
 class ZoneNavigator(Node):
-    def __init__(self):
-        super().__init__('zone_navigator')
+    def __init__(self, node_name='zone_navigator'):
+        super().__init__(node_name)
         path = self.declare_parameter('zones_file', get_package_share_directory('shopping_zone_manager')+'/config/zones.yaml').value
         self.zones = load_zones(path)
         self.client = ActionClient(self, NavigateToPose, '/navigate_to_pose')

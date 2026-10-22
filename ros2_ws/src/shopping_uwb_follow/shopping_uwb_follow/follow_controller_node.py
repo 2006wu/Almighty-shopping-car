@@ -1,4 +1,3 @@
-import math
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -30,6 +29,7 @@ class FollowNode(Node):
     def enable(self, req, resp):
         self.enabled = req.data
         if not self.enabled:
+            self.control.v = self.control.w = 0.0
             self.publisher.publish(Twist())
         resp.success, resp.message = True, 'Enabled' if self.enabled else 'Disabled'
         return resp
@@ -42,12 +42,9 @@ class FollowNode(Node):
 
     def on_scan(self, msg):
         self.scan_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
-        valid = [r for i, r in enumerate(msg.ranges)
-                 if abs(math.atan2(math.sin(msg.angle_min+i*msg.angle_increment),
-                                   math.cos(msg.angle_min+i*msg.angle_increment))) <= math.pi/6
-                 and ((math.isfinite(r) and r >= 0) or r == float('inf'))]
-        self.obstacle = (0.0 if any(r < msg.range_min for r in valid) else
-                         front_obstacle_distance(msg.ranges, msg.angle_min, msg.angle_increment)) if valid else float('nan')
+        self.obstacle = front_obstacle_distance(
+            msg.ranges, msg.angle_min, msg.angle_increment,
+            range_min=msg.range_min, range_max=msg.range_max)
 
     def tick(self):
         now = seconds(self)

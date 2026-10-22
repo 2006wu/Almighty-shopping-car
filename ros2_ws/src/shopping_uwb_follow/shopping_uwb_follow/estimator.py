@@ -12,6 +12,10 @@ class Estimate:
 
 
 def trilaterate(anchors, ranges, previous=None, refine=True):
+    if (len(anchors) not in (2, 3)
+            or not all(math.isfinite(a.x) and math.isfinite(a.y) for a in anchors)
+            or (previous is not None and (len(previous) != 2 or not all(math.isfinite(v) for v in previous)))):
+        raise ValueError('Require two or three finite anchors and a finite previous position')
     pairs = [(a, r) for a, r in zip(anchors, ranges) if math.isfinite(r) and r > 0]
     if len(pairs) < 2 or len(ranges) != len(anchors):
         raise ValueError('At least two valid ranges required')
@@ -60,10 +64,14 @@ def trilaterate(anchors, ranges, previous=None, refine=True):
 
 class TargetFilter:
     def __init__(self, timeout=0.5, alpha=0.6):
+        if not math.isfinite(timeout) or timeout <= 0 or not math.isfinite(alpha) or not 0 < alpha <= 1:
+            raise ValueError('Require positive timeout and alpha in (0, 1]')
         self.timeout, self.alpha = timeout, alpha
         self.value = self.stamp = None
 
     def update(self, estimate, now):
+        if not math.isfinite(now) or not all(math.isfinite(v) for v in vars(estimate).values()):
+            raise ValueError('Estimate and timestamp must be finite')
         if self.value is not None and self.stamp is not None and 0 <= now-self.stamp <= self.timeout:
             x = self.alpha*estimate.x+(1-self.alpha)*self.value.x
             y = self.alpha*estimate.y+(1-self.alpha)*self.value.y

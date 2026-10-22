@@ -7,7 +7,11 @@ x-ros-env: &ros-env
   LIBGL_ALWAYS_SOFTWARE: "1"
 services:
   compute:
-    build: {context: .., dockerfile: docker/Dockerfile.compute}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.compute
+      args:
+        ROS_APT_MIRROR: ${ROS_APT_MIRROR:-}
     init: true
     working_dir: /ws
     shm_size: 1gb
@@ -26,7 +30,11 @@ services:
       timeout: 5s
       retries: 3
   display:
-    build: {context: .., dockerfile: docker/Dockerfile.display}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.display
+      args:
+        ROS_APT_MIRROR: ${ROS_APT_MIRROR:-}
     init: true
     environment:
       <<: *ros-env

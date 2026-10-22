@@ -54,7 +54,9 @@ flowchart TD
   odom -->|模擬初始原點相同，固定轉換| world[sim_world]
 ```
 
-`map` 在純跟隨模式不存在，因此 RViz 預設使用 `odom`；導航改用 `map`。模擬原點為機器人初始平面位置 `(0, 0)`，朝向正 x。貨架位於 x = −4、0、4，y = 1 至 4，六個區域目標位於貨架前方或走道。人物路徑經 y = −3、5 及 x = ±2 的通道，不穿過貨架。
+`map` 在純跟隨模式不存在，因此 RViz 預設使用 `odom`；導航改用 `map`。模擬原點為機器人初始平面位置 `(0, 0)`，朝向正 x。展示場景為 12 × 10 公尺的小型模擬商店，四排貨架中心 x = −3.6、−1.2、1.2、3.6，皆涵蓋 y = 1 至 5，寬 0.8 公尺。三條貨架間走道中心為 x = −2.4、0、2.4，淨寬皆為 1.6 公尺，大於 1.2 公尺需求；車寬 0.50 公尺與 0.55 公尺膨脹半徑可容納於走道。前後橫向通道位於 y = 0 與 5.9。南側 y = −3 留寬 2 公尺入口，結帳櫃臺位於 `(4.5, −1)`，導航目標在櫃臺西側 `(3, −1)`。
+
+機器人明確以世界姿態 `(0, 0, 0.02)`、roll／pitch／yaw 皆為 0 出生；0.02 公尺為落地餘量。`odom` 初始平面原點與世界一致，`map` 使用此起點建圖；定位時也須載入相同座標的地圖與初始姿態。六個 `map` 區域目標位於三條走道與入口／結帳前的自由空間。純 Python 測試直接解析 SDF 的實際碰撞盒，檢查四排／三走道數量、寬度、出生點與每個目標的 0.55 公尺淨空，以及人物每個航點和整段循環路徑的 0.30 公尺淨空，避免另外維護一份失同步的配置。
 
 ## 套件與介面
 
@@ -76,10 +78,10 @@ flowchart TD
 
 ## 安全邊界與後續整合
 
-跟隨狀態包括 FOLLOWING、TOO_CLOSE、LOST、OBSTACLE_STOP、IDLE。正常追蹤以距離及方位比例控制，限制速度與加速度；安全停止直接輸出零值。前方扇區為正前方左右各 30 度；這是局部停止保護，尚無繞障路徑規劃。Nav2 使用雷射障礙層與膨脹層，速度平滑由官方 navigation_launch 接線。尚未啟用 collision_monitor。
+跟隨狀態包括 FOLLOWING、TOO_CLOSE、LOST、OBSTACLE_STOP、IDLE。正常追蹤以距離及方位比例控制，限制速度與加速度；安全停止直接輸出零值。前方扇區為正前方左右各 30 度；無有效前方讀值或無效掃描角度時回報不可用並停止，正無限遠讀值視為無命中，零距離及低於量測下限的非負讀值視為需立即停止。控制時間倒退或無效時也歸零；這是局部停止保護，尚無繞障路徑規劃。Nav2 使用雷射障礙層與膨脹層，速度平滑由官方 navigation_launch 接線。尚未啟用 collision_monitor。
 
 未來的模式管理器應仲裁引導／跟隨／待機命令，加入獨立速度逾時看門狗，再整合障礙恢復。現階段啟動流程靠操作者互斥，不可同時發送不同模式的速度。所有硬體驅動將另行設計成明確選用，現階段沒有實作。
 
 ## 版本參考
 
-Fortress 外掛與感測器依據 [Fortress 感測器文件](https://gazebosim.org/docs/fortress/sensors/)；Nav2 參數名稱以 [Humble 官方設定](https://github.com/ros-navigation/navigation2/blob/humble/nav2_bringup/params/nav2_params.yaml) 為準；橋接使用 [ros_gz Humble 設定格式](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/test/config/full.yaml)。這些參考不代表本骨架已完成容器整合測試。
+Fortress 外掛與感測器依據 [Fortress 感測器文件](https://gazebosim.org/docs/fortress/sensors/)；Nav2 參數名稱以 [Humble 官方設定](https://github.com/ros-navigation/navigation2/blob/humble/nav2_bringup/params/nav2_params.yaml) 為準；橋接使用 [ros_gz Humble 設定格式](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/test/config/full.yaml)。SLAM 啟動方式另核對 [Humble 官方 launch](https://github.com/SteveMacenski/slam_toolbox/blob/humble/launch/online_async_launch.py)。這些參考不代表本骨架已完成容器整合測試。

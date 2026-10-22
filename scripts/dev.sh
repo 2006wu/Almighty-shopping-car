@@ -6,6 +6,8 @@ compose=("${docker_cmd[@]}" compose -f "$repo_dir/docker/docker-compose.yaml")
 command="${1:-help}"
 if [[ $# -gt 0 ]]; then shift; fi
 run() { "${compose[@]}" exec compute /usr/local/bin/compute-entrypoint "$@"; }
+# Build and tests can run before the long-lived services start.
+workspace_task() { "${compose[@]}" run --rm --no-deps compute "$@"; }
 # All launch commands run in the foreground; Ctrl-C stops the active session.
 case "$command" in
   help|-h|--help)
@@ -18,8 +20,8 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
   sim [LAUNCH_ARGS...]     Headless simulation
-  slam [LAUNCH_ARGS...]    Simulation and online mapping
-  nav [LAUNCH_ARGS...]     Simulation, localization/mapping, Nav2, zones
+  mapping | slam [LAUNCH_ARGS...]    Simulation and online mapping
+  guide | nav [LAUNCH_ARGS...]     Simulation, localization/mapping, Nav2, zones
   follow [LAUNCH_ARGS...]  Simulation, UWB estimator and enabled controller
   goto ZONE | zones        Navigate to a zone or list zones
   save-map NAME            Save grid and serialized SLAM pose graph
@@ -37,15 +39,15 @@ EOF
     [[ "$service" == compute || "$service" == display ]] || { echo 'Invalid service' >&2; exit 2; }
     "${compose[@]}" exec "$service" /usr/local/bin/compute-entrypoint bash
     ;;
-  colcon-build) run colcon build --symlink-install "$@" ;;
+  colcon-build) workspace_task colcon build --symlink-install "$@" ;;
   colcon-test)
-    run colcon test "$@"
-    run colcon test-result --verbose
+    workspace_task colcon test "$@"
+    workspace_task colcon test-result --verbose
     ;;
-  test) run bash /repo/scripts/run_unit_tests.sh python3 "$@" ;;
+  test) workspace_task bash /repo/scripts/run_unit_tests.sh python3 "$@" ;;
   sim) run xvfb-run -a ros2 launch shopping_robot_gazebo sim.launch.py "$@" ;;
-  slam) run xvfb-run -a ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
-  nav) run xvfb-run -a ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
+  mapping|slam) run xvfb-run -a ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
+  guide|nav) run xvfb-run -a ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
   follow) run xvfb-run -a ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
   goto)
     [[ $# == 1 ]] || { echo 'Usage: dev.sh goto ZONE' >&2; exit 2; }

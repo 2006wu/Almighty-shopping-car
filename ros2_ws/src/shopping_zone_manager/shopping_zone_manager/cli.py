@@ -17,7 +17,7 @@ def goto_main():
     args = rclpy.utilities.remove_ros_args(sys.argv)[1:]
     if len(args) != 1:
         raise SystemExit('Usage: goto_zone NAME')
-    node = ZoneNavigator()
+    node = ZoneNavigator(node_name='goto_zone')
     result = []
     node.finished = lambda success: result.append(success)
     node.create_subscription(__import__('std_msgs.msg', fromlist=['String']).String,

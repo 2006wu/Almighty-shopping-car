@@ -2,12 +2,29 @@ import math
 from dataclasses import dataclass
 
 
-def front_obstacle_distance(ranges, angle_min, angle_increment, sector=math.pi/3):
-    values = [r for i, r in enumerate(ranges)
-              if math.isfinite(r) and r > 0 and
-              abs(math.atan2(math.sin(angle_min+i*angle_increment),
-                             math.cos(angle_min+i*angle_increment))) <= sector/2]
-    return min(values, default=float('inf'))
+def front_obstacle_distance(ranges, angle_min, angle_increment, sector=math.pi/3,
+                            range_min=0.0, range_max=float('inf')):
+    """Return front clearance; NaN means unavailable, +inf means clear.
+
+    Zero and positive readings below the sensor minimum trigger a stop.
+    Invalid readings never establish a clear sector by themselves.
+    """
+    if (not all(math.isfinite(v) for v in (angle_min, angle_increment, sector, range_min))
+            or not 0 < sector <= 2*math.pi or range_min < 0
+            or math.isnan(range_max) or range_max <= range_min):
+        return float('nan')
+    values = []
+    for i, value in enumerate(ranges):
+        angle = angle_min+i*angle_increment
+        if not math.isfinite(angle):
+            return float('nan')
+        if abs(math.atan2(math.sin(angle), math.cos(angle))) > sector/2+1e-12:
+            continue
+        if value == float('inf'):
+            values.append(value)
+        elif math.isfinite(value) and 0 <= value <= range_max:
+            values.append(0.0 if value < range_min else value)
+    return min(values, default=float('nan'))
 
 
 @dataclass
@@ -47,6 +64,9 @@ class FollowController:
         if state != 'FOLLOWING':
             self.v = self.w = 0.0
             return self.v, self.w, state, reason
+        if not math.isfinite(dt) or dt <= 0:
+            self.v = self.w = 0.0
+            return 0.0, 0.0, 'IDLE', 'Invalid control interval'
         distance, bearing = math.hypot(*target), math.atan2(target[1], target[0])
         v = min(p.max_linear, max(0.0, p.kp_distance*(distance-p.follow_distance))) * max(0.0, math.cos(bearing))
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))

@@ -1,6 +1,9 @@
 FROM ros:humble-ros-base
+ARG ROS_APT_MIRROR=
+COPY docker/configure-ros-mirror.py /usr/local/bin/configure-ros-mirror.py
 ENV DEBIAN_FRONTEND=noninteractive LIBGL_ALWAYS_SOFTWARE=1
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN python3 /usr/local/bin/configure-ros-mirror.py "$ROS_APT_MIRROR" \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-gz ros-humble-slam-toolbox ros-humble-navigation2 \
     ros-humble-nav2-bringup ros-humble-xacro ros-humble-robot-state-publisher \
     ros-humble-joint-state-publisher ros-humble-teleop-twist-keyboard \

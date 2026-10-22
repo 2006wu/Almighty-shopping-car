@@ -42,3 +42,36 @@ def test_duplicate_alias_and_empty_file(tmp_path):
     path.write_text('')
     with pytest.raises(ValueError):
         load_zones(path)
+
+
+@pytest.mark.parametrize('data', [[], {}, {'zones': []}, {'zones': {}}, {'zones': [42]},
+    {'zones': [{'name': 'a', 'x': True, 'y': 0, 'yaw': 0, 'frame_id': 'map'}]},
+    {'zones': [{'name': 'a', 'x': 0, 'y': float('inf'), 'yaw': 0, 'frame_id': 'map'}]},
+    {'zones': [{'name': None, 'x': 0, 'y': 0, 'yaw': 0, 'frame_id': 'map'}]},
+    {'zones': [{'name': 'a', 'x': 0, 'y': 0, 'yaw': 0, 'frame_id': 3}]},
+    {'zones': [{'name': 'a', 'x': 0, 'y': 0, 'yaw': 0, 'frame_id': 'map', 'aliases': [None]}]}])
+def test_invalid_zone_documents(tmp_path, data):
+    path = tmp_path/'bad.yaml'
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError):
+        load_zones(path)
+
+
+def test_normalization_unicode_casefold_and_nearest_tie(tmp_path):
+    path = tmp_path/'zones.yaml'
+    entries = [dict(name=' Straße ', aliases=[' 第一區 '], x=-1, y=0, yaw=0, frame_id=' map '),
+               dict(name='second', x=1, y=0, yaw=1, frame_id='map')]
+    path.write_text(yaml.safe_dump({'zones': entries}))
+    zones = load_zones(path)
+    assert lookup(zones, ' STRASSE ').name == 'Straße'
+    assert lookup(zones, '第一區').aliases == ('第一區',)
+    assert zones[0].frame_id == 'map'
+    assert nearest(zones, 0, 0) == zones[0]
+    assert nearest(zones, 1, 0) == zones[1]
+    for x, y in [(float('nan'), 0), (0, float('inf'))]:
+        with pytest.raises(ValueError):
+            nearest(zones, x, y)
+    entries[1]['name'] = ' STRASSE '
+    path.write_text(yaml.safe_dump({'zones': entries}))
+    with pytest.raises(ValueError):
+        load_zones(path)

@@ -118,7 +118,7 @@ def test_front_sector():
     scan[175] = float('nan')
     assert front_obstacle_distance(scan, -math.pi, math.pi/180) == 0.4
     assert front_obstacle_distance([float('inf')]*10, -0.1, 0.02) == float('inf')
-    assert front_obstacle_distance([], 0, 0) == float('inf')
+    assert math.isnan(front_obstacle_distance([], 0, 0))
     assert front_obstacle_distance([0.3], 2*math.pi, 0) == 0.3
 
 

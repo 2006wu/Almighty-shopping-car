@@ -5,4 +5,4 @@ python_bin="${1:-python3}"
 if [[ $# -gt 0 ]]; then shift; fi
 export PYTHONPATH="$repo_dir/ros2_ws/src/shopping_zone_manager:$repo_dir/ros2_ws/src/shopping_uwb_follow${PYTHONPATH:+:$PYTHONPATH}"
 cd "$repo_dir"
-exec "$python_bin" -m pytest -q ros2_ws/src/shopping_zone_manager/test ros2_ws/src/shopping_uwb_follow/test "$@"
+exec "$python_bin" -m pytest -q "$@"

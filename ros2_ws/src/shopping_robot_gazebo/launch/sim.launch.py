@@ -20,7 +20,7 @@ def generate_launch_description():
         ExecuteProcess(cmd=['ign', 'gazebo', '-s', '-r', LaunchConfiguration('world')], condition=IfCondition(LaunchConfiguration('headless')), output='screen'),
         ExecuteProcess(cmd=['ign', 'gazebo', '-r', LaunchConfiguration('world')], condition=UnlessCondition(LaunchConfiguration('headless')), output='screen'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(description+'/launch/display.launch.py'), launch_arguments={'use_sim_time': time}.items()),
-        Node(package='ros_gz_sim', executable='create', arguments=['-world', 'supermarket', '-name', 'shopping_robot', '-topic', '/robot_description', '-z', '0.02'], parameters=[{'use_sim_time': time}], output='screen'),
+        Node(package='ros_gz_sim', executable='create', arguments=['-world', 'supermarket', '-name', 'shopping_robot', '-topic', '/robot_description', '-x', '0', '-y', '0', '-z', '0.02', '-Y', '0'], parameters=[{'use_sim_time': time}], output='screen'),
         Node(package='ros_gz_bridge', executable='parameter_bridge', parameters=[{'config_file': share+'/config/bridge.yaml', 'use_sim_time': time}], output='screen'),
         Node(package='tf2_ros', executable='static_transform_publisher', arguments=['0', '0', '0', '0', '0', '0', 'odom', 'sim_world'], parameters=[{'use_sim_time': time}]),
         Node(package='shopping_uwb_follow', executable='person_path_node', parameters=[{'use_sim_time': time, 'person_path': share+'/config/person_path.yaml'}], output='screen')])

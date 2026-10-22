@@ -24,6 +24,8 @@ def load_zones(path):
             raise ValueError('Zone must be a mapping')
         try:
             name, aliases, frame = entry['name'], entry.get('aliases', []), entry['frame_id']
+            if any(isinstance(entry[k], bool) for k in ('x', 'y', 'yaw')):
+                raise ValueError('Boolean coordinates are invalid')
             values = [float(entry[k]) for k in ('x', 'y', 'yaw')]
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError('Invalid zone fields') from exc
@@ -33,7 +35,7 @@ def load_zones(path):
             if not isinstance(key, str) or not key.strip() or key.strip().casefold() in seen:
                 raise ValueError('Empty or duplicate zone name/alias')
             seen.add(key.strip().casefold())
-        result.append(Zone(name, tuple(aliases), *values, frame))
+        result.append(Zone(name.strip(), tuple(a.strip() for a in aliases), *values, frame.strip()))
     return result
 
 
@@ -47,4 +49,6 @@ def lookup(zones, name):
 def nearest(zones, x, y):
     if not zones:
         raise ValueError('No zones available')
+    if not math.isfinite(x) or not math.isfinite(y):
+        raise ValueError('Query coordinates must be finite')
     return min(zones, key=lambda z: math.hypot(z.x-x, z.y-y))
