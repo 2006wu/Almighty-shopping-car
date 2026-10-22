@@ -15,7 +15,7 @@ def start(context):
     time = LaunchConfiguration('use_sim_time')
     params = get_package_share_directory('shopping_robot_navigation')+'/config/nav2_params.yaml'
     nav = get_package_share_directory('nav2_bringup')+'/launch/'
-    common = {'use_sim_time': time, 'params_file': params, 'autostart': 'true', 'use_composition': 'false'}
+    common = {'use_sim_time': time, 'params_file': params, 'autostart': 'true', 'use_composition': 'False'}
     actions = []
     if mode == 'map_server':
         actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(nav+'localization_launch.py'), launch_arguments={**common, 'map': map_file}.items()))
