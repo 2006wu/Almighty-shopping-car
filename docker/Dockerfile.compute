@@ -1,0 +1,15 @@
+FROM ros:humble-ros-base
+ENV DEBIAN_FRONTEND=noninteractive LIBGL_ALWAYS_SOFTWARE=1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-gz ros-humble-slam-toolbox ros-humble-navigation2 \
+    ros-humble-nav2-bringup ros-humble-xacro ros-humble-robot-state-publisher \
+    ros-humble-joint-state-publisher ros-humble-teleop-twist-keyboard \
+    ros-humble-tf2-ros ros-humble-rmw-fastrtps-cpp \
+    python3-colcon-common-extensions python3-rosdep python3-pytest \
+    python3-yaml python3-numpy xvfb xauth libgl1-mesa-dri mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /ws
+COPY docker/compute-entrypoint /usr/local/bin/compute-entrypoint
+RUN chmod +x /usr/local/bin/compute-entrypoint
+ENTRYPOINT ["/usr/local/bin/compute-entrypoint"]
+CMD ["sleep", "infinity"]

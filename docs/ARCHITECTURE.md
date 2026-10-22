@@ -1,0 +1,85 @@
+# 系統架構
+
+運算容器處理 Gazebo Fortress、感測器橋接、TF、SLAM、Nav2、區域導航及 UWB 跟隨；顯示容器只執行 Xvfb、openbox、VNC／noVNC 與按需啟動的 RViz。兩者在相同橋接網路使用 Fast DDS UDPv4，相同領域編號；不依賴跨容器共享記憶體。
+
+```mermaid
+flowchart LR
+  subgraph compute[運算容器]
+    path[共用人物路徑 YAML] --> mover[person_path_node]
+    mover -->|Ignition set_pose 服務| gz[Gazebo Fortress]
+    gz <-->|Gazebo Transport| bridge[ros_gz_bridge]
+    bridge -->|/scan /imu /odom /joint_states /clock /simulation/poses| sensors[ROS 感測與真值]
+    rsp[robot_state_publisher] -->|/tf /tf_static| tf[TF]
+    sensors -->|/scan /odom| slam[slam_toolbox 或 AMCL]
+    slam -->|/map 與 map 到 odom| nav[Nav2]
+    zone[zone_navigator] -->|NavigateToPose action| nav
+    request[/shopping/goto_zone/] --> zone
+    zone -->|/shopping/zone_status /shopping/zone_markers| ui[狀態與標記]
+    path --> uwb[uwb_sim_node]
+    sensors -->|/simulation/poses| uwb
+    uwb -->|/uwb/ranges| est[uwb_estimator_node]
+    est -->|/uwb/target /uwb/quality| follow[follow_controller_node]
+    sensors -->|/scan| follow
+    follow -->|/follow/state| ui
+    nav -->|/cmd_vel_nav| smooth[velocity_smoother]
+    smooth -->|/cmd_vel| bridge
+    follow -->|/cmd_vel 互斥流程| bridge
+  end
+  subgraph display[顯示容器]
+    rviz[RViz2]
+    desktop[Xvfb 與 openbox] --> vnc[x11vnc 與 noVNC]
+    rviz --> desktop
+  end
+  tf --> rviz
+  sensors --> rviz
+  ui --> rviz
+  est -->|/uwb/markers| rviz
+  vnc -->|6080 或 5910，僅迴送介面| browser[Mac 瀏覽器]
+```
+
+```mermaid
+flowchart TD
+  map[map] -->|slam_toolbox 或 AMCL，互斥| odom[odom]
+  odom -->|Gazebo DiffDrive| footprint[base_footprint]
+  footprint -->|固定| base[base_link]
+  base --> fl[front_left_wheel]
+  base --> rl[rear_left_wheel]
+  base --> fr[front_right_wheel]
+  base --> rr[rear_right_wheel]
+  base --> laser[laser_link]
+  base --> imu[imu_link]
+  base --> a0[uwb_anchor_0]
+  base --> a1[uwb_anchor_1]
+  base --> a2[uwb_anchor_2，可選]
+  odom -->|模擬初始原點相同，固定轉換| world[sim_world]
+```
+
+`map` 在純跟隨模式不存在，因此 RViz 預設使用 `odom`；導航改用 `map`。模擬原點為機器人初始平面位置 `(0, 0)`，朝向正 x。貨架位於 x = −4、0、4，y = 1 至 4，六個區域目標位於貨架前方或走道。人物路徑經 y = −3、5 及 x = ±2 的通道，不穿過貨架。
+
+## 套件與介面
+
+| 套件 | 責任 |
+| --- | --- |
+| shopping_robot_description | 車體尺寸屬性、四輪關節、雷射、IMU 與錨點 TF |
+| shopping_robot_gazebo | 世界、人物路徑、模擬啟動、單向橋接設定 |
+| shopping_robot_slam | 非同步建圖、序列化位姿圖定位 |
+| shopping_robot_navigation | Humble Nav2、DWB、代價地圖、速度平滑、可選 AMCL |
+| shopping_robot_bringup | 互斥使用的建圖／引導／跟隨入口與 RViz |
+| shopping_zone_manager | 區域資料驗證、別名查詢、NavigateToPose 動作客戶端 |
+| shopping_uwb_follow | 測距、平面估測、濾波、控制及人物位姿模擬節點 |
+
+`/uwb/ranges` 是 Float32MultiArray，順序對應 `anchor_x/anchor_y`，單位公尺，NaN 表示掉包；無額外時間戳，僅限目前模擬。`/uwb/target` 為 base_link 下的 PointStamped，x 向前、y 向左；`/uwb/quality` 是 Float32，三錨點的基準值為 1、兩錨點為 0.5，再依測距殘差降低。這不是校準過的統計機率。
+
+三錨點使用平方距離差線性解加上 Gauss–Newton 修正；兩錨點解兩圓交點，有前後歧義。啟動時選前半平面，之後選最接近前次估計的位置；錨點預設沿左右方向配置，任意旋轉配置不保證可單靠前半平面消除歧義。平滑濾波在資料過期或時間倒退後重設。控制節點使用目標時間戳偵測過期，50 毫秒更新；超過 0.5 秒沒有有效目標或雷射便停止。
+
+人物圓柱透過 Fortress `set_pose` 服務每 0.1 秒更新，UWB 以同一份路徑與絕對模擬時間計算人物位置；Gazebo 顯示可能有一個更新週期的延遲。機器人位置取 SceneBroadcaster 的真實模型位姿（橋接至 `/simulation/poses`），不使用可能受滑移影響的輪式里程計作測距真值。`/uwb/person_ground_truth` 使用 `sim_world`。更換世界、模型名稱或初始機器人位置時須同步修改此對應與固定 TF。
+
+## 安全邊界與後續整合
+
+跟隨狀態包括 FOLLOWING、TOO_CLOSE、LOST、OBSTACLE_STOP、IDLE。正常追蹤以距離及方位比例控制，限制速度與加速度；安全停止直接輸出零值。前方扇區為正前方左右各 30 度；這是局部停止保護，尚無繞障路徑規劃。Nav2 使用雷射障礙層與膨脹層，速度平滑由官方 navigation_launch 接線。尚未啟用 collision_monitor。
+
+未來的模式管理器應仲裁引導／跟隨／待機命令，加入獨立速度逾時看門狗，再整合障礙恢復。現階段啟動流程靠操作者互斥，不可同時發送不同模式的速度。所有硬體驅動將另行設計成明確選用，現階段沒有實作。
+
+## 版本參考
+
+Fortress 外掛與感測器依據 [Fortress 感測器文件](https://gazebosim.org/docs/fortress/sensors/)；Nav2 參數名稱以 [Humble 官方設定](https://github.com/ros-navigation/navigation2/blob/humble/nav2_bringup/params/nav2_params.yaml) 為準；橋接使用 [ros_gz Humble 設定格式](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/test/config/full.yaml)。這些參考不代表本骨架已完成容器整合測試。

@@ -1,0 +1,7 @@
+zones:
+  - {name: drinks, aliases: [飲料區, beverages], x: -6.0, y: 0.0, yaw: 0.0, frame_id: map}
+  - {name: snacks, aliases: [零食區], x: -2.0, y: 0.0, yaw: 0.0, frame_id: map}
+  - {name: produce, aliases: [生鮮區], x: 2.0, y: 0.0, yaw: 0.0, frame_id: map}
+  - {name: household, aliases: [日用品區], x: 6.0, y: 0.0, yaw: 0.0, frame_id: map}
+  - {name: checkout, aliases: [結帳區], x: 6.0, y: -5.0, yaw: 0.0, frame_id: map}
+  - {name: entrance, aliases: [入口], x: 0.0, y: -5.0, yaw: 1.5708, frame_id: map}
