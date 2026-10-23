@@ -551,10 +551,17 @@
 
 ### 審查驗證
 
+2026-10-23 20:50（台北時間）於 box（Linux amd64、EKF、headless）審查。已 rebase 到含模式仲裁（PR #9）的 develop，並合併衝突：follow 控制器同時保留 `/cmd_vel/follow` 輸出、mux 的 `enabled` 和 `observed_cmd_vel_topic`，以及故障模式的 `monitor_odom` 和 `/sim/raw/*` remap。guide 同時傳入 `use_mux` 和 `fault_injection`。另外，故障分支的 `valid = fresh` 會蓋過 develop 新增的 `scan_valid` 檢查，因此刪除該行。
+
 | 項目 | 結果 |
 | --- | --- |
-| 純 Python、靜態檢查與 launch 預設相容性重驗 | 待驗證 |
-| Humble 建置、remap、QoS 與狀態保留 | 待驗證 |
-| 直接跟隨六種故障、停止延遲與恢復 | 待驗證 |
-| NAV2_HANDOFF 中故障取消、命令覆寫與真值停止 | 待驗證 |
-| 排程、時間倒退與清除行為 | 待驗證 |
+| pytest（rebase 後） | 610 項通過 |
+| check_static | PASS |
+| colcon build＋test（容器） | 7 個套件；531 項測試，0 失敗，5 跳過 |
+| `follow.launch.py fault_injection:=true`＋`dev.sh fault-check`（預設 `route_around:=true`、`use_mux:=true`） | 6/6 PASS。命令停止／真值停止：uwb_stale 0.60／0.70 s，uwb_dropout 0.12／0.15 s，lidar_drop 0.49／0.56 s，lidar_freeze 0.08／0.12 s，odom_freeze 0.61／0.66 s；uwb_noise 通過速度上限與恢復檢查。命令在看門狗輸出的 `/cmd_vel` 量測，代表經過 mux 後的實際命令 |
+| 預設 follow（`fault_injection` 未設） | 沒有 fault 節點，也沒有 `/sim/raw/*`、`/sim/fault*` topic；`/uwb/ranges` 只有一個發布者；`/cmd_vel` 只有 `cmd_vel_watchdog` |
+| NAV2_HANDOFF 中注入故障 | 未專門驗證，因為 fault-check 不固定人物相位 |
+| `route_around:=false` 執行 fault-check | 未驗證 |
+| 排程、時間倒退與清除行為 | 只有純 Python 測試，沒有在模擬中驗證 |
+
+紀錄：`/workspace/wt/logs/shop/t9-faultcheck1.txt`、`t9-default.txt`（box 本機）。
