@@ -1,0 +1,23 @@
+# Start at the world/map origin. Traverse all three aisles in a snake pattern.
+# South cross corridor y=0; north cross corridor y=6.1 (near y=5.9, clear of the endcap).
+# Intermediate corridor goals avoid requesting diagonal paths through shelf corners.
+# Yaw is in radians; footprint circumscribed radius plus margin is < 0.55 m.
+waypoints:
+  - {name: entrance, x: 0.0, y: -1.8, yaw: 1.57079632679}
+  - {name: south_center, x: 0.0, y: 0.0, yaw: 3.14159265359}
+  - {name: left_south, x: -2.4, y: 0.0, yaw: 1.57079632679}
+  - {name: left_middle, x: -2.4, y: 3.0, yaw: 1.57079632679}
+  - {name: left_north, x: -2.4, y: 6.1, yaw: 0.0}
+  - {name: center_north, x: 0.0, y: 6.1, yaw: -1.57079632679}
+  - {name: center_middle, x: 0.0, y: 3.0, yaw: -1.57079632679}
+  - {name: center_south, x: 0.0, y: 0.0, yaw: 0.0}
+  - {name: right_south, x: 2.4, y: 0.0, yaw: 1.57079632679}
+  - {name: right_middle, x: 2.4, y: 3.0, yaw: 1.57079632679}
+  - {name: right_north, x: 2.4, y: 6.1, yaw: 3.14159265359}
+  # Revisit the north cross corridor and center aisle for loop closure.
+  - {name: north_center_return, x: 0.0, y: 6.1, yaw: -1.57079632679}
+  - {name: origin_return, x: 0.0, y: 0.0, yaw: 0.0}
+  - {name: checkout_approach, x: 3.0, y: 0.0, yaw: -1.57079632679}
+  - {name: checkout, x: 3.0, y: -1.0, yaw: 3.14159265359}
+  - {name: entrance_return, x: 0.0, y: -1.8, yaw: 1.57079632679}
+  - {name: finish, x: 0.0, y: 0.0, yaw: 0.0}

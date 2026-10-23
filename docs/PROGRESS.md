@@ -369,3 +369,42 @@
 | 引導回歸 | 6/6 區域（drinks、snacks、produce、household、checkout、entrance）SUCCEEDED；地圖 TF 與真值差 ≤0.03 m；啟動紀錄無 Traceback |
 | 未驗證 | Mac arm64、Gazebo GUI、搶占（preempt=True）的模擬測試 |
 
+## 2026-10-23：自動建圖巡航與離線定位檢查
+
+### 本次完成
+
+- 新增 `shopping_zone_manager` 的 `map_tour` 與 `localization_check` 命令入口，以及 `dev.sh map-tour [NAME]`（預設 `supermarket`）與 `dev.sh loc-check [ROS_ARGS...]`。
+- 巡航航點集中於 `config/map_tour.yaml`，蛇行走遍三條走道全長、南北橫向通道、入口及結帳區，最後返回原點。北側橫向路段由原規劃 y=5.9 移到 y=6.1，避免端架侵入車體外接圓加 0.15 公尺餘裕；測試重用場景碰撞盒工具並檢查整條連線。
+- 分離無 ROS 的巡航排序／重試／跳過／整體逾時與定位統計／門檻邏輯。導航前等待 bt_navigator 生命週期啟用；目標逾時先取消並確認終止，無法確認時中止流程，避免並行目標。Ctrl-C 保留 ROS context 供取消目標後結束。
+- 巡航完成後呼叫 `nav2_map_server map_saver_cli` 與 Humble `SerializePoseGraph` 服務，確認服務結果及四檔存在；跳過航點仍儲存但回傳失敗，整趟導航逾時或中斷不儲存。標準 `supermarket.{yaml,pgm,posegraph,data}` 開放版本管理，其他名稱繼續忽略，未建立假地圖。
+- 定位檢查依區域 YAML 走訪六區，在目標後以真值時間戳查詢 map TF，檢查資料新鮮度與至少五筆有效採樣；輸出每區最後地圖／真值距目標誤差、定位位置與角度的平均值／RMSE／最大值，以及整體統計，可另存 JSON。
+- PASS 門檻為每區所有採樣定位誤差 < 0.15 公尺且 < 5 度、最後真值距區域目標 ≤ 0.3 公尺，並要求六區皆導航成功。預設真值改為兩種里程計模式皆發布的 `/sim/ground_truth_odom`，保留 `truth_topic` 覆寫並移除探索／回退。純函式驗證 `(sim_world, base_footprint_gt)` 與舊版 `(odom|world|map, base_footprint)`，錯誤配對會明確報錯；強制 `/odom` 會警告並拒絕，除非另以 `odom_source:=ground_truth` 明確宣告模擬已採真值模式。AMCL 可用 `publish_initial_pose:=true` 在移動前發布出生姿態。
+- 檢視 mapper／slam_toolbox 定位設定，保留一致的解析度、雷射上限、框架及 `use_sim_time`，說明 `map_start_at_dock` 對應出生點首筆掃描與 `map_start_pose` 優先權；AMCL 明確設定 12 公尺雷射上限與 TF 發布，未調整規劃器／控制器。
+- 檢視 `map_tour` 與 `experiment_node`，兩者僅透過 Nav2 action 送目標，未讀取 `/odom` 作為真值；README 與地圖說明指定標準地圖用預設 EKF 生成，另存 ground_truth 比較地圖，建圖品質依賴 EKF 與 slam_toolbox。
+- 更新 README 與地圖說明的重新產生、兩種離線定位、互斥操作與真值限制；補齊套件相依與命令／忽略規則測試。未提交、未推送、未執行 Docker、未安裝套件或建立虛擬環境，未修改 ROADMAP 勾選。
+
+### 已執行檢查（執行紀錄，非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：351 個測試通過（含新增 13 個真值框架配對測試）；僅有既有 xacro 的 Python 棄用警告。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；12 個 YAML／RViz、10 個 XML／SDF／xacro、53 個 Python、4 個 Bash，以及 EKF／ground_truth 兩模式的兩／三錨點 xacro 展開與錨點一致性檢查通過。
+- `git diff --check`：通過。
+
+### 尚未驗證與下一步
+
+- 本環境沒有 ROS；尚未執行 colcon 建置／套件測試，也尚未在 Gazebo 執行巡航、Nav2 生命週期等待、目標重試／取消、儲圖子程序或序列化服務。
+- 尚未產生標準四檔地圖，未驗證格網覆蓋、閉環效果、檔案可攜性或離線重載；須由維護者在容器執行巡航並檢視摘要與地圖後，將同一次產生的四檔一起納入後續提交。
+- 尚未驗證 slam_toolbox 與 AMCL 的六區誤差門檻、初始姿態發布、獨立真值訂閱、框架拒絕、`/odom` 保護及時間戳 TF 採樣。維護者需在每次全新模擬中各執行一次 `loc-check`，保留不同的 JSON 報告並核對六區座標。
+- 預設 `/odom` 是會漂移的 EKF 估測；兩種模式都以獨立 `/sim/ground_truth_odom` 評估定位，須與地圖共用出生原點／朝向，不以 map 校正轉換真值。尚未執行 EKF 與 ground_truth 的巡航及兩種定位比較，也未涵蓋真實硬體。
+- 幾何淨空測試無法保證 Nav2 實際路徑或完整探索；尚無模式管理器，巡航、定位檢查、區域目標、跟隨與鍵盤控制仍須互斥。ROADMAP 第 1 階段第 5–6 項待模擬審查後再決定完成狀態。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純邏輯、淨空、命令與忽略規則測試 | 待驗證 |
+| YAML／XML／launch／Bash／xacro 靜態檢查 | 待驗證 |
+| Humble colcon 建置、套件相依與命令入口 | 待驗證 |
+| Fortress 巡航覆蓋、重試／取消與四檔儲存 | 待驗證 |
+| slam_toolbox 位姿圖重新載入與六區定位 | 待驗證 |
+| AMCL 格網重新載入、初始姿態與六區定位 | 待驗證 |
+| 標準四檔地圖與區域座標人工檢視 | 待驗證 |

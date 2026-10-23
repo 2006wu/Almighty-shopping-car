@@ -31,31 +31,57 @@ set -gx VNC_PASSWORD myshop42
 ./scripts/dev.sh novnc
 ```
 
-瀏覽器開啟 <http://localhost:6080/vnc.html>，輸入相同 VNC 密碼。RViz 預設固定座標為 `odom`，純跟隨也可顯示；使用 Nav2 時請在 Global Options 將 Fixed Frame 切成 `map`。建圖時，可在另一個終端機操作：
+瀏覽器開啟 <http://localhost:6080/vnc.html>，輸入相同 VNC 密碼。RViz 預設固定座標為 `odom`，純跟隨也可顯示；使用 Nav2 時請在 Global Options 將 Fixed Frame 切成 `map`。
+
+### 自動建圖與離線定位檢查
+
+先停止其他模擬，再用第一個主機終端機啟動含 Nav2 的建圖流程；第二個終端機執行巡航：
 
 ```fish
-./scripts/dev.sh shell
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
+# Terminal 1; keep running until the tour has saved all four files
+./scripts/dev.sh guide slam_mode:=mapping
+# Terminal 2; default map name is supermarket
+./scripts/dev.sh map-tour supermarket
 ```
 
-先用低速走遍走道，然後在主機終端機儲存地圖：
+`map_tour` 依 `shopping_zone_manager/config/map_tour.yaml` 逐一送出 NavigateToPose 目標，涵蓋三條走道全長、南北橫向通道、入口及結帳區，最後回到原點。北側橫向路段採 y=6.1，避開 y=5.3 的端架；pytest 以 SDF 所有碰撞盒、車體外接圓加 0.15 公尺餘裕檢查航點及相鄰連線。這是幾何檢查，實際路徑由 Nav2 決定，仍須在模擬驗證。
+
+`map_tour` 與共用 `experiment_node` 只透過 Nav2 action 送出地圖目標，不讀取 `/odom` 作為真值，可沿用預設 EKF 流程；建圖品質取決於 EKF 與 slam_toolbox。納入版本管理的標準地圖應使用預設 `odom_source:=ekf` 產生，以保留含漂移里程計的模擬條件。若要比較理想真值里程計，停止原模擬後以 `./scripts/dev.sh guide slam_mode:=mapping odom_source:=ground_truth` 重新啟動，再於另一終端機執行 `./scripts/dev.sh map-tour supermarket_ground_truth`，另存比較地圖。
+
+預設每個航點最多失敗兩次（重試一次），之後跳過；單一目標逾時 150 秒，整趟導航逾時 1800 秒，皆使用實際經過時間，模擬暫停也會逾時。目標逾時先取消並等待終止，取消無法確認時直接結束。完整跑完序列後會等待最後掃描更新，再以 `map_saver_cli` 儲存 `.yaml/.pgm`，呼叫 `/slam_toolbox/serialize_map` 儲存 `.posegraph/.data`；整趟逾時或中斷不自動儲圖。JSON 摘要列出到達、跳過、尚未執行、逾時及儲檔結果；有跳過或儲檔失敗皆以非零結束碼退出。跳過航點後仍可能產生不完整地圖，確認全部到達再採用。
+
+產物位於 `ros2_ws/src/shopping_robot_navigation/maps/`；只有標準 `supermarket.yaml`、`supermarket.pgm`、`supermarket.posegraph`、`supermarket.data` 允許加入 Git，其他名稱仍忽略。四檔須來自同一次建圖，重建與檢核方式見 [地圖說明](ros2_ws/src/shopping_robot_navigation/maps/README.md)。也保留 `./scripts/dev.sh save-map NAME` 供手動儲存；需要手動建圖時改用 `mapping` 與鍵盤遙控，完成後再儲圖。
+
+巡航完成後以 Ctrl-C 停止第一個終端機的整套 `guide`，每次重新從出生點啟動一種定位模式。第一種載入 slam_toolbox 位姿圖前綴，不加副檔名：
 
 ```fish
-./scripts/dev.sh save-map supermarket
-```
-
-這會在 `ros2_ws/src/shopping_robot_navigation/maps/` 儲存格網 `.yaml/.pgm` 以及 slam_toolbox `.posegraph/.data`。不要在 AMCL 模式使用此指令要求序列化 SLAM；此時沒有 slam_toolbox 服務。
-
-停止建圖（Ctrl-C）後，選擇一種導航方式，每次只啟動一個模擬：
-
-```fish
-# Live mapping with Nav2; no saved map required
-./scripts/dev.sh guide
-# Saved SLAM pose graph; map is a prefix without an extension
+# Terminal 1
 ./scripts/dev.sh guide slam_mode:=localization map:=/ws/src/shopping_robot_navigation/maps/supermarket
-# Saved occupancy grid with AMCL
-./scripts/dev.sh guide slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# Terminal 2, after Nav2 is ready
+./scripts/dev.sh loc-check
 ```
+
+完成後停止這套 `guide`，再驗證第二種 AMCL 格網定位：
+
+```fish
+# Terminal 1
+./scripts/dev.sh guide slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# Terminal 2; publish the known spawn pose to AMCL before moving
+./scripts/dev.sh loc-check -p publish_initial_pose:=true
+```
+
+`localization_check` 依 `zones.yaml` 順序走訪全部六區；每區目標結束後等待 2 秒，再採樣 3 秒。每筆採樣以真值訊息時間戳查詢 `map → base_footprint`，只接受新鮮資料（模擬時間及接收時間皆檢查），不足五筆、缺 TF、導航失敗或未走完六區均為 FAIL。每區輸出最後 TF／真值距區域座標的平面距離，以及定位誤差平均值、RMSE、最大值；最後另列所有採樣的統計。PASS 要求每區所有採樣定位誤差 **< 0.15 公尺、< 5 度**，最後真值距區域目標 **≤ 0.3 公尺**；整體 PASS 才回傳零結束碼。
+
+真值參數 `truth_topic` 預設 `/sim/ground_truth_odom`，兩種里程計模式都使用此獨立真值，不再探索主題或回退至 `/odom`。可用 `-p truth_topic:=/custom_truth` 覆寫；只接受 `(sim_world, base_footprint_gt)` 或舊版 `(odom|world|map, base_footprint)` 框架配對，其餘會明確報錯。真值與地圖必須共用出生原點／朝向；EKF 模式下 `sim_world` 與估測 TF 樹沒有連線，檢查直接比較座標，不會以待測的 map 校正轉換真值。預設 `/odom` 是會漂移的 EKF 估測，不能當作真值；強制選用時會警告並拒絕執行。只有模擬已用 `odom_source:=ground_truth` 啟動，且檢查另以 `./scripts/dev.sh loc-check -p truth_topic:=/odom -p odom_source:=ground_truth` 明確宣告相同模式時，才允許舊版來源；檢查參數不會切換模擬模式。這些模擬結果仍不代表真實硬體精度。
+
+兩個工具都透過 `dev.sh` 設定 `use_sim_time:=true`。直接於已載入 ROS 環境的容器內執行可調整參數：
+
+```bash
+ros2 run shopping_zone_manager map_tour --ros-args -p use_sim_time:=true -p map_name:=supermarket -p max_failures:=2 -p goal_timeout:=150.0 -p overall_timeout:=1800.0
+ros2 run shopping_zone_manager localization_check --ros-args -p use_sim_time:=true -p report_file:=/tmp/localization_check.json
+```
+
+巡航、定位檢查、`goto`、`/shopping/goto_zone`、跟隨與鍵盤控制必須互斥操作；尚無模式管理器或速度仲裁。`map → odom` 在每次啟動時只由所選 slam_toolbox 或 AMCL 發布。定位用解析度、雷射上限及座標框架與 mapper 一致；slam_toolbox 保留 `map_start_at_dock: true`，從出生點的第一筆建圖掃描開始，不同時設定優先權更高的 `map_start_pose`（[Humble 實作](https://github.com/SteveMacenski/slam_toolbox/blob/humble/src/slam_toolbox_common.cpp)）。AMCL 使用 `(0,0,0)` 初始姿態，檢查工具的 `publish_initial_pose` 會在移動前另外發布 `/initialpose`。本次未調整控制器與規劃器，也尚未執行這套巡航及兩種離線定位的 ROS／Gazebo 驗收。
 
 導航就緒後，從另一個終端機送出目標：
 
