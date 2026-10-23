@@ -14,11 +14,14 @@ def generate_launch_description():
     time = LaunchConfiguration('use_sim_time')
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
+        DeclareLaunchArgument('initial_mode', default_value='guide'),
         DeclareLaunchArgument('odom_source', default_value='ekf', choices=['ekf', 'ground_truth']),
         DeclareLaunchArgument('headless', default_value='true'),
         DeclareLaunchArgument('person', default_value='false'),
         DeclareLaunchArgument('map', default_value=''),
         DeclareLaunchArgument('slam_mode', default_value='mapping'),
         include('shopping_robot_gazebo', 'sim.launch.py', {'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person')}),
-        include('shopping_robot_navigation', 'navigation.launch.py', {'slam_mode': LaunchConfiguration('slam_mode'), 'map': LaunchConfiguration('map'), 'use_sim_time': time}),
+        include('shopping_robot_navigation', 'navigation.launch.py', {'use_mux': LaunchConfiguration('use_mux'), 'slam_mode': LaunchConfiguration('slam_mode'), 'map': LaunchConfiguration('map'), 'use_sim_time': time}),
+        include('shopping_robot_bringup', 'mode_mux.launch.py', {'use_mux': LaunchConfiguration('use_mux'), 'initial_mode': LaunchConfiguration('initial_mode'), 'use_sim_time': time}),
         Node(package='shopping_zone_manager', executable='zone_navigator', parameters=[{'use_sim_time': time}], output='screen')])

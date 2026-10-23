@@ -157,6 +157,33 @@ ros2 topic echo /imu/with_covariance --once
 
 `/sim/odom_drift` 每 5 秒發布一次 Float32MultiArray，依序為平移誤差（m）、絕對航向誤差（rad）、累積真值路程（m）、平移誤差／路程（m/m）、航向誤差／路程（rad/m）。未移動時最後兩項為 NaN。監測器依時間插值真值，跨越 0.1 秒以上的資料缺口便略過，不外插；資料過期時不重播舊統計。請從出生點開始整段量測，至少比較直線、轉彎與返回起點；真值模式誤差應接近零（含插值殘差），EKF 應呈現非零漂移，預期比單靠輪速積分的偏航穩定，但尚無容器量測數字或保證門檻。種子 42 只固定輪速噪聲序列，不保證物理模擬完全重現。參數、covariance 與離線 `odom_metrics.py` 介面見[架構文件](docs/ARCHITECTURE.md)。
 
+## 模式管理與速度仲裁
+
+`guide`／`follow` 預設 `use_mux:=true`，分別以 `initial_mode:=guide`／`initial_mode:=follow` 請求啟動模式，保留既有 `./scripts/dev.sh goto` 操作。等待 `/mode_manager/state` 顯示 `GUIDE` 後再送區域目標；切換期間顯示 `IDLE` 並持續輸出零速，會取消舊導航、停用跟隨及清除舊命令。若要每次啟動都先待機，傳入 `initial_mode:=idle`。
+
+```bash
+./scripts/dev.sh mode idle
+./scripts/dev.sh mode guide
+./scripts/dev.sh mode follow
+./scripts/dev.sh mode teleop
+./scripts/dev.sh estop
+./scripts/dev.sh reset
+```
+
+`estop` 鎖定零速，`reset` 僅回到 `IDLE`，需再明確請求移動模式。也可發布 `std_msgs/Bool` 的 `true` 至 `/safety/stop`；`false` 不會解除急停。模式請求使用 `/mode_manager/request`（`std_msgs/String`，`idle|guide|follow|teleop|estop|reset`）；`/mode_manager/state` 與 `/cmd_vel_mux/active` 為保留最新值的 String。follow 程序只在 follow bringup 啟動；guide bringup 無法憑模式請求建立缺少的跟隨節點或人物。
+
+鍵盤在仲裁流程中必須改送專用輸入，先請求 `teleop`，再於已載入 ROS 環境的終端機執行：
+
+```bash
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/cmd_vel/teleop
+```
+
+Nav2 平滑器輸出 `/cmd_vel/nav`、直接跟隨輸出 `/cmd_vel/follow`；只有獨立程序 `cmd_vel_watchdog` 發布底盤 `/cmd_vel`。仲裁器以 20 Hz 發布內部 `/cmd_vel_mux/output`；nav／follow／teleop 的接收逾時分別為 0.5／0.3／0.5 秒，資料過期後下一次更新歸零。看門狗以單調時鐘檢查仲裁輸出，超過 0.25 秒未收到命令，於下一個 50 毫秒更新發布零速，模擬暫停不會停止其計時。限速為 0.6 m/s、1.2 rad/s，一般加速度為 0.6 m/s²、1.2 rad/s²，零速安全命令立即生效，預設不倒車。
+
+純邏輯與單獨執行 `cmd_vel_mux` 都預設 `IDLE`，程序重啟不自行恢復先前模式。launch 的 `initial_mode` 是明確的便利性例外：重新執行整個 guide／follow launch（或以相同參數重啟節點）會重新請求該模式；有重啟風險的驗收請使用 `initial_mode:=idle`。launch 未設定自動 respawn。若獨立看門狗已鎖定急停，重啟仲裁器不會解除，仍須 `reset`。
+
+`use_mux:=false` 恢復 Nav2／跟隨直接發布 `/cmd_vel`，不啟動模式管理與看門狗，必須維持舊有流程互斥。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/ARCHITECTURE.md)。
+
 ## 受限網路的 ROS 套件鏡像
 
 只有無法連線 `packages.ros.org` 的網路才需要設定。`ROS_APT_MIRROR` 填入可用鏡像的完整 ROS 2 Ubuntu 套件庫網址（結尾通常為 `/ros2/ubuntu`），fish 範例：
@@ -184,7 +211,7 @@ Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執�
 
 ## 安全與驗證狀態
 
-所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，只有 follow launch 主動啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用（`use_mux:=false` 時維持 launch 直接啟用）；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
@@ -215,7 +242,7 @@ python3 scripts/follow_state_stats.py follow-state.log --sample-period 0.05
 
 工具解析 `data: STATE: 原因` 或 `state: STATE` 紀錄，可在同一行前綴 `[秒數]` 或 `秒數 `。有時間戳時須有限且嚴格遞增；無時間戳時依序假設每筆 0.05 秒（20 Hz），遺漏樣本或僅記錄狀態變更時須提供時間戳，否則每分鐘切換率與停留時間僅為估算。混用有／無時間戳會拒絕分析。輸出切換總數、每分鐘切換率與各狀態停留次數／總計／平均／最小／最大秒數；首尾停留區間只計算觀測範圍，最後一筆不外推。亦可呼叫 ROS-free 的 `follow_metrics.state_statistics([(t, state), ...])`。
 
-本階段尚無全域模式管理器；follow 執行期間不可另外送出 Nav2 目標、執行 guide 或鍵盤控制。交接僅管理自己送出的動作，獨立命令逾時看門狗與跨流程仲裁仍待後續整合。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
+guide／follow 預設啟用全域模式管理、速度仲裁與獨立輸出看門狗，操作方式見下節；一次只啟動一個 bringup，跟隨期間仍不可另外送出 Nav2 目標，以免干擾跟隨自行管理的導航動作。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
 
 純 Python 測試可在容器執行（`./scripts/dev.sh test`），也可在任何已安裝 pytest、pyyaml、xacro 的 Python 3.10 環境執行：
 
