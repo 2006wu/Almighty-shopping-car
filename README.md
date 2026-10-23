@@ -76,6 +76,31 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
 人物是本機圓柱幾何模型，不需連線下載 Fuel 素材。路徑唯一來源為 `shopping_robot_gazebo/config/person_path.yaml`；模擬人物與 UWB 使用相同模擬時間插值。人物會循環走過三條走道；測試直接解析 SDF 碰撞盒，驗證區域有 0.55 公尺淨空、人物整條路徑有 0.30 公尺淨空。`uwb_follow.yaml` 可調整噪聲、偏差、NLOS、掉包及錨點陣列；兩錨點實驗須同時縮短 `anchor_x/anchor_y`，並將車體 xacro 的 `anchor_count` 改成 2 或以 xacro 參數產生相符模型。錨點移位時也需同步修改 xacro 的錨點屬性。這是平面測距模型，尚未模擬高度差與完整無線電傳播。
 
+## 里程計來源與漂移比較
+
+`sim`／`mapping`／`guide`／`follow` 預設 `odom_source:=ekf`，由 robot_localization 40 Hz 融合有噪聲的輪速與 IMU 偏航角速度，發布 `/odom` 及唯一的 `odom → base_footprint`。六軸 IMU 不提供絕對航向；位置、航向仍會漂移。Nav2 velocity_smoother 與 SLAM 仍使用 `/odom`／`odom`。此次新增 apt 相依套件，需先重建 compute 映像與 colcon 建置。
+
+比較時每次停止整個模擬，再以相同初始姿態、速度命令及路線各跑一次：
+
+```fish
+./scripts/dev.sh mapping odom_source:=ekf
+# Stop the previous simulation before starting the comparison
+./scripts/dev.sh mapping odom_source:=ground_truth
+```
+
+`ground_truth` 保留舊版模擬真值 `/odom` 與 TF；EKF 模式不發布 `odom → sim_world`，避免宣稱估測車體與世界真值永遠一致。兩種模式都發布 `/sim/ground_truth_odom`（`sim_world → base_footprint_gt`），且不橋接真值 TF 或輪速 TF。RViz 預設 `odom`，導航切成 `map`；人物真值仍在 `/uwb/person_ground_truth`（`sim_world`），可記錄供評估，不能直接疊到 EKF 的 `odom` 畫面。
+
+在另一個容器終端機觀察自動啟動的漂移監測器：
+
+```bash
+ros2 topic echo /sim/odom_drift
+ros2 topic hz /odom
+ros2 topic echo /wheel_odom_noisy --once
+ros2 topic echo /imu/with_covariance --once
+```
+
+`/sim/odom_drift` 每 5 秒發布一次 Float32MultiArray，依序為平移誤差（m）、絕對航向誤差（rad）、累積真值路程（m）、平移誤差／路程（m/m）、航向誤差／路程（rad/m）。未移動時最後兩項為 NaN。監測器依時間插值真值，跨越 0.1 秒以上的資料缺口便略過，不外插；資料過期時不重播舊統計。請從出生點開始整段量測，至少比較直線、轉彎與返回起點；真值模式誤差應接近零（含插值殘差），EKF 應呈現非零漂移，預期比單靠輪速積分的偏航穩定，但尚無容器量測數字或保證門檻。種子 42 只固定輪速噪聲序列，不保證物理模擬完全重現。參數、covariance 與離線 `odom_metrics.py` 介面見[架構文件](docs/ARCHITECTURE.md)。
+
 ## 受限網路的 ROS 套件鏡像
 
 只有無法連線 `packages.ros.org` 的網路才需要設定。`ROS_APT_MIRROR` 填入可用鏡像的完整 ROS 2 Ubuntu 套件庫網址（結尾通常為 `/ros2/ubuntu`），fish 範例：
@@ -105,7 +130,7 @@ Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執�
 
 所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，只有 follow launch 主動啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
-跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它將 base_link 估測值轉到 odom 與真值比較；目前假設 sim_world 與 odom 起點對齊，結果包含里程計漂移及時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
+跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
 跟隨模式現在可將持續受阻的有效目標交給 Nav2 繞行：距離超過 1.3 公尺且持續受阻 0.5 秒後交接；視線受阻期間直接模式原地等待（`BLOCKED_WAIT`），避免貼近貨架角落；視線暢通且前方淨空大於 0.8 公尺持續 0.5 秒後，或視線暢通且目標已接近、導航成功時，取消目標並恢復直接跟隨。`/follow/state` 增加 `NAV2_HANDOFF` 與 `BLOCKED_WAIT`，`/follow/handoff_goal` 為 map 座標的 PoseStamped，可加入 RViz；跟隨模式可將 Fixed Frame 改為 `map`。導航中直接控制器不發布速度；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。NavFn 共用容差由 0.3 改為 0.8 公尺，以允許規劃至人物旁的可通行終點；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。已於 Docker／Gazebo 跑 240 秒驗證（見 PROGRESS）；視線抖動造成走走停停仍待改善。
 
@@ -119,6 +144,6 @@ python3 -m pytest -q
 python3 scripts/check_static.py
 ```
 
-2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
+此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
 
 [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)

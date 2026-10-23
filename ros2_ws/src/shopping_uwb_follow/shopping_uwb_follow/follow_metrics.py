@@ -8,8 +8,8 @@ from statistics import mean
 class FollowSample:
     time: float
     estimate: tuple  # (x, y) in base_link
-    robot_pose: tuple  # (x, y, yaw) in odom
-    ground_truth: tuple  # (x, y) in odom (sim_world is aligned at spawn)
+    robot_pose: tuple  # (x, y, yaw) in a common world frame
+    ground_truth: tuple  # (x, y) in the same world frame as robot_pose
 
 
 def sample_metrics(sample):

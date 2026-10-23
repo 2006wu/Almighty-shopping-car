@@ -43,3 +43,10 @@ def test_compose_mirror_arguments_and_local_ports():
         assert '--platform' not in dockerfile
     assert services['display']['network_mode'] == 'service:compute'
     assert all(p.startswith('127.0.0.1:') for p in services['compute']['ports'])
+
+
+def test_compute_installs_robot_localization():
+    import xml.etree.ElementTree as ET
+    assert 'ros-humble-robot-localization' in (ROOT/'docker/Dockerfile.compute').read_text()
+    package = ET.parse(ROOT/'ros2_ws/src/shopping_robot_gazebo/package.xml').getroot()
+    assert 'robot_localization' in [item.text for item in package.findall('exec_depend')]
