@@ -89,7 +89,7 @@ RViz 設定只顯示 `base_link` 下的 UWB 估測標記，沒有依賴 `sim_wor
 | shopping_robot_slam | 非同步建圖、序列化位姿圖定位 |
 | shopping_robot_navigation | Humble Nav2、Regulated Pure Pursuit、代價地圖、速度平滑、可選 AMCL |
 | shopping_robot_bringup | 互斥使用的建圖／引導／跟隨入口與 RViz |
-| shopping_zone_manager | 區域資料驗證、別名查詢、NavigateToPose 動作客戶端 |
+| shopping_zone_manager | 區域資料驗證、別名查詢、NavigateToPose 動作客戶端及離線評估報表 |
 | shopping_uwb_follow | 測距、平面估測、濾波、控制及人物位姿模擬節點 |
 
 `/uwb/ranges` 是 Float32MultiArray，順序對應 `anchor_x/anchor_y`，單位公尺，NaN 表示掉包；無額外時間戳，僅限目前模擬。`/uwb/target` 為 base_link 下的 PointStamped，x 向前、y 向左；`/uwb/quality` 是 Float32，三錨點的基準值為 1、兩錨點為 0.5，再依測距殘差降低。這不是校準過的統計機率。
@@ -115,6 +115,8 @@ NavigateToPose 目標為人物本身的 map 座標，朝向由車體指向人物
 速度互斥以動作生命週期執行：NAV2 期間直接控制器不發布 `/cmd_vel`，由 Nav2 的 velocity_smoother 輸出；安全事件切回 DIRECT 後可立即發布零命令。取消回覆不代表已停止，須等終止結果；若仍在等待送出回覆，收到接受結果後補送取消。僅 NAV2→DIRECT 交接進入速度排空等待；確認目標終止後，若外部 `/cmd_vel` 已安靜至少 0.3 秒，或最新外部命令符合 `|v| < 0.02 m/s` 且 `|w| < 0.05 rad/s`，便可恢復直接發布。終止確認後最多再等 2 秒，即使仍收到非零命令也恢復；此上限不允許略過目標終止確認。沒有收到命令時自交接開始計算安靜時間。節點訂閱 `/cmd_vel`，依訊息發布端 GID 與自身節點發布端資訊排除自身命令，包含延遲收到的安全零速。排空判斷放在不匯入 ROS 的 `VelocityDrain`，安全事件在排空中仍立即發布零速。第一筆直接命令為零，控制器內部速度也歸零；目標更新不啟動此等待。傳輸例外而無法確定遠端是否仍執行時，保留控制權並記錄錯誤，禁止自行恢復直接移動；需操作者停止該流程並檢查動作服務。這不等於全域速度仲裁，follow 執行時不得另送導航目標或啟動鍵盤／guide。
 
 SDF 貨架止於 y=5.0，因此車體 `(2.4, 5.0)` 朝 +y、人物 `(1.0, 5.9)` 時走廊已清空；幾何測試直接讀取貨架碰撞盒，以接近末端的 `(2.4, 4.5)` 驗證走廊遮擋，並保留 y=5.0 的清空對照，未修改場景幾何。
+
+`shopping_zone_manager/eval_metrics.py` 補充純 Python 導航回合、旋轉足跡間距、跟隨距離／狀態及停止延遲評估；`eval_report` 從 CSV／JSONL 產生 JSON 與 Markdown，直接解析既有 SDF 碰撞盒，不匯入 ROS。指標定義、輸入欄位、主題對應與建議驗收門檻見 [模擬評估指標](METRICS.md)。錄製與 rosbag 轉換仍屬後續工作。
 
 ## 模擬設計決策
 
