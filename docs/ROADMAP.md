@@ -31,6 +31,18 @@
 - [x] 驗證六個區域與中文別名（即時建圖下連續 10 個目標成功）。
 - [x] 驗證動作拒絕／失敗／取消（2026-10-23，`dev.sh nav-check --tolerance-check` 6/6 通過）。
 - [ ] 驗證窄走道、結帳區、人員穿越與 AMCL 替代定位。
+- [ ] Nav2 改用使用者私有 fork（`2006wu/Eurobot-2027-Navigation2`，Humble、Nav2 1.1.16）原始碼建置，取代 apt Nav2，以便修改 Nav2 內部；說明引入方式及私有來源對公開 repo 建置的影響（2026-10-23 決定）。
+- [ ] 沿用 fork 的 to_pose 行為樹（`navigate_to_pose_w_selector.xml`），只調整恢復：保留 NonStop、保留 Shrink＋Wait、移除 Escape。
+- [ ] 控制器改用 fork 的 TEB（比 MPPI 好調），完成四輪差速車參數，並與 apt Nav2 的 guided shopping 結果比較。
+- [ ] 改寫 TEB 避障：Eurobot 針對單一對手（rival pose topic）的激進閃避，改為較溫和、較慢的繞行，處理窄走道與行人。
+
+## 平行項目：MCU 通訊與容器拆分（2026 年 10–12 月，2026-10-23 新增）
+
+- [ ] 定義與 MCU 型號無關的 micro-ROS 介面：`/cmd_vel`、輪速／encoder、IMU、急停、heartbeat 的 topic、型別、頻率與 QoS，並寫成介面文件。
+- [ ] 建立模擬韌體節點（命令逾時、斷線與 heartbeat 遺失時輸出零速），透過 Docker 內的 micro-ROS agent 連線。
+- [ ] 保留純 serial 備援選項（參考 `tdk_peace_and_joy`、`tdk_communication`、`tdk_machine_v1` 的 PC 端 bridge）。
+- [ ] 撰寫給新手的中文 micro-ROS 設定教學，從 rosserial 經驗銜接（過去用過 STM32 H7、F446RE；「451d」型號待確認）。
+- [ ] 依功能拆分多容器（暫定：main program、localization、navigation、display，另加 simulation、communication、可選 logging／evaluation；以 compose profiles 降低 Mac arm64 負載），並保留現有雙容器啟動方式；最終方案待使用者確認。
 
 ## 階段 3：UWB 模擬跟隨（2026 年 11–12 月）
 
