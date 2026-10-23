@@ -62,9 +62,39 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```fish
 ./scripts/dev.sh zones
 ./scripts/dev.sh goto 飲料區
+./scripts/dev.sh goto 生鮮區 --timeout 120
+./scripts/dev.sh cancel
 ```
 
-`goto` 直接呼叫 NavigateToPose，印出回饋及結果，失敗會回傳非零結束碼。應用程式也可發布 `std_msgs/String` 至 `/shopping/goto_zone`，由常駐區域節點處理。第一次建圖的原點與朝向應維持模擬初始姿態，重建地圖後要核對區域座標。
+`goto` 將區域名稱送至常駐 `zone_navigator` 的 `/shopping/goto_zone`（`std_msgs/String`），由同一節點持有 NavigateToPose 目標，印出回饋及結果；只有 `SUCCEEDED` 回傳 0，其餘結果回傳非零。Nav2 伺服器等待上限為 15 秒，`--timeout` 預設 300 秒；Ctrl-C 或操作期限到達時，先要求取消並有限等待最終結果，無法確認時會明確提示。第一次建圖的原點與朝向應維持模擬初始姿態，重建地圖後要核對區域座標。
+
+`cancel` 呼叫 `/shopping/cancel_goal`（`std_srvs/Trigger`）；也可發布 `std_msgs/Empty` 至 `/shopping/cancel`。服務回覆代表已處理取消要求，須等 `/shopping/zone_status` 的 `CANCELED` 才代表動作已取消；閒置時回覆 `IDLE`。明確執行 `cancel` 也會清除搶先流程的排隊目標。取消尚待接受的目標會在收到接受回覆後立刻執行；若取消回覆遺失，可再次執行 `cancel` 重送要求。操作介面目前使用共用狀態主題，沒有每位呼叫者的識別碼，請一次使用一個 `goto` 終端機，避免混用其他直接操作 Nav2 的客戶端。
+
+狀態格式固定為 `CODE: 說明`（實際說明為英文），距離回饋約每秒一筆：
+
+| 狀態碼 | 意義 |
+| --- | --- |
+| IDLE／PENDING／ACTIVE／CANCELING | 閒置／等待目標接受／移動中／等待取消結果 |
+| SUCCEEDED／ABORTED／CANCELED／REJECTED | 成功／執行失敗／已取消／目標被拒絕 |
+| TIMEOUT | 超過 `response_timeout`（預設 5 秒）未收到目標接受回覆 |
+| UNAVAILABLE／UNKNOWN_ZONE | Nav2 尚未就緒／區域不存在 |
+| BUSY／CANCEL_FAILED | 舊目標尚未結束，拒絕新要求／取消未獲確認，目標可能仍在執行 |
+
+預設忙碌時拒絕新目標。節點啟動參數 `preempt:=true`（預設 `false`）可改成先取消舊目標，收到舊動作最終結果後才送出最新排隊目標；也可透過 `ros2 param set /zone_navigator preempt true` 切換；Python 介面 `navigate(name, preempt=True)` 可逐次選用。接受回覆逾時後保留 future；延遲接受的目標立即取消，舊世代的結果不影響新目標。若 DDS 回覆永遠遺失，節點會持續拒絕新目標，避免同時移動；`TIMEOUT` 本身不保證機器人已停，須檢查 Nav2 與模擬狀態，不能只重啟區域節點就視為安全。
+
+維護者可在 `guide` 啟動、Nav2 啟用且地圖已涵蓋商店後執行：
+
+```fish
+./scripts/dev.sh nav-check
+# Optional per-case deadline (seconds)
+./scripts/dev.sh nav-check --case-timeout 180
+# Optional reachable-zone position check (metres)
+./scripts/dev.sh nav-check --tolerance-check --max-final-error 0.35
+```
+
+檢查工具會實際移動模擬機器人，請先結束既有導航，保持常駐節點閒置，並互斥使用鍵盤、跟隨與其他導航客戶端。工具使用同一套區域節點程式，但不重複建立指令訂閱與取消服務，依序檢查未知區域不送 action、不可達目標（`unreachable goal`）遭 `ABORTED`／`REJECTED`、遠端目標有至少 0.15 公尺進展後取消、取消後 2 秒內收到 `CANCELED` 且新鮮 `/odom` 速度接近零（各平面分量低於 0.02）、有效目標成功，以及第二個目標回覆 `BUSY`。最後印出 PASS／FAIL 表，任何失敗皆回傳非零；無法取消舊目標時停止後續案例。不可達目標使用 map 座標 `(50, 50)`，NavFn 容許值讀取安裝的 `shopping_robot_navigation/config/nav2_params.yaml`；送出前從安裝的 `supermarket.sdf` 牆面盒體取得商店外框，並讀取 `/global_costmap/costmap`，確認目標距離兩個外框皆超過「容許值＋1 公尺」。成本地圖外框涵蓋所有格子，因此也保證距離每個自由格子超過此門檻；缺少成本地圖、座標框架或幾何假設不符時回報失敗，不送出此目標。單項等待保留 `--case-timeout`（預設 120 秒），逾時後要求取消。這是待容器實測的工具，離線測試不代表模擬驗收。
+
+`--tolerance-check` 預設關閉，啟用後增加第六項 `zone tolerance`：送出一個正常區域目標，須收到 `SUCCEEDED`，再於 5 秒內取得結果之後接收的新鮮 `/odom`，計算與區域座標的平面距離。`--max-final-error` 預設 0.35 公尺，超標即失敗；PASS 與超標 FAIL 的表格都列出實測誤差與門檻，用來檢查共用 NavFn 0.8 公尺容許值是否使導覽提早停止。此量測直接將 odom 與 map 座標比較，僅適用模擬初始原點與朝向對齊且漂移可忽略的情況；不補償 AMCL／SLAM 的 map→odom 修正，不能當作一般定位精度驗收。
 
 停止其他移動流程後測試 UWB 跟隨（包含建圖與 Nav2 繞行）：
 

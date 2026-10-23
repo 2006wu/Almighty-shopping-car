@@ -318,3 +318,42 @@
 | 命令入口 | 容器內 `ros2 run shopping_zone_manager eval_report --help` 正常 |
 | 未驗證 | 以真實 Gazebo 記錄產生報表（尚無 rosbag／CSV 記錄流程，屬階段 5 第 3 項）、Mac arm64 |
 
+## 2026-10-23：區域導航拒絕／失敗／取消
+
+### 本次完成
+
+- 新增不匯入 ROS 的 `goal_tracker.py`，涵蓋待接受、執行中、取消中、成功、失敗、取消、拒絕、接受回覆逾時、伺服器未就緒與未知區域；以結構化狀態及世代計數器隔離舊目標事件。
+- 保留預設 `BUSY` 政策，提供預設關閉的 `preempt` 參數與逐次呼叫旗標；取消舊目標並收到最終結果後才送最新排隊目標。
+- 區域節點新增 Empty 取消主題、Trigger 取消服務、穩定時鐘計時器、約 1 Hz 回饋節流；保留逾時 future，延遲接受時立刻取消，結果或取消回覆遺失時不自行宣稱已停止。重複取消可重送要求。
+- `goto_zone` 改由常駐區域節點統一送 action，保留 15 秒伺服器等待、新增預設 300 秒的 `--timeout`，Ctrl-C／期限到達時要求取消並有限等待；新增 `cancel_zone` 與 `dev.sh cancel`。
+- 新增 `nav_action_check`／`dev.sh nav-check`，改以 map 座標 `(50, 50)` 的不可達目標（`unreachable goal`）取代貨架中心，讀取安裝版 NavFn 容許值，送出前確認與 SDF 牆面商店外框、實際全域成本地圖外框皆相隔超過容許值加 1 公尺，避免共用 0.8 公尺容許值使失敗案例意外成功；依序檢查未知區域、不可達目標、取消及停止、成功與忙碌拒絕，保留單項逾時與取消清理，輸出 PASS／FAIL 表與非零失敗碼。
+- 新增預設關閉的 `--tolerance-check`，另送正常區域目標並要求成功後的新鮮 `/odom`；以 `--max-final-error`（預設 0.35 公尺）判定抵達誤差，通過或超標的表格均列出量測值。
+- 補上生命週期、世代、逾時隔離、延遲接受取消、忙碌／搶先、閒置取消、待接受取消與入口靜態測試，新增不匯入 ROS 的幾何／量測邏輯與回歸測試，涵蓋容許值變更、成本地圖外框、外框距離門檻、牆體假設失效及抵達誤差超標，更新 README、架構及套件相依。
+- 核對 Humble 官方原始碼：[`ClientGoalHandle.cancel_goal_async`／`get_result_async`](https://github.com/ros2/rclpy/blob/humble/rclpy/rclpy/action/client.py)、[`CancelGoal.goals_canceling`](https://github.com/ros2/rcl_interfaces/blob/humble/action_msgs/srv/CancelGoal.srv)、[服務回呼的 request／response 雙參數簽章](https://github.com/ros2/rclpy/blob/humble/rclpy/rclpy/service.py)、[`rclpy.init(signal_handler_options=...)`](https://github.com/ros2/rclpy/blob/humble/rclpy/rclpy/__init__.py) 均已支援，無須 Iron API 或回退分支；[`remove_ros_args`](https://github.com/ros2/rclpy/blob/humble/rclpy/rclpy/utilities.py) 改以明確匯入。
+- 未提交、未推送、未安裝套件、未建立虛擬環境、未執行 Docker，未修改 ROADMAP 勾選。
+
+### 已執行檢查（執行紀錄，非審查驗證）
+
+- 指定沙盒虛擬環境執行 `/workspace/scratch/venv-shop/bin/python -m pytest -q`：334 個測試通過。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，涵蓋 YAML／RViz、XML／SDF／xacro、Python／launch 與 Bash 語法，以及兩／三錨點展開一致性。
+- `git diff --check`：無空白錯誤。
+
+### 限制與下一步（尚未驗證）
+
+- 此沙盒沒有 ROS；Humble API 已核對官方分支原始碼，但套件安裝入口、colcon 建置／測試與 DDS 執行行為仍需維護者在容器驗證。
+- `guide.launch.py` 就緒且地圖涵蓋全店後，以 `./scripts/dev.sh nav-check --tolerance-check` 實測五項基本檢查及第六項正常區域抵達誤差；工具會移動機器人，常駐管理器必須閒置，且不得同時執行鍵盤、跟隨或其他 action client。工具使用相同 adapter 的獨立實例，不重複建立指令／服務端點；不代表已驗證常駐主題與服務的端到端通訊。
+- 另需手動確認 `goto`、`cancel`、Ctrl-C、`--timeout`、搶先目標，以及人工延遲／遺失接受回覆時的自動取消。離線測試只驗證狀態機，不能冒充真實 DDS 故障注入。
+- 若目標接受回覆永遠遺失，無法取得 handle，會保持忙碌並拒絕新目標；`TIMEOUT` 不保證機器人已停，須檢查 Nav2 與模擬狀態。不得以重啟區域節點取代停止確認。
+- 目前共用狀態主題未加入呼叫者識別碼，互動操作限定單一 `goto` 呼叫者。尚無跨控制器仲裁，直接操作 Nav2 的外部客戶端不受區域狀態機管理。
+- 不可達目標依安裝版設定及全域成本地圖檢查；若牆面幾何不再符合預期、成本地圖涵蓋 `(50, 50)` 或容許值過大，案例會失敗而非跳過。正常區域誤差直接比較 `/odom` 與 map 座標，假設模擬初始原點／朝向對齊且漂移可忽略，未補償 AMCL／SLAM 的 map→odom 修正；定位有偏移時須另以 TF 驗證。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 測試與靜態檢查審查 | 待驗證 |
+| Humble 容器 colcon 建置／測試與安裝入口 | 待驗證 |
+| 常駐節點 goto／cancel 主題與服務、Ctrl-C／操作期限 | 待驗證 |
+| Nav2 拒絕／不可達／取消／成功／忙碌五項模擬檢查及正常區域抵達誤差 | 待驗證 |
+| 接受回覆遺失／延遲、舊世代隔離與取消重試 | 待驗證 |
+| 搶先流程與取消後兩秒內停止 | 待驗證 |

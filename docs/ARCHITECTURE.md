@@ -92,6 +92,16 @@ RViz 設定只顯示 `base_link` 下的 UWB 估測標記，沒有依賴 `sim_wor
 | shopping_zone_manager | 區域資料驗證、別名查詢、NavigateToPose 動作客戶端及離線評估報表 |
 | shopping_uwb_follow | 測距、平面估測、濾波、控制及人物位姿模擬節點 |
 
+### 區域導航狀態與取消
+
+`shopping_zone_manager/goal_tracker.py` 為不匯入 ROS 的狀態機；`node.py` 負責執行送出與取消效果。世代計數器將接受、結果、取消回覆綁定至同一個目標，舊世代事件不會覆寫目前狀態。流程為 `IDLE → PENDING → ACTIVE → SUCCEEDED／ABORTED`，拒絕目標為 `REJECTED`；取消經過 `CANCELING`，直到 action result 才回報 `CANCELED`。取消遭拒或通訊例外回報 `CANCEL_FAILED` 並保留忙碌狀態，不能視為已停止。
+
+常駐節點統一處理 `/shopping/goto_zone`，`goto_zone` 不再自行送 action，因此共用預設 `BUSY` 政策。節點參數 `preempt` 預設為 `false`，啟用後只保留最新排隊要求，舊動作結束後才送新目標；取消失敗或接受回覆逾時會清除排隊要求。`UNKNOWN_ZONE` 與 `UNAVAILABLE` 不送 action，忙碌時的新要求不改變舊目標生命週期。`/shopping/zone_status` 使用 `CODE: text`，`ACTIVE` 的距離回饋限速約 1 Hz；`/shopping/cancel`（Empty）與 `/shopping/cancel_goal`（Trigger）共用非阻塞取消流程。
+
+`response_timeout` 預設 5 秒，以單調時間判定；推進狀態的計時器使用穩定時鐘，即使模擬暫停仍能回報 `TIMEOUT`。目標姿態與標記時間戳仍使用一致的 `use_sim_time`。尚未接受時要求取消，收到 handle 後立即取消；逾時亦保留 future 與未結束標記，延遲接受的 handle 立即取消，直到舊請求確定結束才允許新目標。若 DDS 永遠不回覆，無法取得 handle，也無法證明已停止，因此保持忙碌，需維護者檢查 Nav2。遺失結果時同樣保留 handle 供後續取消，不自行假定成功。
+
+`goto_zone --timeout`（預設 300 秒）保留 Nav2 伺服器 15 秒等待上限，並在 Ctrl-C／期限到達時要求取消、有限等待結果；`cancel_zone` 的服務成功只表示已處理要求。共用狀態主題沒有呼叫者識別碼，目前限定單一互動呼叫者。`nav_action_check` 在專用模擬操作時段使用同一 adapter 的獨立實例，不建立第二組指令／服務端點，以 map 座標 `(50, 50)` 作為不可達目標（`unreachable goal`），讀取安裝版 NavFn 容許值，確認與 SDF 牆面所圍商店外框及實際全域成本地圖外框的距離皆超過容許值加 1 公尺；再要求 `ABORTED`／`REJECTED`，保留單項逾時取消。以 `/odom` 確認取消後停止，預設輸出五項檢查表。`--tolerance-check` 增加正常區域抵達誤差檢查，成功結果後取得新鮮 `/odom`，預設誤差上限 0.35 公尺（`--max-final-error` 可調），表格列出誤差；直接比較 odom 與 map，限模擬原點對齊且漂移可忽略時使用，不補償 map→odom 修正。常駐管理器須保持閒置，且不得同時執行跟隨、鍵盤或其他 action client。其離線語法檢查與狀態機 pytest 不取代 Humble 容器建置及 Gazebo 驗收。
+
 `/uwb/ranges` 是 Float32MultiArray，順序對應 `anchor_x/anchor_y`，單位公尺，NaN 表示掉包；無額外時間戳，僅限目前模擬。`/uwb/target` 為 base_link 下的 PointStamped，x 向前、y 向左；`/uwb/quality` 是 Float32，三錨點的基準值為 1、兩錨點為 0.5，再依測距殘差降低。這不是校準過的統計機率。
 
 三錨點使用平方距離差線性解加上 Gauss–Newton 修正；兩錨點解兩圓交點，有前後歧義。啟動時選前半平面，之後選最接近前次估計的位置；錨點預設沿左右方向配置，任意旋轉配置不保證可單靠前半平面消除歧義。平滑濾波在資料過期或時間倒退後重設。控制節點使用目標時間戳偵測過期，50 毫秒更新；超過 0.5 秒沒有有效目標或雷射便停止。
