@@ -63,13 +63,13 @@ def test_follow_wiring_for_both_mux_modes(enabled):
 
 
 @pytest.mark.parametrize('enabled', ['true', 'false'])
-def test_nav2_only_smoother_output_is_remapped(enabled):
+def test_nav2_velocity_outputs_are_remapped(enabled):
     env = load('shopping_robot_navigation/launch/navigation.launch.py')
     actions = env['start']({'use_mux': enabled, 'slam_mode': 'mapping', 'map': ''})
     group = actions[-1]
     remaps = [a for a in group.actions if a.kind == 'SetRemap']
     assert [(a.src, a.dst) for a in remaps] == (
-        [('cmd_vel_smoothed', '/cmd_vel/nav')] if enabled == 'true' else [])
+        [('cmd_vel_smoothed', '/cmd_vel/nav'), ('behavior_server:cmd_vel', '/cmd_vel/nav')] if enabled == 'true' else [])
     include = group.actions[-1]
     assert include.args[0].endswith('/nav2_bringup/launch/navigation_launch.py')
     assert dict(include.launch_arguments)['use_composition'] == 'False'

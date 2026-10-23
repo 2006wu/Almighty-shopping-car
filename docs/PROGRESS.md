@@ -505,3 +505,18 @@
 | guide／follow 仲裁接線與舊接線回復 | 待驗證 |
 | 模式切換、取消全部目標與跟隨停用確認 | 待驗證 |
 | 急停、來源／輸出逾時與重啟待機 | 待驗證 |
+
+### 本輪審查驗證（2026-10-23 20:30 臺北時間，盒內 Linux amd64，EKF 預設）
+
+| 項目 | 結果 |
+| --- | --- |
+| 重新基於 develop | 含 EKF、評估指標、區域動作、地圖巡航、跟隨遲滯（PR #4–#8）；ARCHITECTURE／setup.py／dev.sh／跟隨回呼測試衝突手動合併，保留兩側功能 |
+| 審查修正 | Nav2 behavior_server 的恢復行為原本直接發布 `/cmd_vel`（4 個發布者），會繞過仲裁、急停與看門狗；新增節點範圍重新映射 `behavior_server:cmd_vel → /cmd_vel/nav`，launch 測試同步更新 |
+| 純 Python 測試 | `pytest -q` 566 項通過；check_static PASS |
+| colcon | 7 套件建置成功；colcon test 520 項、0 錯誤、0 失敗、5 略過 |
+| `/cmd_vel` 發布者（guide） | 修正後只有 `cmd_vel_watchdog`；`/cmd_vel/nav` 由 velocity_smoother 與 behavior_server 發布、`cmd_vel_mux` 訂閱 |
+| `dev.sh nav-check --tolerance-check` | 6/6 PASS（取消並停止 PASS；最終誤差 0.108 m） |
+| 模式切換模擬檢查（盒內腳本，兩次） | 14/14 PASS：初始 GUIDE、導航中 estop 後真值速度 ≤0.32 s 內歸零並維持、goto 因取消結束、ESTOP 期間拒絕 guide、reset→IDLE、teleop 可旋轉／前進、teleop 停送 0.54 s 內停止、idle→guide 後 goto entrance 成功 |
+| 輸出看門狗 | teleop 旋轉中以 SIGSTOP 凍結 `cmd_vel_mux`，真值角速度 0.36 s 內歸零（門檻 1.0 s） |
+| Gazebo 跟隨 240 秒（use_mux） | 平均距離 3.02 m、最大 5.99 m、20 秒停滯窗 0、切換 61 次；無 Traceback |
+| 未驗證 | Mac arm64、Gazebo GUI、鍵盤 teleop_twist_keyboard 實際接線（以腳本發布 `/cmd_vel/teleop` 代替）、`use_mux:=false` 舊接線的模擬回歸 |

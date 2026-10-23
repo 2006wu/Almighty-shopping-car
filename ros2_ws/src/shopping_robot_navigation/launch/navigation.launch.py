@@ -23,8 +23,11 @@ def start(context):
     else:
         actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(get_package_share_directory('shopping_robot_slam')+'/launch/slam.launch.py'), launch_arguments={'use_sim_time': time, 'mode': mode, 'map': map_file}.items()))
     navigation = IncludeLaunchDescription(PythonLaunchDescriptionSource(nav+'navigation_launch.py'), launch_arguments=common.items())
-    # Override only the smoother output; preserve Nav2's internal cmd_vel_nav.
-    remaps = [SetRemap(src='cmd_vel_smoothed', dst='/cmd_vel/nav')] if LaunchConfiguration('use_mux').perform(context).lower() == 'true' else []
+    # Override the smoother output and the behavior_server recoveries (spin/backup/drive_on_heading/
+    # assisted_teleop publish cmd_vel directly); preserve Nav2's internal cmd_vel_nav. The node-scoped
+    # rule only matches behavior_server, so controller_server keeps its cmd_vel -> cmd_vel_nav remap.
+    remaps = [SetRemap(src='cmd_vel_smoothed', dst='/cmd_vel/nav'),
+              SetRemap(src='behavior_server:cmd_vel', dst='/cmd_vel/nav')] if LaunchConfiguration('use_mux').perform(context).lower() == 'true' else []
     actions.append(GroupAction(actions=[*remaps, navigation]))
     return actions
 

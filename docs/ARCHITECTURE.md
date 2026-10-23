@@ -188,6 +188,8 @@ flowchart LR
 | `use_mux` | guide／follow／navigation 預設 true；false 恢復原始直接速度接線 |
 | 跟隨 `observed_cmd_vel_topic` | 單獨執行為 /cmd_vel；仲裁接線為 /cmd_vel/nav |
 
+`use_mux:=true` 時，Nav2 velocity_smoother 的 `cmd_vel_smoothed` 與 behavior_server（spin／backup／drive_on_heading／assisted_teleop 恢復行為原本直接發布 `cmd_vel`）都以節點範圍重新映射導向 `/cmd_vel/nav`，controller_server 內部的 `cmd_vel_nav` 不變；因此 `/cmd_vel` 只有輸出看門狗一個發布者。
+
 仲裁器與看門狗的 timer 使用 STEADY_TIME，接收逾時採 `time.monotonic()`；所有 ROS 節點仍傳入相同 `use_sim_time`，感測器與 TF 保持模擬時間。來源逾時後下一個 50 毫秒更新歸零，輸出看門狗則在最後一筆仲裁命令後 0.25 秒逾時，再加最多一個 50 毫秒更新及傳輸排程延遲。純邏輯的 `VelocityMux.output()` 支援零速只送一次（`zero_period=None`）或低頻重送；ROS 預設持續 20 Hz 送零，作為獨立看門狗的存活訊號。看門狗直接監聽急停與 reset，即使仲裁器卡住也會鎖定急停。
 
 重啟後 `ModeManager` 與單獨啟動的仲裁節點一律從 IDLE 開始，沒有持久化移動狀態。guide／follow 的 `initial_mode` 為操作便利性明確例外，重新啟動相同 launch／保留相同參數會重新請求移動；驗收重啟安全時用 `initial_mode:=idle`，再以 `dev.sh mode MODE` 啟用。launch 不自動 respawn。只可有一個仲裁器與一個看門狗；若看門狗本身或橋接／模擬器也失效，本軟體鏈不能保證停止，未宣稱 Fortress 內建有已設定的命令逾時。`use_mux:=false` 沒有這層保護，須保持舊流程互斥。mapping 不啟動 Nav2，維持原本接線；需要保護時另外啟動 mode_mux 並把鍵盤改送 teleop 專用輸入。
