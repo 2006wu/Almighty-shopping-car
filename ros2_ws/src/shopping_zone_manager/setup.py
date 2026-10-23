@@ -8,4 +8,4 @@ setup(name=package_name, version='0.1.0', packages=[package_name],
       install_requires=['setuptools', 'PyYAML'], tests_require=['pytest'], zip_safe=True,
       maintainer='2006wu', maintainer_email='2006wu@users.noreply.github.com',
       description='Simulation shopping robot logic', license='Apache-2.0',
-      entry_points={'console_scripts': ['eval_report = shopping_zone_manager.eval_report:main', 'zone_navigator = shopping_zone_manager.node:main', 'goto_zone = shopping_zone_manager.cli:goto_main', 'list_zones = shopping_zone_manager.cli:list_main']})
+      entry_points={'console_scripts': ['eval_report = shopping_zone_manager.eval_report:main', 'zone_navigator = shopping_zone_manager.node:main', 'goto_zone = shopping_zone_manager.cli:goto_main', 'list_zones = shopping_zone_manager.cli:list_main', 'cancel_zone = shopping_zone_manager.cli:cancel_main', 'nav_action_check = shopping_zone_manager.nav_action_check:main']})

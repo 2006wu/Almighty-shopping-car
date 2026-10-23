@@ -23,7 +23,9 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   mapping | slam [LAUNCH_ARGS...]    Simulation and online mapping
   guide | nav [LAUNCH_ARGS...]     Simulation, localization/mapping, Nav2, zones
   follow [LAUNCH_ARGS...]  Simulation, UWB estimator and enabled controller
-  goto ZONE | zones        Navigate to a zone or list zones
+  goto ZONE [--timeout S] | zones  Navigate to a zone or list zones
+  cancel                   Request cancellation of the current zone goal
+  nav-check [ARGS...]       Run simulated navigation action checks
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
@@ -50,9 +52,11 @@ EOF
   guide|nav) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
   follow) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
   goto)
-    [[ $# == 1 ]] || { echo 'Usage: dev.sh goto ZONE' >&2; exit 2; }
-    run ros2 run shopping_zone_manager goto_zone "$1" --ros-args -p use_sim_time:=true
+    [[ $# -ge 1 ]] || { echo 'Usage: dev.sh goto ZONE [--timeout S]' >&2; exit 2; }
+    run ros2 run shopping_zone_manager goto_zone "$@" --ros-args -p use_sim_time:=true
     ;;
+  cancel) run ros2 run shopping_zone_manager cancel_zone --ros-args -p use_sim_time:=true ;;
+  nav-check) run ros2 run shopping_zone_manager nav_action_check "$@" --ros-args -p use_sim_time:=true ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
   save-map)
     [[ $# == 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple map name' >&2; exit 2; }
