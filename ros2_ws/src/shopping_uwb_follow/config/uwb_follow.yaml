@@ -20,3 +20,15 @@
     kp_distance: 0.7
     kp_bearing: 1.5
     enabled: false
+    route_around: true
+    handoff_margin: 0.3
+    handoff_delay: 0.5
+    # Cheap Nav2 preemption keeps moving targets fresh without cancel/drain stops.
+    goal_update_distance: 0.4
+    goal_update_period: 0.5
+    clear_margin: 0.15
+    resume_delay: 0.5
+    retry_cooldown: 3.0
+    robot_half_width: 0.25
+    # Exclude the 0.25 m person radius plus estimation allowance at the endpoint.
+    los_margin: 0.35

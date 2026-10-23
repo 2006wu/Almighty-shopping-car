@@ -1,12 +1,31 @@
+import math
+
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from geometry_msgs.msg import PointStamped, Twist
+from rclpy.time import Time
+from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import PointStamped, PoseStamped, Twist
+from nav2_msgs.action import NavigateToPose
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
+from tf2_ros import Buffer, TransformException, TransformListener
 from .follow_controller import FollowController, ControllerParams, front_obstacle_distance
+from .follow_handoff import (
+    GoalBook, VelocityDrain, HandoffParams, HandoffSupervisor,
+    line_of_sight_clear, scan_valid, transform_xy,
+)
 from .node_common import seconds
+
+
+def planar_pose(transform):
+    """Extract the planar transform used by the simulation's ground robot."""
+    t, q = transform.transform.translation, transform.transform.rotation
+    yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
+    return t.x, t.y, yaw
+
 
 
 class FollowNode(Node):
@@ -16,11 +35,37 @@ class FollowNode(Node):
         params = ControllerParams(**{k: self.declare_parameter(k, v).value for k, v in vars(defaults).items()})
         self.control = FollowController(params)
         self.enabled = self.declare_parameter('enabled', False).value
-        self.target = self.target_time = self.scan_time = None
+        route_around = self.declare_parameter('route_around', True).value
+        handoff = HandoffParams(follow_distance=params.follow_distance,
+                                obstacle_stop_distance=params.obstacle_stop_distance)
+        for key, value in vars(handoff).items():
+            if key not in vars(defaults):
+                setattr(handoff, key, self.declare_parameter(key, value).value)
+        self.supervisor = HandoffSupervisor(handoff, route_around)
+        self.robot_half_width = self.declare_parameter('robot_half_width', 0.25).value
+        self.los_margin = self.declare_parameter('los_margin', 0.35).value
+        if any(not math.isfinite(v) or v <= 0 for v in (self.robot_half_width, self.los_margin)):
+            raise ValueError('LOS parameters must be positive and finite')
+        self.client = self.tf_buffer = self.tf_listener = None
+        if route_around:
+            self.client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+            self.tf_buffer = Buffer(node=self)
+            self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.target = self.target_time = self.scan_time = self.scan = None
         self.obstacle = float('nan')
         self.last_time = seconds(self)
+        self.goal_handle = None
+        self.goal_pending = self.cancel_pending = self.cancel_requested = False
+        self.replacement = None
+        self.nav_status = 'none'
+        self.goals = GoalBook()
+        self.drain = VelocityDrain()
+        self.first_direct = False
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.last_own_publish = -math.inf
         self.state = self.create_publisher(String, '/follow/state', 10)
+        self.goal_publisher = self.create_publisher(PoseStamped, '/follow/handoff_goal', 10)
+        self.create_subscription(Twist, '/cmd_vel', self.on_cmd_vel, 10)
         self.create_subscription(PointStamped, '/uwb/target', self.on_target, 10)
         self.create_subscription(LaserScan, '/scan', self.on_scan, qos_profile_sensor_data)
         self.create_service(SetBool, '/follow/enable', self.enable)
@@ -29,10 +74,26 @@ class FollowNode(Node):
     def enable(self, req, resp):
         self.enabled = req.data
         if not self.enabled:
+            self.supervisor.step(seconds(self), 'IDLE', None, False, float('nan'), enabled=False)
+            self.replacement = None
+            self.cancel_goal()
             self.control.v = self.control.w = 0.0
             self.publisher.publish(Twist())
+            self.last_own_publish = seconds(self)
         resp.success, resp.message = True, 'Enabled' if self.enabled else 'Disabled'
         return resp
+
+    def on_cmd_vel(self, msg):
+        # Humble rclpy callbacks carry no publisher GID. This node only publishes
+        # during NAV2/drain for safety zeros, so ignore zero twists shortly after
+        # our own publication; any other message is from Nav2's smoother.
+        if self.supervisor.mode != 'NAV2' and not self.drain.active:
+            return
+        now = seconds(self)
+        own_zero = msg.linear.x == 0.0 and msg.angular.z == 0.0
+        if own_zero and now-self.last_own_publish <= 0.2:
+            return
+        self.drain.observe(now, msg.linear.x, msg.angular.z)
 
     def on_target(self, msg):
         if msg.header.frame_id != 'base_link':
@@ -41,20 +102,197 @@ class FollowNode(Node):
         self.target_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
 
     def on_scan(self, msg):
+        self.scan = msg
         self.scan_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
         self.obstacle = front_obstacle_distance(
             msg.ranges, msg.angle_min, msg.angle_increment,
             range_min=msg.range_min, range_max=msg.range_max)
 
+    def map_goal_and_los(self):
+        """Use nonblocking TF lookups at the corresponding measurement times."""
+        if self.target is None or self.scan is None:
+            return None, False
+        try:
+            robot = planar_pose(self.tf_buffer.lookup_transform(
+                'map', 'base_link', Time(seconds=self.target_time)))
+            laser = planar_pose(self.tf_buffer.lookup_transform(
+                self.scan.header.frame_id, 'base_link', Time.from_msg(self.scan.header.stamp)))
+        except TransformException:
+            return None, False
+        point = transform_xy(self.target, robot)
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x, pose.pose.position.y = point
+        yaw = robot[2]+math.atan2(self.target[1], self.target[0])
+        pose.pose.orientation.z, pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
+        scan = self.scan
+        los = line_of_sight_clear(scan.ranges, scan.angle_min, scan.angle_increment,
+                                  transform_xy(self.target, laser), self.robot_half_width,
+                                  self.los_margin, scan.range_min, scan.range_max)
+        return pose, los
+
+    def busy(self):
+        return self.goal_pending or self.goal_handle is not None
+
+    def send_goal(self, pose):
+        if not self.client.server_is_ready():
+            self.nav_status = 'failed'
+            return
+        generation = self.goals.begin()
+        self.goal_handle = None
+        self.cancel_pending = self.cancel_requested = False
+        self.goal_pending = True
+        self.nav_status = 'active'
+        goal = NavigateToPose.Goal()
+        goal.pose = pose
+        self.goal_publisher.publish(pose)
+        try:
+            future = self.client.send_goal_async(goal)
+            self.supervisor.record_goal(seconds(self),
+                                        (pose.pose.position.x, pose.pose.position.y))
+            future.add_done_callback(lambda f: self.goal_response(f, generation))
+        except Exception as exc:
+            # Delivery may have succeeded remotely; retain ownership.
+            self.nav_status = 'failed'
+            self.get_logger().error(f'Unable to send navigation goal; velocity held: {exc}')
+
+    def goal_response(self, future, generation):
+        if not self.goals.is_current(generation):
+            return
+        try:
+            handle = future.result()
+        except Exception as exc:
+            # Ownership remains reserved: delivery may have succeeded remotely.
+            self.nav_status = 'failed'
+            self.get_logger().error(f'Navigation response unavailable; velocity held: {exc}')
+            return
+        self.goal_pending = False
+        if not handle.accepted:
+            self.nav_status = 'failed'
+            self.drain.terminal(seconds(self))
+            return
+        self.goal_handle = handle
+        try:
+            handle.get_result_async().add_done_callback(
+                lambda f: self.goal_result(f, generation))
+        except Exception as exc:
+            self.nav_status = 'failed'
+            self.cancel_requested = True
+            self.get_logger().error(f'Unable to request navigation result; velocity held: {exc}')
+        if self.cancel_requested:
+            self.cancel_goal()
+
+    def cancel_goal(self):
+        self.drain.start(seconds(self))
+        if not self.busy():
+            self.drain.terminal(seconds(self))
+        self.cancel_requested = True
+        if self.goal_handle is not None and not self.cancel_pending:
+            self.cancel_pending = True
+            try:
+                generation = self.goals.generation
+                self.goal_handle.cancel_goal_async().add_done_callback(
+                    lambda f: self.cancel_response(f, generation))
+            except Exception as exc:
+                self.cancel_pending = False
+                self.get_logger().error(f'Navigation cancel request failed: {exc}')
+
+    def cancel_response(self, future, generation):
+        if not self.goals.is_current(generation):
+            return
+        try:
+            response = future.result()
+            if not response.goals_canceling:
+                self.get_logger().warn('Navigation cancellation not acknowledged; waiting for terminal result')
+        except Exception as exc:
+            self.cancel_pending = False
+            self.get_logger().error(f'Navigation cancellation failed: {exc}')
+        # A cancel response is not proof that the goal has stopped executing.
+
+    def goal_result(self, future, generation):
+        if not self.goals.is_current(generation):
+            return
+        try:
+            status = future.result().status
+        except Exception as exc:
+            self.nav_status = 'failed'
+            self.get_logger().error(f'Navigation result unavailable; velocity held: {exc}')
+            return
+        self.goal_handle = None
+        self.cancel_pending = False
+        self.nav_status = {GoalStatus.STATUS_SUCCEEDED: 'succeeded',
+                           GoalStatus.STATUS_CANCELED: 'canceled'}.get(status, 'failed')
+        self.drain.terminal(seconds(self))
+
     def tick(self):
         now = seconds(self)
         age = now-self.target_time if self.target_time is not None else float('inf')
-        obstacle = self.obstacle if self.scan_time is not None and 0 <= now-self.scan_time <= 0.5 else float('nan')
+        fresh = self.scan_time is not None and 0 <= now-self.scan_time <= 0.5
+        obstacle = self.obstacle if fresh else float('nan')
+        valid = fresh
+        pose, los = None, False
+        if self.client is not None:
+            scan = self.scan
+            valid = fresh and scan_valid(scan.ranges, scan.angle_min, scan.angle_increment,
+                                         scan.range_min, scan.range_max)
+            if not valid:
+                obstacle = float('nan')
+            pose, los = self.map_goal_and_los()
         v, w, state, reason = self.control.step(self.target, age, obstacle, now-self.last_time, self.enabled)
         self.last_time = now
-        cmd = Twist()
-        cmd.linear.x, cmd.angular.z = v, w
-        self.publisher.publish(cmd)
+        point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
+        decision = self.supervisor.step(now, state, self.target, los, obstacle,
+                                        self.nav_status, map_target=point,
+                                        enabled=self.enabled, scan_valid=valid)
+        if (self.client is not None and self.supervisor.route_around
+                and decision.mode == 'DIRECT' and state == 'FOLLOWING' and not los):
+            # Driving straight at a hidden person wedges the robot against shelf
+            # corners where Nav2 can no longer plan; hold until the handoff fires.
+            v = w = 0.0
+            self.control.v = self.control.w = 0.0
+            state, reason = 'BLOCKED_WAIT', 'Line of sight blocked; holding for Nav2 handoff'
+        if decision.action == 'cancel_goal':
+            self.replacement = None
+            self.cancel_goal()
+            self.first_direct = True
+        elif decision.action in ('send_goal', 'update_goal'):
+            self.replacement = pose
+            # Nav2 preempts the active goal; updates never cancel or drain.
+            if decision.action == 'update_goal' and not self.drain.active:
+                self.replacement = None
+                self.send_goal(pose)
+        if decision.mode == 'DIRECT':
+            self.replacement = None
+        if (decision.mode == 'NAV2' and self.replacement is not None
+                and not self.busy() and self.drain.ready(now)):
+            self.drain.reset()
+            # Use the newest target, rather than the position at cancel time.
+            self.replacement = None
+            self.send_goal(pose)
+        if self.cancel_requested and self.busy():
+            self.cancel_goal()
+        waiting = self.busy() or not self.drain.ready(now)
+        if decision.direct_publish and not waiting:
+            self.drain.reset()
+            cmd = Twist()
+            if not self.first_direct:
+                cmd.linear.x, cmd.angular.z = v, w
+            self.publisher.publish(cmd)
+            self.last_own_publish = seconds(self)
+            if self.first_direct:
+                self.control.v = self.control.w = 0.0
+            self.first_direct = False
+        else:
+            self.control.v = self.control.w = 0.0
+            # Safety stops bypass normal acceleration and cancellation latency.
+            if not valid or state in ('LOST', 'TOO_CLOSE', 'IDLE'):
+                self.publisher.publish(Twist())
+                self.last_own_publish = seconds(self)
+        if decision.mode == 'NAV2':
+            state, reason = 'NAV2_HANDOFF', decision.reason
+        elif waiting:
+            reason += '; waiting for navigation stop'
         self.state.publish(String(data=state+': '+reason))
 
 
@@ -64,6 +302,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     finally:
+        node.cancel_goal()
         node.publisher.publish(Twist())
         node.destroy_node()
         rclpy.shutdown()

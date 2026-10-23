@@ -64,3 +64,21 @@ def test_pytest_files_do_not_import_rclpy():
             modules = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
                        else [node.module or ''] if isinstance(node, ast.ImportFrom) else [])
             assert all(name.split('.')[0] != 'rclpy' for name in modules), path
+
+
+def test_follow_navigation_handoff_wiring_and_dependencies():
+    import xml.etree.ElementTree as ET
+    path = SRC/'shopping_robot_bringup/launch/follow.launch.py'
+    text = path.read_text()
+    assert "get_package_share_directory('shopping_robot_navigation')" in text
+    assert '/launch/navigation.launch.py' in text
+    assert 'zone_navigator' not in text
+    for name, default in [('slam_mode', 'mapping'), ('map', ''), ('route_around', 'true')]:
+        declaration = next(c for c in calls(path, 'DeclareLaunchArgument')
+                           if ast.literal_eval(c.args[0]) == name)
+        assert ast.literal_eval(keywords(declaration)['default_value']) == default
+        assert f"LaunchConfiguration('{name}')" in text
+    assert "'route_around': ParameterValue(LaunchConfiguration('route_around'), value_type=bool)" in text
+    root = ET.parse(SRC/'shopping_uwb_follow/package.xml').getroot()
+    dependencies = {el.text for el in root.findall('exec_depend')}
+    assert {'nav2_msgs', 'tf2_ros', 'action_msgs'} <= dependencies

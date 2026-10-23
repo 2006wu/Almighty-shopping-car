@@ -130,7 +130,9 @@ planner_server:
     planner_plugins: [GridBased]
     GridBased:
       plugin: nav2_navfn_planner/NavfnPlanner
-      tolerance: 0.3
+      # Follow goals coincide with the person obstacle; permit a nearby free endpoint.
+      # Shared with guide mode: blocked zone goals may also end up to 0.8 m away.
+      tolerance: 0.8
       use_astar: false
       allow_unknown: true
 smoother_server:
