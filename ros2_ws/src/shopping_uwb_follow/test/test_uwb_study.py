@@ -14,12 +14,13 @@ from shopping_uwb_follow.uwb_study import (
     relative_trajectory, render_csv, render_markdown, run_study, static_points,
 )
 
-ROOT = Path(__file__).resolve().parents[4]
+SRC = Path(__file__).resolve().parents[2]
+ROOT = SRC.parents[1]  # repository root; absent when colcon tests the mounted /ws/src
 
 
 @pytest.fixture
 def path():
-    return yaml.safe_load((ROOT/'ros2_ws/src/shopping_robot_gazebo/config/person_path.yaml').read_text())
+    return yaml.safe_load((SRC/'shopping_robot_gazebo/config/person_path.yaml').read_text())
 
 
 def test_seed_reproduces_all_exports(path):
@@ -101,6 +102,7 @@ def test_markdown_sections_and_csv_schema(path):
     assert len({r['case'] for r in rows if r['group'] == 'nlos'}) == 8
 
 
+@pytest.mark.skipif(not (ROOT/'scripts/uwb_study.py').exists(), reason='repository scripts not mounted')
 def test_cli_quick(tmp_path):
     md, csv_path = tmp_path/'report.md', tmp_path/'report.csv'
     result = subprocess.run([sys.executable, str(ROOT/'scripts/uwb_study.py'), '--quick',
