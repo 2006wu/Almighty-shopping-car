@@ -420,3 +420,48 @@
 | slam_toolbox 位姿圖定位（14:37） | `loc-check` 六區全部 PASS；定位誤差最大 0.024 m／0.39°，最後真值距區域 ≤ 0.133 m |
 | AMCL＋map_server（提交格網，20:03） | 六區導航皆成功，但整體 **FAIL**：snacks 定位誤差最大 0.168 m（門檻 0.15）、最後真值距區域 0.309 m（門檻 0.3）；其餘五區 PASS（最大 0.122 m、2.0°）。AMCL 調參列入階段 2 第 4 項 |
 | 未驗證 | Mac arm64、Gazebo GUI、ground_truth 里程計比較地圖、AMCL 調參 |
+
+## 2026-10-23：跟隨視線遲滯
+
+### 本次修改
+
+- 依前次 240 秒 Gazebo 的平均距離 3.30 公尺、最大距離 5.85 公尺與走道邊緣抖動，新增 ROS-free `LosDebouncer`。原始 LOS 連續受阻 `los_block_time=0.3` 秒才鎖定，恢復須在額外加寬 `los_clear_extra_width=0.10` 公尺的走廊連續暢通 `los_clear_time=0.6` 秒；短暫受阻不累加，時間倒退重設。安全事件也重設確認狀態。新參數拒絕非有限值與負值，倍率與側向門檻另有範圍／順序檢查。
+- `BLOCKED_WAIT` 僅使用已確認受阻的 LOS；原始受阻但尚未確認時維持 FOLLOWING，線速度乘 `los_uncertain_speed_factor=0.6`。側向 30°～100° 扇區取最小橫向淨空，從 `side_slow_clearance=0.35` 公尺的 `side_min_speed_factor=0.4` 線性增加到 `side_free_clearance=0.75` 公尺的 1.0；無側向涵蓋採最低倍率。兩倍率相乘並套用原有線速度／加速度限制。前方障礙停止與既有受限原地轉向維持原行為，不等待 LOS 確認；雷射無效、目標過近／遺失／過期與停用仍立即零 Twist。
+- NAV2 返回 DIRECT 必須使用已確認暢通的 LOS，新增 `min_nav_hold=1.5` 秒；目標更新不重設保持時間，成功／失敗／取消與安全事件略過保持時間。DIRECT 返回後以 `min_direct_hold=1.0` 秒抑制再交接；若已確認的 LOS 受阻連續達該時間，可提前交接，仍須符合 handoff_delay。搶占、世代編號、舊回呼隔離與取消／速度排空邏輯未修改，訂閱回呼維持 Humble 的單一 msg 參數。
+- 近距離（`follow_distance + handoff_margin=1.3` 公尺）恢復仍需 LOS 確認與 NAV2 最短保持，但略過原有額外 `resume_delay=0.5` 秒；導航成功直接返回。一般恢復約需 0.6 秒暢通確認再加 0.5 秒恢復等待，與 NAV2 保持時間並行；加寬走廊仍有障礙時可能更久。這是減少抖動與延後追近的取捨，不能保證距離改善。人物 map 目標及 NavFn 0.8 公尺容差未改。直接 max_linear=0.5 m/s 已高於人物 0.35 m/s，且等於 Nav2 velocity_smoother 上限，因此不提高；kp_distance=0.7 的比例控制本來就有約 0.5 公尺等速誤差。
+- `follow_metrics.state_statistics` 新增每分鐘切換數與每狀態停留統計；`scripts/follow_state_stats.py LOGFILE` 可分析 `/follow/state` 的 echo 文字或狀態紀錄。支援同行時間戳，無時間戳預設每筆 0.05 秒（可調）；混用時鐘拒絕，首尾區間只計觀測範圍。僅記錄切換事件或有掉樣時須使用時間戳，否則時間統計只是估算。
+- README 補齊所有新參數、限制與 CLI 用法；ARCHITECTURE 更新交接規則、側向減速與 Humble 自身零速排除說明。未勾選 ROADMAP。
+
+### 本次沙盒驗證
+
+| 檢查 | 執行結果 |
+| --- | --- |
+| `/workspace/scratch/venv-shop/bin/python -m pytest -q` | 371 項通過；涵蓋時間／空間遲滯、短脈衝不累加、時間倒退、不確定期間減速、側向倍率／扇區、保持時間與例外、安全立即停止、實際 tick 的擦邊抖動、統計解析與 CLI；既有搶占／回呼測試持續通過 |
+| `/workspace/scratch/venv-shop/bin/python scripts/check_static.py` | PASS：9 個 YAML／RViz、10 個 XML／SDF／xacro、44 個 Python、4 個 Bash；兩／三錨點 xacro 展開與錨點一致性通過 |
+| `git diff --check` | 通過 |
+
+### 限制與下一步
+
+本輪未執行 Docker、colcon、ROS 傳輸或 Gazebo；未安裝套件、建立虛擬環境或新增硬體／裝置／網路程式，也未提交或推送。靜態及假訊息驗證不等於 Humble 容器或硬體驗收。維護者下一步須完成 colcon 建置／測試及 240 秒 Gazebo 跟隨，與前版比較每分鐘切換數、各狀態停留、目標／取消數、真實距離平均／最大值及 20 秒停滯窗；特別確認 0.35 公尺恢復走廊是否過嚴、減速是否拉大距離、近距離恢復是否及時，以及 NAV2 保持期間 UWB 過期／雷射失效／停用的立即取消與零速。維持既有流程互斥與兩錨點／NLOS 限制；真實硬體、arm64 與整合效果仍未驗證。
+
+### 本輪審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 與靜態檢查審查 | 待驗證 |
+| Docker colcon 建置／測試 | 待驗證 |
+| Gazebo 跟隨 240 秒：切換率／停留／距離／停滯窗 | 待驗證 |
+| 保持時間內故障注入與安全停止 | 待驗證 |
+
+審查者調整（2026-10-23 14:20 臺北時間）：側向減速門檻由 0.45／0.9 公尺改為 0.35／0.75 公尺。橫向淨空由雷射中心起算，走道中央約 0.8 公尺；原門檻會讓走道內線速度降到約 0.87 倍、偏離中心時更低，可能慢於人物 0.35 m/s 而拉大跟隨距離。
+
+### 本輪審查驗證（2026-10-23 20:15 臺北時間，盒內 Linux amd64，EKF 預設）
+
+| 項目 | 結果 |
+| --- | --- |
+| 重新基於 develop | 含地圖巡航（PR #7）；PROGRESS 衝突保留兩側 |
+| 純 Python 測試 | `pytest -q` 534 項通過；check_static PASS |
+| colcon | 7 套件建置成功；colcon test 517 項、0 錯誤、0 失敗、5 略過 |
+| Gazebo 跟隨 240 秒（側向門檻 0.35／0.75 m） | 真實距離平均 **2.81 m**（前版 3.30）、最大 6.03 m（前版 5.85）、最小 0.14 m（人物路徑經過停止中的車體，TOO_CLOSE 有觸發）；20 秒停滯窗 0；狀態切換 54 次（約 13.5 次／分）；狀態樣本 NAV2_HANDOFF 1818、FOLLOWING 814、BLOCKED_WAIT 661、TOO_CLOSE 68、OBSTACLE_STOP 46；UWB 估測誤差平均 0.135 m |
+| 啟動紀錄 | 無 Traceback；僅啟動期 TF 等待、Gazebo 服務回應 Host unreachable 與 Nav2 搶占 halt 訊息 |
+| 未驗證 | 保持時間內的故障注入（待故障注入分支）、Mac arm64、Gazebo GUI；BLOCKED_WAIT 停留比前版多，距離仍遠大於 1.0 m 目標，後續可再調整 |

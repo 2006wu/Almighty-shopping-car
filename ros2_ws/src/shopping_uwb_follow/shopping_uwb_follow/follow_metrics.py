@@ -62,3 +62,59 @@ def evaluate_series(samples):
             'follow_distance_mean': mean(distances),
             'follow_distance_min': min(distances),
             'follow_distance_max': max(distances)}
+
+
+def state_statistics(samples):
+    """Summarize (time, state) samples, with final dwell censored at last sample.
+
+    Times must be finite and strictly increasing. Dwell includes both boundary
+    runs; no duration is extrapolated beyond the observed interval.
+    """
+    samples = list(samples)
+    if (not samples or any(not math.isfinite(t) or not isinstance(s, str) or not s
+                           for t, s in samples)
+            or any(b[0] <= a[0] for a, b in zip(samples, samples[1:]))):
+        raise ValueError('States require finite increasing times and nonempty names')
+    runs = {}
+    start, state = samples[0]
+    transitions = 0
+    for now, current in samples[1:]:
+        if current != state:
+            runs.setdefault(state, []).append(now-start)
+            start, state = now, current
+            transitions += 1
+    runs.setdefault(state, []).append(samples[-1][0]-start)
+    duration = samples[-1][0]-samples[0][0]
+    return {'transitions': transitions, 'duration': duration,
+            'transitions_per_minute': transitions*60/duration if duration else 0.0,
+            'dwell': {state: {'count': len(values), 'total': sum(values),
+                              'mean': mean(values), 'min': min(values), 'max': max(values)}
+                      for state, values in sorted(runs.items())}}
+
+
+def parse_state_log(lines, sample_period=0.05):
+    """Parse echo data or state log lines, optionally prefixed by [seconds].
+
+    Untimed logs use the explicitly supplied sample period (20 Hz by default).
+    Mixed timing is rejected rather than silently mixing clock domains.
+    """
+    import re
+    if not math.isfinite(sample_period) or sample_period <= 0:
+        raise ValueError('Sample period must be positive and finite')
+    names = 'NAV2_HANDOFF|FOLLOWING|BLOCKED_WAIT|OBSTACLE_STOP|TOO_CLOSE|LOST|IDLE'
+    pattern = re.compile(r'(?:data:\s*[\'"]?|\bstate[=: ]+|^\s*|\]\s*)('
+                         + names+r')\b', re.IGNORECASE)
+    timestamp = re.compile(r'\[([0-9]+(?:\.[0-9]+)?)\]|^\s*([0-9]+(?:\.[0-9]+)?)\s+')
+    samples, timed = [], None
+    for line in lines:
+        match = pattern.search(line)
+        if match is None:
+            continue
+        stamp = timestamp.search(line[:match.end(1)-len(match.group(1))])
+        has_time = stamp is not None
+        if timed is not None and timed != has_time:
+            raise ValueError('Do not mix timestamped and untimed state samples')
+        timed = has_time
+        now = float(stamp.group(1) or stamp.group(2)) if stamp else len(samples)*sample_period
+        samples.append((now, match.group(1).upper()))
+    return samples

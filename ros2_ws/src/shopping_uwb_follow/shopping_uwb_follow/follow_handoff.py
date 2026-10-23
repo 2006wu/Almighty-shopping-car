@@ -60,6 +60,45 @@ def line_of_sight_clear(ranges, angle_min, angle_increment, target_xy,
     return True
 
 
+class LosDebouncer:
+    """Latch blockage after persistence; release only on a wider clear corridor."""
+    def __init__(self, block_time=0.3, clear_time=0.6):
+        if any(not math.isfinite(v) or v < 0 for v in (block_time, clear_time)):
+            raise ValueError('LOS times must be finite and nonnegative')
+        self.block_time, self.clear_time = block_time, clear_time
+        self.reset()
+
+    def reset(self):
+        self.blocked = False
+        self.pending_since = self.last_time = self.clear_since = self.blocked_since = None
+        self.clear = False
+        self.uncertain = False
+
+    def step(self, now, raw_clear, wide_clear):
+        if not math.isfinite(now):
+            self.reset()
+            return False
+        if self.last_time is not None and now < self.last_time:
+            self.reset()
+        self.last_time = now
+        clearing = raw_clear and (wide_clear or not self.blocked)
+        self.clear_since = (now if self.clear_since is None else self.clear_since) if clearing else None
+        self.clear = self.clear_since is not None and now-self.clear_since >= self.clear_time
+        changing = (raw_clear and wide_clear) if self.blocked else not raw_clear
+        if changing:
+            if self.pending_since is None:
+                self.pending_since = now
+            delay = self.clear_time if self.blocked else self.block_time
+            if now-self.pending_since >= delay:
+                self.blocked = not self.blocked
+                self.blocked_since = now if self.blocked else None
+                self.pending_since = None
+        else:
+            self.pending_since = None
+        self.uncertain = not raw_clear and not self.blocked
+        return self.clear and not self.blocked
+
+
 @dataclass
 class HandoffParams:
     follow_distance: float = 1.0
@@ -71,6 +110,11 @@ class HandoffParams:
     clear_margin: float = 0.15
     resume_delay: float = 0.5
     retry_cooldown: float = 3.0
+    los_block_time: float = 0.3
+    los_clear_time: float = 0.6
+    los_clear_extra_width: float = 0.10
+    min_nav_hold: float = 1.5
+    min_direct_hold: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -84,10 +128,15 @@ class HandoffDecision:
 class HandoffSupervisor:
     def __init__(self, params=None, route_around=True):
         self.p = params or HandoffParams()
-        if any(not math.isfinite(v) or v <= 0 for v in vars(self.p).values()):
-            raise ValueError('Handoff parameters must be positive and finite')
+        nonnegative = {'los_block_time', 'los_clear_time', 'los_clear_extra_width',
+                       'min_nav_hold', 'min_direct_hold'}
+        if any(not math.isfinite(v) or (v < 0 if k in nonnegative else v <= 0)
+               for k, v in vars(self.p).items()):
+            raise ValueError('Handoff parameters must be finite and within their positive/nonnegative bounds')
         if not isinstance(route_around, bool):
             raise ValueError('route_around must be boolean')
+        self.los = LosDebouncer(self.p.los_block_time, self.p.los_clear_time)
+        self.nav_since = self.direct_since = None
         self.route_around = route_around
         self.mode = 'DIRECT'
         self.blocked_since = self.clear_since = self.last_goal = None
@@ -99,7 +148,7 @@ class HandoffSupervisor:
         self.last_goal, self.last_goal_time = tuple(map_target), now
 
     def step(self, now, state, target, los_clear, front_clearance, nav_status='none',
-             *, map_target=None, enabled=True, scan_valid=True):
+             *, map_target=None, enabled=True, scan_valid=True, los_clear_wide=None):
         """Targets are base-frame safety coordinates and map-frame goal coordinates."""
         action, reason = 'none', 'Direct following'
         previous = self.mode
@@ -109,11 +158,18 @@ class HandoffSupervisor:
         safe = (enabled and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
                 and valid_xy(target) and scan_valid
                 and not math.isnan(front_clearance) and front_clearance >= 0)
+        if not safe or clock_reset:
+            self.los.reset()
+        else:
+            self.los.step(now, los_clear, los_clear if los_clear_wide is None else los_clear_wide)
+        # Raw blockage during debounce is uncertain, never a clear return signal.
+        los_clear = self.los.clear and not self.los.blocked
         if not self.route_around or not safe or clock_reset:
             self.mode = 'DIRECT'
             self.blocked_since = self.clear_since = None
             if clock_reset:
                 self.retry_after = -math.inf
+                self.direct_since = self.nav_since = None
             reason = 'Direct only or safety stop'
         elif self.mode == 'NAV2':
             close = math.hypot(*target) <= self.p.follow_distance+self.p.handoff_margin
@@ -123,8 +179,10 @@ class HandoffSupervisor:
                 self.mode = 'DIRECT'
                 self.retry_after = now+self.p.retry_cooldown
                 reason = 'Navigation failed or map transform unavailable'
-            elif (nav_status == 'succeeded' or los_clear and close
-                  or self.clear_since is not None and now-self.clear_since >= self.p.resume_delay):
+            elif (nav_status == 'succeeded'
+                  or now-self.nav_since >= self.p.min_nav_hold
+                  and (los_clear and close or self.clear_since is not None
+                       and now-self.clear_since >= self.p.resume_delay)):
                 self.mode = 'DIRECT'
                 reason = 'Direct path restored or navigation succeeded'
             elif (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
@@ -133,14 +191,22 @@ class HandoffSupervisor:
             else:
                 reason = 'Navigation owns velocity'
         else:
-            blocked = state == 'OBSTACLE_STOP' or not los_clear
+            blocked = state == 'OBSTACLE_STOP' or self.los.blocked
             eligible = (blocked and valid_xy(map_target)
                         and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin
                         and now >= self.retry_after)
             self.blocked_since = (now if self.blocked_since is None else self.blocked_since) if eligible else None
-            if self.blocked_since is not None and now-self.blocked_since >= self.p.handoff_delay:
+            if (self.blocked_since is not None
+                    and now-self.blocked_since >= self.p.handoff_delay
+                    and (self.direct_since is None
+                         or now-self.direct_since >= self.p.min_direct_hold
+                         or self.los.blocked_since is not None
+                         and now-self.los.blocked_since >= self.p.min_direct_hold)):
                 self.mode, action, reason = 'NAV2', 'send_goal', 'Persistent blocked path'
+        if previous != 'NAV2' and self.mode == 'NAV2':
+            self.nav_since = now
         if previous == 'NAV2' and self.mode == 'DIRECT':
+            self.direct_since = now
             action = 'cancel_goal'
             self.blocked_since = self.clear_since = None
         if action in ('send_goal', 'update_goal'):

@@ -3,6 +3,7 @@
 These checks cover ownership races, not ROS transport or Humble integration.
 """
 import ast
+import math
 from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -10,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from shopping_uwb_follow.follow_controller import FollowController
+from shopping_uwb_follow.follow_controller import FollowController, side_clearance, side_speed_factor
 from shopping_uwb_follow.follow_handoff import GoalBook, VelocityDrain, HandoffSupervisor
 
 
@@ -28,7 +29,8 @@ def node_class():
     tree = ast.parse(source.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FollowNode')
     cls.bases = []
-    namespace = dict(seconds=lambda node: node.now,
+    namespace = dict(math=math, side_clearance=side_clearance,
+                     side_speed_factor=side_speed_factor, seconds=lambda node: node.now,
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
                      String=lambda **kwargs: NS(**kwargs),
                      NavigateToPose=NS(Goal=lambda: NS()),
@@ -58,6 +60,7 @@ def make_node():
     node.target = (3, 0)
     node.target_time = node.scan_time = 0.0
     node.scan = NS(ranges=[2], angle_min=0, angle_increment=1, range_min=0.1, range_max=12)
+    node.los_clear_wide = False
     node.obstacle = 0.4
     node.publisher = Mock()
     node.state = Mock()
@@ -265,10 +268,30 @@ def test_blocked_line_of_sight_holds_instead_of_driving_into_shelf():
     node = make_node()
     node.obstacle = 3.0  # FOLLOWING state, but the person is hidden behind a shelf.
     node.tick()
+    assert node.publisher.publish.call_args.args[0].linear.x > 0
+    assert node.state.publish.call_args.args[0].data.startswith('FOLLOWING')
+    node.now = node.target_time = node.scan_time = 0.3
+    node.tick()
     command = node.publisher.publish.call_args.args[0]
     assert command.linear.x == command.angular.z == 0
     assert node.state.publish.call_args.args[0].data.startswith('BLOCKED_WAIT')
     node.supervisor.route_around = False
-    node.now = node.target_time = node.scan_time = 0.1
+    node.now = node.target_time = node.scan_time = 0.4
     node.tick()
     assert node.publisher.publish.call_args.args[0].linear.x > 0
+
+
+def test_aisle_edge_flicker_keeps_direct_following_without_handoffs():
+    node = make_node()
+    node.obstacle = 3.0
+    pose, _ = node.map_goal_and_los()
+    for index in range(40):
+        raw_clear = index % 2 == 1
+        node.map_goal_and_los = lambda: (pose, raw_clear)
+        node.los_clear_wide = raw_clear
+        node.now = node.target_time = node.scan_time = index*0.05
+        node.tick()
+        assert node.state.publish.call_args.args[0].data.startswith('FOLLOWING:')
+        assert node.publisher.publish.call_args.args[0].linear.x > 0
+        assert node.supervisor.mode == 'DIRECT' and not node.busy()
+    node.client.send_goal_async.assert_not_called()

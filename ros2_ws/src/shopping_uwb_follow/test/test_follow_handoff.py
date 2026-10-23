@@ -61,7 +61,7 @@ def navigating():
 
 
 def test_continuous_blocking_delay_and_ownership():
-    s = HandoffSupervisor()
+    s = HandoffSupervisor(HandoffParams(los_block_time=0, los_clear_time=0))
     assert tick(s, 0).mode == 'DIRECT'
     assert tick(s, 0.9).action == 'none'
     tick(s, 0.95, state='FOLLOWING', los_clear=True, front_clearance=2)
@@ -75,7 +75,8 @@ def test_continuous_blocking_delay_and_ownership():
 def test_blocked_los_alone_triggers_navigation():
     s = HandoffSupervisor()
     tick(s, 0, state='FOLLOWING', front_clearance=2)
-    assert tick(s, 1, state='FOLLOWING', front_clearance=2).mode == 'NAV2'
+    tick(s, 0.3, state='FOLLOWING', front_clearance=2)
+    assert tick(s, 1.3, state='FOLLOWING', front_clearance=2).mode == 'NAV2'
 
 
 @pytest.mark.parametrize('kwargs', [dict(target=(1.3, 0)), dict(state='LOST'),
@@ -103,7 +104,9 @@ def test_clear_resume_delay_resets_with_obstruction():
     assert tick(s, 2.49, **clear).mode == 'NAV2'
     tick(s, 2.5)
     assert tick(s, 3, **clear).mode == 'NAV2'
-    assert tick(s, 3.5, **clear).action == 'cancel_goal'
+    assert tick(s, 3.5, **clear).mode == 'NAV2'
+    tick(s, 3.6, **clear)
+    assert tick(s, 4.11, **clear).action == 'cancel_goal'
 
 
 def test_clearance_threshold_and_immediate_close_resume():
@@ -138,8 +141,12 @@ def test_failure_cooldown(status):
 def test_parameter_validation(key, value):
     p = HandoffParams()
     setattr(p, key, value)
-    with pytest.raises(ValueError):
+    if value == 0 and key in ('los_block_time', 'los_clear_time', 'los_clear_extra_width',
+                              'min_nav_hold', 'min_direct_hold'):
         HandoffSupervisor(p)
+    else:
+        with pytest.raises(ValueError):
+            HandoffSupervisor(p)
 
 
 def test_direct_only_and_clock_reset():
