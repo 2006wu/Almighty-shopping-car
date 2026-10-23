@@ -14,7 +14,8 @@ def generate_launch_description():
     time = LaunchConfiguration('use_sim_time')
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('odom_source', default_value='ekf', choices=['ekf', 'ground_truth']),
         DeclareLaunchArgument('headless', default_value='true'),
         DeclareLaunchArgument('person', default_value='false'),
-        include('shopping_robot_gazebo', 'sim.launch.py', {'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person')}),
+        include('shopping_robot_gazebo', 'sim.launch.py', {'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person')}),
         include('shopping_robot_slam', 'slam.launch.py', {'mode': 'mapping', 'use_sim_time': time})])

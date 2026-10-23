@@ -21,12 +21,12 @@ class UWBEvaluation(Node):
         if not math.isfinite(self.max_skew) or self.max_skew < 0:
             raise ValueError('max_skew must be finite and nonnegative')
         self.publisher = self.create_publisher(Float32, '/uwb/estimate_error', 10)
-        self.create_subscription(Odometry, '/odom', self.on_odom, qos_profile_sensor_data)
+        self.create_subscription(Odometry, '/sim/ground_truth_odom', self.on_odom, qos_profile_sensor_data)
         self.create_subscription(PointStamped, '/uwb/person_ground_truth', self.on_truth, 10)
         self.create_subscription(PointStamped, '/uwb/target', self.on_target, 10)
 
     def on_odom(self, msg):
-        if msg.header.frame_id != 'odom' or msg.child_frame_id not in ('base_footprint', 'base_link'):
+        if msg.header.frame_id != 'sim_world' or msg.child_frame_id != 'base_footprint_gt':
             self.pose = None
             return
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
@@ -34,9 +34,9 @@ class UWBEvaluation(Node):
         self.pose = (stamp(msg), (p.x, p.y, yaw))
 
     def on_truth(self, msg):
-        # sim.launch publishes the identity odom -> sim_world transform.
+        # Both truth messages use simulation world coordinates; no estimated TF is needed.
         self.truth = ((stamp(msg), (msg.point.x, msg.point.y))
-                      if msg.header.frame_id in ('sim_world', 'odom') else None)
+                      if msg.header.frame_id == 'sim_world' else None)
 
     def on_target(self, msg):
         if msg.header.frame_id != 'base_link':
