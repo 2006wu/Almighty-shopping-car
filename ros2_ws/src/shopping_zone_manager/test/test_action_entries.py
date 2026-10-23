@@ -14,7 +14,10 @@ def test_navigation_entry_points_and_commands():
     scripts = entries['console_scripts']
     assert 'cancel_zone = shopping_zone_manager.cli:cancel_main' in scripts
     assert 'nav_action_check = shopping_zone_manager.nav_action_check:main' in scripts
-    dev = (ROOT / 'scripts/dev.sh').read_text()
+    dev_path = ROOT / 'scripts/dev.sh'
+    if not dev_path.exists():  # colcon test inside the container only mounts ros2_ws/src
+        return
+    dev = dev_path.read_text()
     assert '  cancel)' in dev and 'shopping_zone_manager cancel_zone' in dev
     assert '  nav-check)' in dev and 'shopping_zone_manager nav_action_check' in dev
 

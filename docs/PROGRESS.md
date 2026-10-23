@@ -357,3 +357,15 @@
 | Nav2 拒絕／不可達／取消／成功／忙碌五項模擬檢查及正常區域抵達誤差 | 待驗證 |
 | 接受回覆遺失／延遲、舊世代隔離與取消重試 | 待驗證 |
 | 搶先流程與取消後兩秒內停止 | 待驗證 |
+
+### 本輪審查驗證（2026-10-23 14:25 臺北時間，盒內 Linux amd64，EKF 預設）
+
+| 項目 | 結果 |
+| --- | --- |
+| 審查修正 | 重新基於 develop（含 EKF、評估指標）；`--tolerance-check` 改為優先使用 `/sim/ground_truth_odom`（`/odom` 在 EKF 下會漂移），無真值時才退回 `/odom` 並在結果標註；`test_action_entries` 在容器內（未掛載 `scripts/`）略過 dev.sh 檢查 |
+| 純 Python 測試 | `pytest -q` 402 項通過；check_static PASS |
+| colcon | 7 套件建置成功；colcon test 386 項、0 錯誤、0 失敗、1 略過 |
+| `dev.sh nav-check --tolerance-check --max-final-error 0.35` | 6/6 PASS：未知區域、不可達目標（NavFn 容差 0.800 m，最小間距 61.4 m）、取消並停止、有效目標、BUSY 策略、最終誤差 0.112 m（真值） |
+| 引導回歸 | 6/6 區域（drinks、snacks、produce、household、checkout、entrance）SUCCEEDED；地圖 TF 與真值差 ≤0.03 m；啟動紀錄無 Traceback |
+| 未驗證 | Mac arm64、Gazebo GUI、搶占（preempt=True）的模擬測試 |
+

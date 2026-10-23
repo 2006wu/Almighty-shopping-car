@@ -46,6 +46,15 @@ def main():
         del odometry[:-100]
 
     node.create_subscription(Odometry, '/odom', odom, 10)
+    # Simulation truth (sim_world shares the map origin at spawn); /odom drifts under the EKF,
+    # so the final-position check prefers truth and only falls back to /odom without it.
+    truth = []
+
+    def truth_cb(msg):
+        truth.append((time.monotonic(), msg.pose.pose.position.x, msg.pose.pose.position.y))
+        del truth[:-100]
+
+    node.create_subscription(Odometry, '/sim/ground_truth_odom', truth_cb, 10)
     node.create_subscription(OccupancyGrid, '/global_costmap/costmap',
                              lambda msg: costmaps.__setitem__(slice(None), [msg]),
                              QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
@@ -132,10 +141,14 @@ def main():
         wait_settled()
         require(node.tracker.state == State.SUCCEEDED, str(node.tracker.status))
         completed = time.monotonic()
-        require(wait_until(node, lambda: bool(odometry) and odometry[-1][0] > completed
-                           and time.monotonic() - odometry[-1][0] < 0.3, 5.0),
-                'no fresh post-result /odom')
-        return final_position_detail(*odometry[-1][1:3], target, args.max_final_error)
+        source = truth if wait_until(node, lambda: bool(truth) and truth[-1][0] > completed,
+                                     2.0) else odometry
+        label = '/sim/ground_truth_odom' if source is truth else '/odom (no truth; may drift)'
+        require(wait_until(node, lambda: bool(source) and source[-1][0] > completed
+                           and time.monotonic() - source[-1][0] < 0.3, 5.0),
+                f'no fresh post-result {label}')
+        detail = final_position_detail(*source[-1][1:3], target, args.max_final_error)
+        return f'{detail} [{label}]'
 
     def busy():
         target = far_zone()

@@ -58,7 +58,7 @@ def final_position_detail(x, y, zone, max_error):
     if not all(math.isfinite(v) for v in (x, y, zone.x, zone.y, max_error)) or max_error <= 0:
         raise ValueError('Invalid final position or error limit')
     error = math.hypot(x-zone.x, y-zone.y)
-    detail = f'final error={error:.3f} m; limit={max_error:.3f} m (/odom assumes map alignment)'
+    detail = f'final error={error:.3f} m; limit={max_error:.3f} m'
     if error > max_error:
         raise ValueError(detail)
     return detail
