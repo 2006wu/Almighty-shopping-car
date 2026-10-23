@@ -9,7 +9,8 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
+from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 from .follow_controller import (
@@ -68,14 +69,20 @@ class FollowNode(Node):
         self.last_own_publish = -math.inf
         self.state = self.create_publisher(String, '/follow/state', 10)
         self.goal_publisher = self.create_publisher(PoseStamped, '/follow/handoff_goal', 10)
-        self.create_subscription(Twist, '/cmd_vel', self.on_cmd_vel, 10)
+        self.observed_cmd_vel_topic = self.declare_parameter('observed_cmd_vel_topic', '/cmd_vel').value
+        self.create_subscription(Twist, self.observed_cmd_vel_topic, self.on_cmd_vel, 10)
+        self.create_subscription(Bool, '/follow/enabled', self.on_enabled,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(PointStamped, '/uwb/target', self.on_target, 10)
         self.create_subscription(LaserScan, '/scan', self.on_scan, qos_profile_sensor_data)
         self.create_service(SetBool, '/follow/enable', self.enable)
         self.create_timer(0.05, self.tick)
 
-    def enable(self, req, resp):
-        self.enabled = req.data
+    def on_enabled(self, msg):
+        self.set_enabled(msg.data)
+
+    def set_enabled(self, enabled):
+        self.enabled = enabled
         if not self.enabled:
             self.supervisor.step(seconds(self), 'IDLE', None, False, float('nan'), enabled=False)
             self.replacement = None
@@ -83,7 +90,13 @@ class FollowNode(Node):
             self.control.v = self.control.w = 0.0
             self.publisher.publish(Twist())
             self.last_own_publish = seconds(self)
-        resp.success, resp.message = True, 'Enabled' if self.enabled else 'Disabled'
+
+    def enable(self, req, resp):
+        self.set_enabled(req.data)
+        # A disable acknowledgement must not release a pending/active Nav2 goal.
+        resp.success = self.enabled or not self.busy()
+        resp.message = ('Enabled' if self.enabled else
+                        'Disabled' if resp.success else 'Disabled; waiting for navigation termination')
         return resp
 
     def on_cmd_vel(self, msg):
@@ -94,7 +107,8 @@ class FollowNode(Node):
             return
         now = seconds(self)
         own_zero = msg.linear.x == 0.0 and msg.angular.z == 0.0
-        if own_zero and now-self.last_own_publish <= 0.2:
+        if (getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') == '/cmd_vel'
+                and own_zero and now-self.last_own_publish <= 0.2):
             return
         self.drain.observe(now, msg.linear.x, msg.angular.z)
 
@@ -257,6 +271,10 @@ class FollowNode(Node):
         v, w, state, reason = self.control.step(
             self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor)
         self.last_time = now
+        if (not self.enabled and not self.busy()
+                and getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') != '/cmd_vel'):
+            self.state.publish(String(data='IDLE: Disabled'))
+            return
         point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
         decision = self.supervisor.step(now, state, self.target, los, obstacle,
                                         self.nav_status, map_target=point,

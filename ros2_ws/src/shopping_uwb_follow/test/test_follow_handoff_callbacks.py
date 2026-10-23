@@ -295,3 +295,35 @@ def test_aisle_edge_flicker_keeps_direct_following_without_handoffs():
         assert node.publisher.publish.call_args.args[0].linear.x > 0
         assert node.supervisor.mode == 'DIRECT' and not node.busy()
     node.client.send_goal_async.assert_not_called()
+
+
+def test_separate_nav_observation_keeps_external_zero_after_own_publish():
+    node = make_node()
+    node.observed_cmd_vel_topic = '/cmd_vel/nav'
+    node.drain.start(0)
+    node.last_own_publish = node.now = 0.1
+    node.on_cmd_vel(NS(linear=NS(x=0.0), angular=NS(z=0.0)))
+    assert node.drain.zero and node.drain.last_message == 0.1
+
+
+def test_mux_disabled_controller_does_not_mask_navigation_with_idle_zeros():
+    node = make_node()
+    node.observed_cmd_vel_topic = '/cmd_vel/nav'
+    node.set_enabled(False)
+    node.publisher.reset_mock()
+    node.now = node.target_time = node.scan_time = 0.1
+    node.tick()
+    node.publisher.publish.assert_not_called()
+
+
+def test_disable_ack_waits_for_late_navigation_acceptance_and_terminal_result():
+    node = make_node()
+    node.goal_pending = True
+    response = node.enable(NS(data=False), NS())
+    assert not response.success and not node.enabled
+    handle = Mock(accepted=True)
+    node.goal_response(completed(handle), node.goals.generation)
+    handle.cancel_goal_async.assert_called_once()
+    assert not node.enable(NS(data=False), NS()).success
+    node.goal_result(completed(NS(status=5)), node.goals.generation)
+    assert node.enable(NS(data=False), NS()).success

@@ -1,7 +1,8 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, GroupAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import SetRemap
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -21,11 +22,18 @@ def start(context):
         actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(nav+'localization_launch.py'), launch_arguments={**common, 'map': map_file}.items()))
     else:
         actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(get_package_share_directory('shopping_robot_slam')+'/launch/slam.launch.py'), launch_arguments={'use_sim_time': time, 'mode': mode, 'map': map_file}.items()))
-    actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(nav+'navigation_launch.py'), launch_arguments=common.items()))
+    navigation = IncludeLaunchDescription(PythonLaunchDescriptionSource(nav+'navigation_launch.py'), launch_arguments=common.items())
+    # Override the smoother output and the behavior_server recoveries (spin/backup/drive_on_heading/
+    # assisted_teleop publish cmd_vel directly); preserve Nav2's internal cmd_vel_nav. The node-scoped
+    # rule only matches behavior_server, so controller_server keeps its cmd_vel -> cmd_vel_nav remap.
+    remaps = [SetRemap(src='cmd_vel_smoothed', dst='/cmd_vel/nav'),
+              SetRemap(src='behavior_server:cmd_vel', dst='/cmd_vel/nav')] if LaunchConfiguration('use_mux').perform(context).lower() == 'true' else []
+    actions.append(GroupAction(actions=[*remaps, navigation]))
     return actions
 
 
 def generate_launch_description():
-    return LaunchDescription([DeclareLaunchArgument('use_sim_time', default_value='true'),
+    return LaunchDescription([DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
+                              DeclareLaunchArgument('use_sim_time', default_value='true'),
                               DeclareLaunchArgument('map', default_value=''),
                               DeclareLaunchArgument('slam_mode', default_value='mapping'), OpaqueFunction(function=start)])

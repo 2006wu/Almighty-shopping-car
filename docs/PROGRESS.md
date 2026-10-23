@@ -465,3 +465,58 @@
 | Gazebo 跟隨 240 秒（側向門檻 0.35／0.75 m） | 真實距離平均 **2.81 m**（前版 3.30）、最大 6.03 m（前版 5.85）、最小 0.14 m（人物路徑經過停止中的車體，TOO_CLOSE 有觸發）；20 秒停滯窗 0；狀態切換 54 次（約 13.5 次／分）；狀態樣本 NAV2_HANDOFF 1818、FOLLOWING 814、BLOCKED_WAIT 661、TOO_CLOSE 68、OBSTACLE_STOP 46；UWB 估測誤差平均 0.135 m |
 | 啟動紀錄 | 無 Traceback；僅啟動期 TF 等待、Gazebo 服務回應 Host unreachable 與 Nav2 搶占 halt 訊息 |
 | 未驗證 | 保持時間內的故障注入（待故障注入分支）、Mac arm64、Gazebo GUI；BLOCKED_WAIT 停留比前版多，距離仍遠大於 1.0 m 目標，後續可再調整 |
+
+| pytest／靜態檢查／差異空白檢查重驗 | 待驗證 |
+| compute 映像重建與 colcon build／test | 待驗證 |
+| EKF／真值模式啟動、TF 唯一性與 covariance | 待驗證 |
+| Gazebo 漂移數字與比較路線 | 待驗證 |
+| 建圖／guide／follow／UWB 評估回歸 | 待驗證 |
+
+## 2026-10-23：模式管理與速度仲裁
+
+### 本次完成
+
+- 在既有 `shopping_zone_manager` 加入不匯入 ROS 的 `ModeManager`、`VelocityMux`、`VelocityLimiter`、`OutputWatchdog`，維持七個套件；只使用標準函式庫，未引入 numpy。
+- 支援 IDLE／GUIDE／FOLLOW／TELEOP／ESTOP；切換立即零速、清除快取並停用跟隨，急停鎖定且 reset 只回待機。切換會保留尚未完成的取消責任，舊世代回覆不會解除新模式的停止條件。
+- 加入 Humble `cmd_vel_mux` 節點與獨立 `cmd_vel_watchdog` 程序；後者為預設唯一的 `/cmd_vel` 發布端。來源逾時、限速、非有限值與非平面輸入保護，以及單調時鐘的輸出逾時停止均有純 Python 測試。
+- NavigateToPose 取消使用 `/navigate_to_pose/_action/cancel_goal` 的零 UUID／零時間戳，未使用 Humble 不支援的 ActionClient cancel-all。等待跟隨停用成功、取消服務成功、被取消目標的相符終止狀態、無活動目標及 nav 非零命令安靜後才啟用新模式；無法確認時保持零速。
+- 保留跟隨 `/follow/enable` 服務，新增可靠且保留最新值的 `/follow/enabled` Bool。停用立即歸零，若目標仍待接受或執行中，服務暫以 `success=false` 回報等待終止，由管理器重試；停用且已無目標的控制器不持續以零命令遮蔽導航。
+- Nav2 只重新映射 velocity_smoother 的 `cmd_vel_smoothed` 至 `/cmd_vel/nav`，保留內部 `cmd_vel_nav`；跟隨改送 `/cmd_vel/follow`，排空觀察參數改為 `/cmd_vel/nav`，舊接線仍使用 `/cmd_vel`。
+- guide／follow 新增預設 true 的 `use_mux` 及預設 guide／follow 的 `initial_mode`；false 恢復原接線。單獨仲裁節點及共用 mode_mux launch 預設 idle，未設定自動 respawn。mapping 不啟動 Nav2，維持既有接線，文件另列如何選用仲裁保護。
+- `dev.sh` 加入 mode／estop／reset；README 與架構文件新增模式許可、主題、參數、Mermaid 接線、重啟取捨與容器驗收程序。未勾選 ROADMAP。
+
+### 自行檢查與限制
+
+- 已在指定既有虛擬環境執行完整 pytest：334 passed；`scripts/check_static.py` 回報 PASS，涵蓋 11 個 YAML／RViz、10 個 XML／SDF／xacro、53 個 Python、4 個 Bash 檔案，以及兩／三錨點、ekf／ground_truth 的 xacro 展開。現有 xacro 在 Python 3.10 的棄用警告仍存在。
+- 已檢查 `git diff --check`；本次未提交、推送、執行 Docker、安裝套件或建立虛擬環境，未加入硬體驅動、裝置或自訂網路連線。
+- 無 ROS 測試只驗證純邏輯、以替身執行的實際回呼與 launch 接線，不等於 Humble 執行期、colcon 或 Fortress 驗收。跟隨既有繞障及 TF 所有權保持原設計；容器互動尚待驗證。
+- 來源逾時與獨立輸出逾時都於下一個 50 毫秒更新生效，另有傳輸排程延遲。看門狗若也失效，無法保證底盤停止；未新增 Fortress 的底盤逾時外掛或硬體保護。
+- 單獨重啟仲裁節點預設待機；若保留 launch 的非 idle `initial_mode`，重啟相同參數會重新請求移動，此為保留 goto／follow 工作流程的明確例外。一次只啟動一個 bringup，跟隨時仍不得外送無關導航目標。
+
+### 下一步與審查驗證
+
+由維護者在 Docker 執行 colcon build／test，分別驗證 guide、follow 的 DIRECT／NAV2_HANDOFF、模式切換取消、急停／reset、來源停止、仲裁程序暫停／重啟及 `use_mux:=false`。核對底盤唯一發布端與逾時停止時間；本次審查欄保留待驗證。
+
+| 項目 | 審查驗證 |
+| --- | --- |
+| 純邏輯、回呼及 launch 接線 pytest | 待驗證 |
+| YAML／XML／xacro／launch／Bash 靜態檢查與差異空白檢查 | 待驗證 |
+| Humble colcon build／test | 待驗證 |
+| guide／follow 仲裁接線與舊接線回復 | 待驗證 |
+| 模式切換、取消全部目標與跟隨停用確認 | 待驗證 |
+| 急停、來源／輸出逾時與重啟待機 | 待驗證 |
+
+### 本輪審查驗證（2026-10-23 20:30 臺北時間，盒內 Linux amd64，EKF 預設）
+
+| 項目 | 結果 |
+| --- | --- |
+| 重新基於 develop | 含 EKF、評估指標、區域動作、地圖巡航、跟隨遲滯（PR #4–#8）；ARCHITECTURE／setup.py／dev.sh／跟隨回呼測試衝突手動合併，保留兩側功能 |
+| 審查修正 | Nav2 behavior_server 的恢復行為原本直接發布 `/cmd_vel`（4 個發布者），會繞過仲裁、急停與看門狗；新增節點範圍重新映射 `behavior_server:cmd_vel → /cmd_vel/nav`，launch 測試同步更新 |
+| 純 Python 測試 | `pytest -q` 566 項通過；check_static PASS |
+| colcon | 7 套件建置成功；colcon test 520 項、0 錯誤、0 失敗、5 略過 |
+| `/cmd_vel` 發布者（guide） | 修正後只有 `cmd_vel_watchdog`；`/cmd_vel/nav` 由 velocity_smoother 與 behavior_server 發布、`cmd_vel_mux` 訂閱 |
+| `dev.sh nav-check --tolerance-check` | 6/6 PASS（取消並停止 PASS；最終誤差 0.108 m） |
+| 模式切換模擬檢查（盒內腳本，兩次） | 14/14 PASS：初始 GUIDE、導航中 estop 後真值速度 ≤0.32 s 內歸零並維持、goto 因取消結束、ESTOP 期間拒絕 guide、reset→IDLE、teleop 可旋轉／前進、teleop 停送 0.54 s 內停止、idle→guide 後 goto entrance 成功 |
+| 輸出看門狗 | teleop 旋轉中以 SIGSTOP 凍結 `cmd_vel_mux`，真值角速度 0.36 s 內歸零（門檻 1.0 s） |
+| Gazebo 跟隨 240 秒（use_mux） | 平均距離 3.02 m、最大 5.99 m、20 秒停滯窗 0、切換 61 次；無 Traceback |
+| 未驗證 | Mac arm64、Gazebo GUI、鍵盤 teleop_twist_keyboard 實際接線（以腳本發布 `/cmd_vel/teleop` 代替）、`use_mux:=false` 舊接線的模擬回歸 |

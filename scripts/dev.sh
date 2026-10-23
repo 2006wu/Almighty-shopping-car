@@ -28,6 +28,7 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   nav-check [ARGS...]       Run simulated navigation action checks
   map-tour [NAME]          Run mapping tour and save maps (default: supermarket)
   loc-check [ROS_ARGS...]   Check all zones against simulation truth
+  mode MODE | estop | reset  Request idle/guide/follow/teleop/estop/reset
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
@@ -59,6 +60,17 @@ EOF
     ;;
   cancel) run ros2 run shopping_zone_manager cancel_zone --ros-args -p use_sim_time:=true ;;
   nav-check) run ros2 run shopping_zone_manager nav_action_check "$@" --ros-args -p use_sim_time:=true ;;
+  mode|estop|reset)
+    mode_request="$command"
+    if [[ "$command" == mode ]]; then
+      [[ $# == 1 ]] || { echo 'Usage: dev.sh mode MODE' >&2; exit 2; }
+      mode_request="$1"
+    else
+      [[ $# == 0 ]] || { echo 'No arguments expected' >&2; exit 2; }
+    fi
+    case "$mode_request" in idle|guide|follow|teleop|estop|reset) ;; *) echo 'Invalid mode' >&2; exit 2 ;; esac
+    run ros2 topic pub --once /mode_manager/request std_msgs/msg/String "{data: '$mode_request'}"
+    ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
   map-tour)
     [[ $# -le 1 ]] || { echo 'Usage: dev.sh map-tour [NAME]' >&2; exit 2; }
