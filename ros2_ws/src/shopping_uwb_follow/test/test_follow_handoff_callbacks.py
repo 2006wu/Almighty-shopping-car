@@ -327,3 +327,50 @@ def test_disable_ack_waits_for_late_navigation_acceptance_and_terminal_result():
     assert not node.enable(NS(data=False), NS()).success
     node.goal_result(completed(NS(status=5)), node.goals.generation)
     assert node.enable(NS(data=False), NS()).success
+
+
+@pytest.mark.parametrize('nav', [False, True])
+@pytest.mark.parametrize('stamp', [None, -1.0, 1.0])
+def test_opt_in_odom_watchdog_stops_and_cancels(nav, stamp):
+    node = make_node()
+    node.monitor_odom = True
+    node.odom_time = stamp
+    if nav:
+        node.supervisor.mode = 'NAV2'
+        node.goal_pending = True
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0
+    if nav:
+        assert node.cancel_requested
+
+
+def test_odom_watchdog_recovery_uses_fresh_header():
+    node = make_node()
+    node.monitor_odom = True
+    node.odom_time = -1
+    node.tick()
+    node.on_odom(NS(header=NS(stamp=NS(sec=0, nanosec=0))))
+    node.obstacle = 3
+    node.map_goal_and_los = lambda: (None, True)
+    node.now = 0.05
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].linear.x > 0
+
+
+@pytest.mark.parametrize('fault', ['stale_target', 'stale_scan'])
+@pytest.mark.parametrize('nav', [False, True])
+def test_frozen_measurement_headers_stop_despite_recent_delivery(fault, nav):
+    node = make_node()
+    node.now = 0.55
+    node.last_time = 0.5
+    node.target_time = 0.0 if fault == 'stale_target' else 0.55
+    node.scan_time = 0.0 if fault == 'stale_scan' else 0.55
+    if nav:
+        node.supervisor.mode = 'NAV2'
+        node.goal_pending = True
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0
+    if nav:
+        assert node.cancel_requested

@@ -132,7 +132,7 @@ def test_tf_ownership_for_both_expanded_modes():
         condition = keywords(node(executable, filename))['condition']
         assert condition.func.id == 'LaunchConfigurationEquals'
         assert [ast.literal_eval(a) for a in condition.args] == ['odom_source', mode]
-    assert "('odometry/filtered', '/odom')" in ast.unparse(node('ekf_node'))
+    assert "('odometry/filtered', output('/odom'))" in ast.unparse(node('ekf_node'))
     common = yaml.safe_load((SRC/'shopping_robot_gazebo/config/bridge.yaml').read_text())
     legacy = yaml.safe_load((SRC/'shopping_robot_gazebo/config/bridge_ground_truth.yaml').read_text())
     assert not any(b['ros_topic_name'] in ('/odom', '/tf') for b in common)
