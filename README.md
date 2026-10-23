@@ -66,13 +66,13 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
 `goto` 直接呼叫 NavigateToPose，印出回饋及結果，失敗會回傳非零結束碼。應用程式也可發布 `std_msgs/String` 至 `/shopping/goto_zone`，由常駐區域節點處理。第一次建圖的原點與朝向應維持模擬初始姿態，重建地圖後要核對區域座標。
 
-停止導航後測試 UWB 跟隨：
+停止其他移動流程後測試 UWB 跟隨（包含建圖與 Nav2 繞行）：
 
 ```fish
 ./scripts/dev.sh follow
 ```
 
-`sim.launch.py`、`mapping.launch.py` 與 `guide.launch.py` 預設 `person:=false`：人物停放在店外 `(20, 20)`，不啟動路徑節點，避免人物碰撞幾何寫入地圖或擋住導航。需要動態障礙測試時可明確啟用，例如 `ros2 launch shopping_robot_bringup guide.launch.py person:=true`。`follow.launch.py` 固定傳入 `person:=true`，人物路徑從出生點正前方約 1.5 公尺的 `(1.5, 0)` 開始，首段沿前方橫向通道向 +x 移動。
+`sim.launch.py`、`mapping.launch.py` 與 `guide.launch.py` 預設 `person:=false`：人物停放在店外 `(20, 20)`，不啟動路徑節點，避免人物碰撞幾何寫入地圖或擋住導航。需要動態障礙測試時可明確啟用，例如 `ros2 launch shopping_robot_bringup guide.launch.py person:=true`。`follow.launch.py` 預設 `slam_mode:=mapping`、`map:=`（空值）、`route_around:=true`，會啟動 slam_toolbox 與 Nav2，但不啟動區域導航節點。使用已存地圖時，與引導模式相同，可設 `slam_mode:=localization map:=/maps/store`（slam_toolbox 序列化地圖）或 `slam_mode:=map_server map:=/maps/store.yaml`（AMCL）。例如 `ros2 launch shopping_robot_bringup follow.launch.py route_around:=false` 可恢復原本直接跟隨控制，節點不建立動作客戶端；launch 仍會啟動導航服務。`follow.launch.py` 固定傳入 `person:=true`，人物路徑從出生點正前方約 1.5 公尺的 `(1.5, 0)` 開始，首段沿前方橫向通道向 +x 移動。
 
 人物是本機圓柱幾何模型，不需連線下載 Fuel 素材。路徑唯一來源為 `shopping_robot_gazebo/config/person_path.yaml`；模擬人物與 UWB 使用相同模擬時間插值。人物會循環走過三條走道；測試直接解析 SDF 碰撞盒，驗證區域有 0.55 公尺淨空、人物整條路徑有 0.30 公尺淨空。`uwb_follow.yaml` 可調整噪聲、偏差、NLOS、掉包及錨點陣列；兩錨點實驗須同時縮短 `anchor_x/anchor_y`，並將車體 xacro 的 `anchor_count` 改成 2 或以 xacro 參數產生相符模型。錨點移位時也需同步修改 xacro 的錨點屬性。這是平面測距模型，尚未模擬高度差與完整無線電傳播。
 
@@ -107,7 +107,9 @@ Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執�
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它將 base_link 估測值轉到 odom 與真值比較；目前假設 sim_world 與 odom 起點對齊，結果包含里程計漂移及時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
-本階段尚無模式管理器，請勿讓 Nav2、鍵盤控制與跟隨同時發布 `/cmd_vel`。跟隨目前是前方障礙停車，不會自主繞行；模式切換、命令仲裁、獨立命令逾時看門狗與恢復行為列於後續階段。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
+跟隨模式現在可將持續受阻的有效目標交給 Nav2 繞行：距離超過 1.3 公尺且持續受阻 0.5 秒後交接；視線受阻期間直接模式原地等待（`BLOCKED_WAIT`），避免貼近貨架角落；視線暢通且前方淨空大於 0.8 公尺持續 0.5 秒後，或視線暢通且目標已接近、導航成功時，取消目標並恢復直接跟隨。`/follow/state` 增加 `NAV2_HANDOFF` 與 `BLOCKED_WAIT`，`/follow/handoff_goal` 為 map 座標的 PoseStamped，可加入 RViz；跟隨模式可將 Fixed Frame 改為 `map`。導航中直接控制器不發布速度；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。NavFn 共用容差由 0.3 改為 0.8 公尺，以允許規劃至人物旁的可通行終點；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。已於 Docker／Gazebo 跑 240 秒驗證（見 PROGRESS）；視線抖動造成走走停停仍待改善。
+
+本階段尚無全域模式管理器；follow 執行期間不可另外送出 Nav2 目標、執行 guide 或鍵盤控制。交接僅管理自己送出的動作，獨立命令逾時看門狗與跨流程仲裁仍待後續整合。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
 
 純 Python 測試可在容器執行（`./scripts/dev.sh test`），也可在任何已安裝 pytest、pyyaml、xacro 的 Python 3.10 環境執行：
 
