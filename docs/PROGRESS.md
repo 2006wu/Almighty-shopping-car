@@ -308,3 +308,13 @@
 | --- | --- |
 | 本輪變更、指標定義與門檻提案 | 待驗證 |
 | 情境整合與紀錄覆蓋率 | 待驗證 |
+
+### 本輪審查驗證（2026-10-23 14:20 臺北時間，盒內 Linux amd64）
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 測試 | 重新基於 develop（含 EKF，PR #4）後 `pytest -q` 356 項通過；check_static PASS |
+| colcon 建置與測試 | 7 套件建置成功；colcon test 340 項、0 錯誤、0 失敗、1 略過；容器內 `dev.sh test` 356 項通過 |
+| 命令入口 | 容器內 `ros2 run shopping_zone_manager eval_report --help` 正常 |
+| 未驗證 | 以真實 Gazebo 記錄產生報表（尚無 rosbag／CSV 記錄流程，屬階段 5 第 3 項）、Mac arm64 |
+
