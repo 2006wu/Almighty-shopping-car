@@ -27,6 +27,26 @@ def front_obstacle_distance(ranges, angle_min, angle_increment, sector=math.pi/3
     return min(values, default=float('nan'))
 
 
+def side_clearance(ranges, angle_min, angle_increment, sector_min, sector_max):
+    """Minimum lateral distance in symmetric side sectors (angles in radians)."""
+    values = [math.inf if value == math.inf else value*abs(math.sin(angle_min+i*angle_increment))
+              for i, value in enumerate(ranges)
+              if sector_min <= abs(math.atan2(math.sin(angle_min+i*angle_increment),
+                                               math.cos(angle_min+i*angle_increment))) <= sector_max
+              and (value == math.inf or math.isfinite(value) and value >= 0)]
+    return min(values, default=math.nan)
+
+
+def side_speed_factor(clearance, slow=0.45, free=0.9, minimum=0.4):
+    """Interpolate the speed cap; unavailable side coverage uses the slow cap."""
+    if (not all(math.isfinite(v) for v in (slow, free, minimum))
+            or not 0 <= slow < free or not 0 <= minimum <= 1):
+        raise ValueError('Invalid side slowdown parameters')
+    if math.isnan(clearance):
+        return minimum
+    return minimum+(1-minimum)*min(1.0, max(0.0, (clearance-slow)/(free-slow)))
+
+
 @dataclass
 class ControllerParams:
     follow_distance: float = 1.0
@@ -39,18 +59,32 @@ class ControllerParams:
     max_angular_accel: float = 1.5
     kp_distance: float = 0.7
     kp_bearing: float = 1.5
+    los_uncertain_speed_factor: float = 0.6
+    side_sector_min: float = math.pi/6
+    side_sector_max: float = math.radians(100)
+    side_slow_clearance: float = 0.35
+    side_free_clearance: float = 0.75
+    side_min_speed_factor: float = 0.4
 
 
 class FollowController:
     def __init__(self, params=None):
         self.p = params or ControllerParams()
-        if any(not math.isfinite(v) or v <= 0 for v in vars(self.p).values()):
-            raise ValueError('Controller parameters must be positive and finite')
+        nonnegative = {'side_slow_clearance', 'side_sector_min',
+                       'side_min_speed_factor', 'los_uncertain_speed_factor'}
+        if any(not math.isfinite(v) or (v < 0 if k in nonnegative else v <= 0)
+               for k, v in vars(self.p).items()):
+            raise ValueError('Controller parameters must be finite and within their positive/nonnegative bounds')
         if self.p.stop_distance >= self.p.follow_distance:
             raise ValueError('Stop distance must be below follow distance')
+        side_speed_factor(0, self.p.side_slow_clearance, self.p.side_free_clearance,
+                          self.p.side_min_speed_factor)
+        if (self.p.los_uncertain_speed_factor > 1
+                or not 0 <= self.p.side_sector_min < self.p.side_sector_max <= math.pi):
+            raise ValueError('Invalid slowdown factor or side sectors')
         self.v = self.w = 0.0
 
-    def step(self, target, age, obstacle, dt, enabled=True):
+    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0):
         p = self.p
         state, reason = 'FOLLOWING', 'Tracking target'
         if not enabled:
@@ -68,7 +102,8 @@ class FollowController:
             self.v = self.w = 0.0
             return 0.0, 0.0, 'IDLE', 'Invalid control interval'
         distance, bearing = math.hypot(*target), math.atan2(target[1], target[0])
-        v = min(p.max_linear, max(0.0, p.kp_distance*(distance-p.follow_distance))) * max(0.0, math.cos(bearing))
+        v = (min(p.max_linear, max(0.0, p.kp_distance*(distance-p.follow_distance)))
+             * max(0.0, min(1.0, speed_factor)) * max(0.0, math.cos(bearing)))
         if state == 'OBSTACLE_STOP':
             self.v = v = 0.0
             reason = 'Obstacle: translation stopped, turning toward target'

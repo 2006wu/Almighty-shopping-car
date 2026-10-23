@@ -32,3 +32,16 @@
     robot_half_width: 0.25
     # Exclude the 0.25 m person radius plus estimation allowance at the endpoint.
     los_margin: 0.35
+    # LOS persistence uses seconds; spatial release margin uses metres.
+    los_block_time: 0.3
+    los_clear_time: 0.6
+    los_clear_extra_width: 0.10
+    los_uncertain_speed_factor: 0.6
+    min_nav_hold: 1.5
+    min_direct_hold: 1.0
+    # Symmetric lateral sectors in radians (30 to 100 degrees).
+    side_sector_min: 0.5235987755982988
+    side_sector_max: 1.7453292519943295
+    side_slow_clearance: 0.35
+    side_free_clearance: 0.75
+    side_min_speed_factor: 0.4

@@ -188,7 +188,32 @@ Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執�
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
-跟隨模式現在可將持續受阻的有效目標交給 Nav2 繞行：距離超過 1.3 公尺且持續受阻 0.5 秒後交接；視線受阻期間直接模式原地等待（`BLOCKED_WAIT`），避免貼近貨架角落；視線暢通且前方淨空大於 0.8 公尺持續 0.5 秒後，或視線暢通且目標已接近、導航成功時，取消目標並恢復直接跟隨。`/follow/state` 增加 `NAV2_HANDOFF` 與 `BLOCKED_WAIT`，`/follow/handoff_goal` 為 map 座標的 PoseStamped，可加入 RViz；跟隨模式可將 Fixed Frame 改為 `map`。導航中直接控制器不發布速度；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。NavFn 共用容差由 0.3 改為 0.8 公尺，以允許規劃至人物旁的可通行終點；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。已於 Docker／Gazebo 跑 240 秒驗證（見 PROGRESS）；視線抖動造成走走停停仍待改善。
+跟隨模式可將持續受阻的有效目標交給 Nav2 繞行。一般 LOS 走廊半寬為 0.25 公尺；連續受阻 0.3 秒才進入 `BLOCKED_WAIT`，此前維持 `FOLLOWING` 並減速。已判定受阻後，須以加寬至 0.35 公尺的走廊連續暢通 0.6 秒才能解除，避免貨架末端的雷射擦邊反覆停車。人物距離超過 1.3 公尺且判定受阻再持續 0.5 秒後交接；前方障礙停止仍立即生效，不等待 LOS 計時。`/follow/state` 發布 `STATE: 原因`，`/follow/handoff_goal` 為人物 map 座標的 PoseStamped，可加入 RViz。
+
+NAV2 至少保持 1.5 秒，然後以遲滯確認暢通的 LOS 加上前方淨空大於 0.8 公尺、持續 0.5 秒恢復 DIRECT；若人物距離已不超過 1.3 公尺，可略過這額外 0.5 秒。導航成功／失敗／取消或安全事件可立即結束保持時間。恢復 DIRECT 後至少保持 1 秒才再次交接；若 LOS 已連續判定受阻達 1 秒，可提前交接，但仍須滿足受阻交接延遲。導航中直接控制器不發布速度；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。NavFn 共用容差仍為 0.8 公尺，目標未偏移；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。
+
+新增的 `uwb_follow.yaml`／節點參數如下；時間單位為秒、距離為公尺、角度為弧度。LOS 與保持時間及額外寬度接受有限非負值；減速比例限於 0～1，側向角度須滿足 `0 <= min < max <= pi`，側向距離須滿足 `0 <= slow < free`。
+
+| 參數 | 預設值 | 用途 |
+| --- | --- | --- |
+| `los_block_time`／`los_clear_time` | 0.3／0.6 | 受阻／暢通連續確認時間；時間倒退重設 |
+| `los_clear_extra_width` | 0.10 | 已受阻時恢復所需的額外走廊半寬 |
+| `los_uncertain_speed_factor` | 0.6 | 原始 LOS 受阻但尚未確認時的線速度倍率 |
+| `min_nav_hold`／`min_direct_hold` | 1.5／1.0 | 導航／直接模式最短保持時間 |
+| `side_sector_min`／`side_sector_max` | 0.523599／1.745329 | 左右各 30°～100° 的側向扇區 |
+| `side_slow_clearance`／`side_free_clearance` | 0.35／0.75 | 最小側向淨空的減速／全速門檻 |
+| `side_min_speed_factor` | 0.4 | 淨空不超過減速門檻時的最低線速度倍率 |
+
+側向淨空取雷射回波的最小 `range * abs(sin(angle))`；兩門檻間線性插值，缺少側向涵蓋時採最低倍率。側向與 LOS 倍率相乘，套用在線速度及其上限，仍受既有加速度限制。直接上限 0.5 m/s 已高於人物 0.35 m/s，且等於 Nav2 velocity_smoother 上限，因此本次不提高。比例控制 `kp_distance=0.7` 在無減速、正前方等速追蹤時本來就有約 0.5 公尺的穩態距離誤差；不能把 1.0 公尺設定解讀為動態距離保證。遲滯及側向減速可能延後恢復或追近，須比較下一輪 240 秒模擬的真實距離及切換率，尚未驗證改善幅度。
+
+可直接分析 `ros2 topic echo /follow/state` 文字紀錄，不需 rosbag：
+
+```bash
+python3 scripts/follow_state_stats.py follow-state.log
+python3 scripts/follow_state_stats.py follow-state.log --sample-period 0.05
+```
+
+工具解析 `data: STATE: 原因` 或 `state: STATE` 紀錄，可在同一行前綴 `[秒數]` 或 `秒數 `。有時間戳時須有限且嚴格遞增；無時間戳時依序假設每筆 0.05 秒（20 Hz），遺漏樣本或僅記錄狀態變更時須提供時間戳，否則每分鐘切換率與停留時間僅為估算。混用有／無時間戳會拒絕分析。輸出切換總數、每分鐘切換率與各狀態停留次數／總計／平均／最小／最大秒數；首尾停留區間只計算觀測範圍，最後一筆不外推。亦可呼叫 ROS-free 的 `follow_metrics.state_statistics([(t, state), ...])`。
 
 本階段尚無全域模式管理器；follow 執行期間不可另外送出 Nav2 目標、執行 guide 或鍵盤控制。交接僅管理自己送出的動作，獨立命令逾時看門狗與跨流程仲裁仍待後續整合。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
 

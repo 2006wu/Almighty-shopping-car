@@ -12,7 +12,9 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
-from .follow_controller import FollowController, ControllerParams, front_obstacle_distance
+from .follow_controller import (
+    FollowController, ControllerParams, front_obstacle_distance, side_clearance, side_speed_factor,
+)
 from .follow_handoff import (
     GoalBook, VelocityDrain, HandoffParams, HandoffSupervisor,
     line_of_sight_clear, scan_valid, transform_xy,
@@ -52,6 +54,7 @@ class FollowNode(Node):
             self.tf_buffer = Buffer(node=self)
             self.tf_listener = TransformListener(self.tf_buffer, self)
         self.target = self.target_time = self.scan_time = self.scan = None
+        self.los_clear_wide = False
         self.obstacle = float('nan')
         self.last_time = seconds(self)
         self.goal_handle = None
@@ -110,6 +113,7 @@ class FollowNode(Node):
 
     def map_goal_and_los(self):
         """Use nonblocking TF lookups at the corresponding measurement times."""
+        self.los_clear_wide = False
         if self.target is None or self.scan is None:
             return None, False
         try:
@@ -130,6 +134,11 @@ class FollowNode(Node):
         los = line_of_sight_clear(scan.ranges, scan.angle_min, scan.angle_increment,
                                   transform_xy(self.target, laser), self.robot_half_width,
                                   self.los_margin, scan.range_min, scan.range_max)
+        self.los_clear_wide = line_of_sight_clear(
+            scan.ranges, scan.angle_min, scan.angle_increment,
+            transform_xy(self.target, laser),
+            self.robot_half_width+self.supervisor.p.los_clear_extra_width,
+            self.los_margin, scan.range_min, scan.range_max)
         return pose, los
 
     def busy(self):
@@ -230,23 +239,32 @@ class FollowNode(Node):
         age = now-self.target_time if self.target_time is not None else float('inf')
         fresh = self.scan_time is not None and 0 <= now-self.scan_time <= 0.5
         obstacle = self.obstacle if fresh else float('nan')
-        valid = fresh
         pose, los = None, False
+        scan = self.scan
+        valid = fresh and scan_valid(scan.ranges, scan.angle_min, scan.angle_increment,
+                                     scan.range_min, scan.range_max)
+        if not valid:
+            obstacle = float('nan')
         if self.client is not None:
-            scan = self.scan
-            valid = fresh and scan_valid(scan.ranges, scan.angle_min, scan.angle_increment,
-                                         scan.range_min, scan.range_max)
-            if not valid:
-                obstacle = float('nan')
             pose, los = self.map_goal_and_los()
-        v, w, state, reason = self.control.step(self.target, age, obstacle, now-self.last_time, self.enabled)
+        p = self.control.p
+        clearance = (side_clearance(scan.ranges, scan.angle_min, scan.angle_increment,
+                                    p.side_sector_min, p.side_sector_max) if valid else math.nan)
+        factor = side_speed_factor(clearance, p.side_slow_clearance,
+                                   p.side_free_clearance, p.side_min_speed_factor)
+        if self.client is not None and not los:
+            factor *= p.los_uncertain_speed_factor
+        v, w, state, reason = self.control.step(
+            self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor)
         self.last_time = now
         point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
         decision = self.supervisor.step(now, state, self.target, los, obstacle,
                                         self.nav_status, map_target=point,
-                                        enabled=self.enabled, scan_valid=valid)
+                                        enabled=self.enabled, scan_valid=valid,
+                                        los_clear_wide=self.los_clear_wide)
         if (self.client is not None and self.supervisor.route_around
-                and decision.mode == 'DIRECT' and state == 'FOLLOWING' and not los):
+                and decision.mode == 'DIRECT' and state == 'FOLLOWING'
+                and self.supervisor.los.blocked):
             # Driving straight at a hidden person wedges the robot against shelf
             # corners where Nav2 can no longer plan; hold until the handoff fires.
             v = w = 0.0
