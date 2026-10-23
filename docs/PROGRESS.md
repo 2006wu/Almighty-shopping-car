@@ -408,3 +408,15 @@
 | slam_toolbox 位姿圖重新載入與六區定位 | 待驗證 |
 | AMCL 格網重新載入、初始姿態與六區定位 | 待驗證 |
 | 標準四檔地圖與區域座標人工檢視 | 待驗證 |
+
+### 本輪審查驗證（2026-10-23 20:05 臺北時間，盒內 Linux amd64，EKF 預設）
+
+| 項目 | 結果 |
+| --- | --- |
+| 審查修正 | 容器內 colcon test 只掛載 `ros2_ws/src`，`test_tour_logic.py` 改以套件路徑讀檔並在缺少 repo 檔案時略過 dev.sh／.gitignore 檢查；地圖版本政策改為只提交格網 `supermarket.{yaml,pgm}`（約 47 KB），位姿圖 `.posegraph`／`.data`（約 27 MB）維持忽略並於地圖說明記錄重建方式 |
+| 純 Python 測試 | `pytest -q` 451 項通過；check_static PASS |
+| colcon | 7 套件建置成功；colcon test 435 項、0 錯誤、0 失敗、5 略過 |
+| `dev.sh map-tour supermarket`（14:28） | 17/17 航點到達、0 跳過、未逾時；格網與位姿圖儲存成功；格網目視含外牆、四排貨架與三條走道 |
+| slam_toolbox 位姿圖定位（14:37） | `loc-check` 六區全部 PASS；定位誤差最大 0.024 m／0.39°，最後真值距區域 ≤ 0.133 m |
+| AMCL＋map_server（提交格網，20:03） | 六區導航皆成功，但整體 **FAIL**：snacks 定位誤差最大 0.168 m（門檻 0.15）、最後真值距區域 0.309 m（門檻 0.3）；其餘五區 PASS（最大 0.122 m、2.0°）。AMCL 調參列入階段 2 第 4 項 |
+| 未驗證 | Mac arm64、Gazebo GUI、ground_truth 里程計比較地圖、AMCL 調參 |

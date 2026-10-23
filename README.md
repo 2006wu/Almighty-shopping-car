@@ -50,7 +50,7 @@ set -gx VNC_PASSWORD myshop42
 
 預設每個航點最多失敗兩次（重試一次），之後跳過；單一目標逾時 150 秒，整趟導航逾時 1800 秒，皆使用實際經過時間，模擬暫停也會逾時。目標逾時先取消並等待終止，取消無法確認時直接結束。完整跑完序列後會等待最後掃描更新，再以 `map_saver_cli` 儲存 `.yaml/.pgm`，呼叫 `/slam_toolbox/serialize_map` 儲存 `.posegraph/.data`；整趟逾時或中斷不自動儲圖。JSON 摘要列出到達、跳過、尚未執行、逾時及儲檔結果；有跳過或儲檔失敗皆以非零結束碼退出。跳過航點後仍可能產生不完整地圖，確認全部到達再採用。
 
-產物位於 `ros2_ws/src/shopping_robot_navigation/maps/`；只有標準 `supermarket.yaml`、`supermarket.pgm`、`supermarket.posegraph`、`supermarket.data` 允許加入 Git，其他名稱仍忽略。四檔須來自同一次建圖，重建與檢核方式見 [地圖說明](ros2_ws/src/shopping_robot_navigation/maps/README.md)。也保留 `./scripts/dev.sh save-map NAME` 供手動儲存；需要手動建圖時改用 `mapping` 與鍵盤遙控，完成後再儲圖。
+產物位於 `ros2_ws/src/shopping_robot_navigation/maps/`；標準格網 `supermarket.yaml`、`supermarket.pgm` 已加入 Git（供 AMCL／map_server 模式）；位姿圖 `supermarket.posegraph`、`supermarket.data` 約 27 MB，不加入 Git，使用 slam_toolbox 定位前須先在本機執行 `map-tour` 重新產生；其他名稱仍忽略。四檔須來自同一次建圖，重建與檢核方式見 [地圖說明](ros2_ws/src/shopping_robot_navigation/maps/README.md)。也保留 `./scripts/dev.sh save-map NAME` 供手動儲存；需要手動建圖時改用 `mapping` 與鍵盤遙控，完成後再儲圖。
 
 巡航完成後以 Ctrl-C 停止第一個終端機的整套 `guide`，每次重新從出生點啟動一種定位模式。第一種載入 slam_toolbox 位姿圖前綴，不加副檔名：
 

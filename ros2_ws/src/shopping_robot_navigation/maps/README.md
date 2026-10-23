@@ -1,6 +1,6 @@
 # 地圖輸出與版本管理
 
-標準模擬地圖為 `supermarket.yaml`、`supermarket.pgm`、`supermarket.posegraph`、`supermarket.data`。`.gitignore` 明確允許這四個檔案加入版本管理；其他名稱的相同格式仍忽略。此工作階段未產生地圖，須由維護者在容器執行模擬、確認覆蓋與定位結果後，將四檔一起加入後續提交，不能以假資料代替。
+標準模擬地圖的佔據格網 `supermarket.yaml`、`supermarket.pgm`（約 47 KB）已納入版本管理，可直接供 `slam_mode:=map_server`（AMCL + map_server）使用。slam_toolbox 位姿圖 `supermarket.posegraph`、`supermarket.data` 合計約 27 MB，不納入 git；需要 `slam_mode:=localization` 時，依下方步驟在本機重新執行 `map-tour` 產生（會同時覆寫格網，提交前請確認差異）。其他名稱的地圖檔一律忽略。2026-10-23 以預設 EKF 里程計執行巡航產生目前格網。
 
 ## 重新產生
 

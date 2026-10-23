@@ -7,8 +7,11 @@ import pytest
 
 from shopping_zone_manager.tour_logic import Sequence, load_tour, map_prefix
 
+PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = Path(__file__).resolve().parents[4]
-CONFIG = ROOT/'ros2_ws/src/shopping_zone_manager/config/map_tour.yaml'
+CONFIG = PACKAGE/'config/map_tour.yaml'
+# colcon test in the container mounts only ros2_ws/src, so repo-level files may be absent.
+IN_REPO = (ROOT/'scripts/dev.sh').exists() and (ROOT/'.gitignore').exists()
 
 
 def test_sequence_retries_skips_and_finishes():
@@ -63,27 +66,31 @@ def test_map_names_are_bounded(tmp_path, name):
 
 
 def test_entry_points_and_shell_commands():
-    setup = ast.parse((ROOT/'ros2_ws/src/shopping_zone_manager/setup.py').read_text())
+    setup = ast.parse((PACKAGE/'setup.py').read_text())
     call = next(n for n in ast.walk(setup) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'setup')
     entries = ast.literal_eval(next(k.value for k in call.keywords if k.arg == 'entry_points'))['console_scripts']
     assert 'map_tour = shopping_zone_manager.map_tour:main' in entries
     assert 'localization_check = shopping_zone_manager.localization_check:main' in entries
+    if not IN_REPO:
+        return
     shell = (ROOT/'scripts/dev.sh').read_text()
     assert '  map-tour)' in shell and '  loc-check)' in shell
     assert 'map_name:=$name' in shell
     assert 'localization_check --ros-args -p use_sim_time:=true "$@"' in shell
 
 
-@pytest.mark.parametrize('suffix', ['yaml', 'pgm', 'posegraph', 'data'])
-def test_canonical_maps_can_be_added_but_other_maps_stay_ignored(suffix):
+@pytest.mark.skipif(not IN_REPO, reason='repository checkout not mounted')
+@pytest.mark.parametrize('suffix,canonical_tracked', [('yaml', True), ('pgm', True), ('posegraph', False), ('data', False)])
+def test_canonical_grid_can_be_added_but_other_maps_stay_ignored(suffix, canonical_tracked):
+    # The slam_toolbox pose graph (~27 MB) is regenerated locally and never committed.
     directory = 'ros2_ws/src/shopping_robot_navigation/maps/'
-    for name, expected in [('supermarket', 1), ('other_test_map', 0)]:
+    for name, expected in [('supermarket', 1 if canonical_tracked else 0), ('other_test_map', 0)]:
         result = subprocess.run(['git', 'check-ignore', '--no-index', '-q', directory+name+'.'+suffix], cwd=ROOT)
         assert result.returncode == expected
 
 
 def test_pure_modules_do_not_import_ros():
-    directory = ROOT/'ros2_ws/src/shopping_zone_manager/shopping_zone_manager'
+    directory = PACKAGE/'shopping_zone_manager'
     for name in ('tour_logic.py', 'localization_metrics.py'):
         tree = ast.parse((directory/name).read_text())
         for node in ast.walk(tree):
