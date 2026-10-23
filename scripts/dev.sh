@@ -26,6 +26,8 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   goto ZONE [--timeout S] | zones  Navigate to a zone or list zones
   cancel                   Request cancellation of the current zone goal
   nav-check [ARGS...]       Run simulated navigation action checks
+  map-tour [NAME]          Run mapping tour and save maps (default: supermarket)
+  loc-check [ROS_ARGS...]   Check all zones against simulation truth
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
@@ -58,6 +60,15 @@ EOF
   cancel) run ros2 run shopping_zone_manager cancel_zone --ros-args -p use_sim_time:=true ;;
   nav-check) run ros2 run shopping_zone_manager nav_action_check "$@" --ros-args -p use_sim_time:=true ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
+  map-tour)
+    [[ $# -le 1 ]] || { echo 'Usage: dev.sh map-tour [NAME]' >&2; exit 2; }
+    name="${1:-supermarket}"
+    [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple map name' >&2; exit 2; }
+    run ros2 run shopping_zone_manager map_tour --ros-args -p use_sim_time:=true -p "map_name:=$name"
+    ;;
+  loc-check)
+    run ros2 run shopping_zone_manager localization_check --ros-args -p use_sim_time:=true "$@"
+    ;;
   save-map)
     [[ $# == 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple map name' >&2; exit 2; }
     path="/ws/src/shopping_robot_navigation/maps/$1"

@@ -83,3 +83,26 @@ def test_entire_person_loop_and_initial_model_pose():
             assert_free(a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1]), 0.30)
     for center in (-2.4, 0, 2.4):
         assert any(x == center and 1 < y < 6 for x, y in points)
+
+
+def test_mapping_tour_and_connecting_segments_have_footprint_margin():
+    import ast
+    from shopping_zone_manager.tour_logic import load_tour
+    goals = load_tour(SRC/'shopping_zone_manager/config/map_tour.yaml')
+    params = yaml.safe_load((SRC/'shopping_robot_navigation/config/nav2_params.yaml').read_text())
+    footprint = ast.literal_eval(params['local_costmap']['local_costmap']['ros__parameters']['footprint'])
+    # A circumscribed circle is conservative for every heading, including in-place turns.
+    clearance = max(math.hypot(x, y) for x, y in footprint)+0.15
+    points = [(0, 0)]+[(g.x, g.y) for g in goals]
+    for a, b in zip(points, points[1:]):
+        steps = max(1, math.ceil(math.dist(a, b)/0.02))
+        for i in range(steps+1):
+            t = i/steps
+            assert_free(a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1]), clearance)
+    for center in (-2.4, 0, 2.4):
+        ys = [g.y for g in goals if g.x == center]
+        assert min(ys) <= 0 and max(ys) >= 6.1 and any(1 < y < 5 for y in ys)
+    assert any((g.x, g.y) == (0, -1.8) for g in goals)
+    assert any((g.x, g.y) == (3, -1) for g in goals)
+    assert {g.x for g in goals if g.y == 6.1} == {-2.4, 0, 2.4}
+    assert {-2.4, 0, 2.4} <= {g.x for g in goals if g.y == 0}
