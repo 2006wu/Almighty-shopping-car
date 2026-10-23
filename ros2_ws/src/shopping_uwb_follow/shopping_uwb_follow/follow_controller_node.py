@@ -7,6 +7,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PointStamped, PoseStamped, Twist
+from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
@@ -37,6 +38,10 @@ class FollowNode(Node):
         defaults = ControllerParams()
         params = ControllerParams(**{k: self.declare_parameter(k, v).value for k, v in vars(defaults).items()})
         self.control = FollowController(params)
+        self.monitor_odom = self.declare_parameter('monitor_odom', False).value
+        self.odom_time = None
+        if self.monitor_odom:
+            self.create_subscription(Odometry, '/odom', self.on_odom, 10)
         self.enabled = self.declare_parameter('enabled', False).value
         route_around = self.declare_parameter('route_around', True).value
         handoff = HandoffParams(follow_distance=params.follow_distance,
@@ -111,6 +116,9 @@ class FollowNode(Node):
                 and own_zero and now-self.last_own_publish <= 0.2):
             return
         self.drain.observe(now, msg.linear.x, msg.angular.z)
+
+    def on_odom(self, msg):
+        self.odom_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
 
     def on_target(self, msg):
         if msg.header.frame_id != 'base_link':
@@ -253,6 +261,10 @@ class FollowNode(Node):
         age = now-self.target_time if self.target_time is not None else float('inf')
         fresh = self.scan_time is not None and 0 <= now-self.scan_time <= 0.5
         obstacle = self.obstacle if fresh else float('nan')
+        if getattr(self, 'monitor_odom', False):
+            odom_fresh = self.odom_time is not None and 0 <= now-self.odom_time <= 0.5
+            fresh = fresh and odom_fresh
+            obstacle = self.obstacle if fresh else float('nan')
         pose, los = None, False
         scan = self.scan
         valid = fresh and scan_valid(scan.ranges, scan.angle_min, scan.angle_increment,

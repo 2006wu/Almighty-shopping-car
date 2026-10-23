@@ -520,3 +520,48 @@
 | 輸出看門狗 | teleop 旋轉中以 SIGSTOP 凍結 `cmd_vel_mux`，真值角速度 0.36 s 內歸零（門檻 1.0 s） |
 | Gazebo 跟隨 240 秒（use_mux） | 平均距離 3.02 m、最大 5.99 m、20 秒停滯窗 0、切換 61 次；無 Traceback |
 | 未驗證 | Mac arm64、Gazebo GUI、鍵盤 teleop_twist_keyboard 實際接線（以腳本發布 `/cmd_vel/teleop` 代替）、`use_mux:=false` 舊接線的模擬回歸 |
+
+
+## 2026-10-23：階段 4 模擬故障注入與停止驗證
+
+### 本次完成
+
+- 在 `shopping_robot_gazebo` 以 ament_cmake_python 安裝 `shopping_robot_sim`，新增純邏輯故障引擎與 `fault_injector` ROS 入口。支援 UWB stale／定時 dropout／高斯 noise、雷射 drop／freeze、里程計 freeze 及 clear；訊息複製不改原始資料，凍結保留舊時間戳。
+- sim／mapping／guide／follow 新增預設 false 的 `fault_injection` 與 YAML 字串清單 `fault_schedule`。只在啟用時將生產端 remap 到 `/sim/raw/*`，由中繼接回既有消費 topic；車體與人物真值、TF 唯一來源維持原規範。`/sim/fault_status` 以 transient_local 發布目前故障名稱陣列。
+- 確認既有 UWB lost_timeout 與雷射 0.5 秒逾時使用來源時間戳，沿用其停止／導航取消行為。新增預設 false 的 `monitor_odom`，僅在故障模式 follow 自動啟用，里程計缺失／過期走同一安全零速與取消路徑；未改一般跟隨參數。
+- 新增 `scripts/fault_check.py` 與 `dev.sh fault-check`，對執行中的故障模式 follow 依序注入六種故障，確認移動基準、命令／真值停止、持續停止、資料覆蓋及 clear 後恢復，列印 PASS／FAIL 表並以結束碼反映失敗。噪聲情境檢查速度上限與恢復，不假設所有噪聲都能偵測並停車。
+- 純 Python 測試新增命令解析、排程到期／重設、訊息凍結與複製、固定種子噪聲、保守驗收判斷與 launch 接線；假回呼涵蓋直接／導航中的 UWB、掃描與里程計過期停止及里程計恢復。README 與架構文件補齊操作、門檻及限制；ROADMAP 未變更。
+
+### 本輪執行紀錄（非審查驗證）
+
+| 指令／方法 | 執行觀察 |
+| --- | --- |
+| `/workspace/scratch/venv-shop/bin/python -m pytest -q` | 400 項通過；既有 xacro Python 棄用警告 1 項 |
+| `PATH=/workspace/scratch/venv-shop/bin:$PATH python3 scripts/check_static.py` | PASS：11 個 YAML／RViz、10 個 XML／SDF／xacro、55 個 Python、4 個 Bash；兩／三錨點與兩種里程計模式展開通過 |
+| `git diff --check` | 通過 |
+
+系統預設 python3 缺少 PyYAML，故靜態檢查用 PATH 選用指定既有虛擬環境；沒有安裝套件。以上為純 Python／語法與配置驗證，不代表 ROS、colcon 或 Gazebo 整合驗收。
+
+### 限制與下一步
+
+- 本次未執行 Docker、colcon、ROS／Gazebo 或硬體驗收，未提交或推送。需在既有容器重新建置，分別以 `route_around:=false` 與 true 執行 fault-check，另於 NAV2_HANDOFF 中手動注入，確認非同步取消期間沒有非零命令覆寫，以及真值停止延遲符合門檻。
+- 里程計凍結僅作用於 `/odom` 訊息，不凍結 TF、EKF 內部狀態或真值；僅故障模式 follow 自動啟用里程計保護，不宣稱 guide 已具此保護。仍沒有全域速度仲裁與獨立命令逾時看門狗。
+- 驗收門檻為預設參數下的提案：命令 0.8 秒、真值 1.5 秒內停止，持續至少 0.3 秒，覆蓋缺口至多 0.25 秒。以模擬時鐘的本機接收時間量測，不是精確傳輸延遲；自然路徑沒有恢復移動時回報 FAIL。腳本未固定人物相位，也不保證每次在導航狀態注入，仍需固定情境與紀錄流程。
+- 排程與手動命令可疊加；clear 不刪除未來排程，自動驗收必須使用空排程且只有一個注入者。UWB 兩錨點歧義、NLOS 與高斯噪聲下錯誤目標不一定可辨識，速度限制檢查不能當作跟隨精度或碰撞安全保證。
+
+### 審查驗證
+
+2026-10-23 20:50（台北時間）於 box（Linux amd64、EKF、headless）審查。已 rebase 到含模式仲裁（PR #9）的 develop，並合併衝突：follow 控制器同時保留 `/cmd_vel/follow` 輸出、mux 的 `enabled` 和 `observed_cmd_vel_topic`，以及故障模式的 `monitor_odom` 和 `/sim/raw/*` remap。guide 同時傳入 `use_mux` 和 `fault_injection`。另外，故障分支的 `valid = fresh` 會蓋過 develop 新增的 `scan_valid` 檢查，因此刪除該行。
+
+| 項目 | 結果 |
+| --- | --- |
+| pytest（rebase 後） | 610 項通過 |
+| check_static | PASS |
+| colcon build＋test（容器） | 7 個套件；531 項測試，0 失敗，5 跳過 |
+| `follow.launch.py fault_injection:=true`＋`dev.sh fault-check`（預設 `route_around:=true`、`use_mux:=true`） | 6/6 PASS。命令停止／真值停止：uwb_stale 0.60／0.70 s，uwb_dropout 0.12／0.15 s，lidar_drop 0.49／0.56 s，lidar_freeze 0.08／0.12 s，odom_freeze 0.61／0.66 s；uwb_noise 通過速度上限與恢復檢查。命令在看門狗輸出的 `/cmd_vel` 量測，代表經過 mux 後的實際命令 |
+| 預設 follow（`fault_injection` 未設） | 沒有 fault 節點，也沒有 `/sim/raw/*`、`/sim/fault*` topic；`/uwb/ranges` 只有一個發布者；`/cmd_vel` 只有 `cmd_vel_watchdog` |
+| NAV2_HANDOFF 中注入故障 | 未專門驗證，因為 fault-check 不固定人物相位 |
+| `route_around:=false` 執行 fault-check | 未驗證 |
+| 排程、時間倒退與清除行為 | 只有純 Python 測試，沒有在模擬中驗證 |
+
+紀錄：`/workspace/wt/logs/shop/t9-faultcheck1.txt`、`t9-default.txt`（box 本機）。

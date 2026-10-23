@@ -224,3 +224,40 @@ TOO_CLOSE、LOST 與停用優先於障礙轉向。前方扇區為正前方左右
 ## 版本參考
 
 Fortress 外掛與感測器依據 [Fortress 感測器文件](https://gazebosim.org/docs/fortress/sensors/)；Nav2 參數名稱以 [Humble 官方設定](https://github.com/ros-navigation/navigation2/blob/humble/nav2_bringup/params/nav2_params.yaml) 為準；橋接使用 [ros_gz Humble 設定格式](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/test/config/full.yaml)。SLAM 啟動方式另核對 [Humble 官方 launch](https://github.com/SteveMacenski/slam_toolbox/blob/humble/launch/online_async_launch.py)。這些參考不代表本骨架已完成容器整合測試。
+
+## 模擬故障注入與驗收
+
+`shopping_robot_gazebo` 透過 ament_cmake_python 安裝 `shopping_robot_sim`，內含 ROS-free `faults.py`、`fault_check.py` 及 ROS 入口 `fault_injector`。所有入口僅由既有模擬 launch 明確選用，沒有硬體驅動或裝置連線。`fault_injection:=false` 預設不啟動中繼，不改既有資料路徑。sim／mapping／guide／follow 均轉傳此參數與 `fault_schedule`；UWB 來源僅由 follow 啟動。
+
+啟用後的資料流：
+
+- `sensor_bridge` 的 ROS `/scan` 改送 `/sim/raw/scan`，中繼輸出 `/scan`，供跟隨、SLAM 與 Nav2 共用。
+- EKF 的 `odometry/filtered` 或 ground_truth 專用橋接的 `/odom` 改送 `/sim/raw/odom`，中繼輸出 `/odom`。僅凍結里程計訊息，不改 TF；TF 唯一發布者仍為原本的 EKF 或 Gazebo。這不是定位完全失效的模擬。
+- `uwb_sim_node` 的 ranges 改送 `/sim/raw/uwb/ranges`，中繼至估測器；估測器的 target 改送 `/sim/raw/uwb/target`，中繼至跟隨。人物與車體真值完全獨立。
+
+`/sim/fault` 接受 std_msgs/String。錯誤命令記錄警告而不更動故障；`/sim/fault_status` 使用 reliable、transient_local、depth 1，內容為排序後的故障名稱 JSON 陣列。`clear` 立即清除所有目前故障及凍結快取，但不取消尚未觸發的排程。同名故障重新注入取代原本到期時間；不同故障可疊加，drop 優先於 freeze。清除後等待下一筆原始資料恢復，不重播過期快取。
+
+`fault_schedule` 為 YAML 字串清單，每列必須有非負有限的 `time`（相對模擬秒）、`fault` 及 `duration`。duration 為零表示持續；dropout 的零 duration 則使用命令所附秒數。排程依 time 穩定排序，模擬時間倒退會清除目前故障並重新計時、重播排程。噪聲預設種子 42，僅固定中繼的高斯亂數序列；不是整個物理模擬的重現保證。
+
+| 故障 | 注入行為 | 跟隨預期安全反應 |
+| --- | --- | --- |
+| `uwb_stale` | 持續重播第一筆目標及其舊時間戳 | 超過原有 lost_timeout（預設 0.5 秒）進入 LOST，零 Twist；導航中取消目標 |
+| `uwb_dropout:3.0` | 停送原始測距 3 秒，估測器不再產生新目標 | 與 stale 相同；恢復測距後重新估測 |
+| `uwb_noise:0.5` | 每筆有限測距加入獨立 Gaussian 噪聲，負值截為零、NaN 保留 | 無法保證識別所有錯誤目標；維持速度上限、過近／遺失與雷射保護，不要求每次停車；兩錨點歧義與 NLOS 限制仍在 |
+| `lidar_drop` | 停送掃描 | 量測超過 0.5 秒後 OBSTACLE_STOP、完整零 Twist，導航中取消；不得持續前進 |
+| `lidar_freeze` | 重播掃描與舊時間戳 | 同 drop；不能因持續收到封包而誤認為新掃描 |
+| `odom_freeze` | 重播里程計與舊時間戳，TF 繼續更新 | 故障模式的 follow 啟用 monitor_odom；超過 0.5 秒或尚無里程計時走掃描失效的安全停止路徑，零 Twist 並取消導航 |
+
+UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數；新增 `monitor_odom` 預設 false，只有故障模式 follow 自動啟用，以固定 0.5 秒里程計新鮮度門檻檢查。它共用 OBSTACLE_STOP／取消路徑，狀態不區分里程計與雷射失效；不是全域模式仲裁器或獨立命令看門狗。Nav2 非同步取消期間仍可能覆寫零命令，故驗收工具必須量測實際命令及真值，不能僅憑狀態宣告停車。
+
+`scripts/fault_check.py`／`dev.sh fault-check` 對同一個已啟動的 follow 模擬，依序注入六種故障，每次保留 4 秒模擬時間並 clear。開始前必須收到 `/clock`、fault_status 且無活動故障；不可同時執行排程或另一個注入者。每次均要求注入前命令與真值有移動，清除後兩者均恢復移動；找不到移動基準或自然路徑暫停太久會 FAIL，不能用原本停著的車體冒充成功。預設等待移動／恢復最多 90 秒牆鐘，可設 `--motion-timeout`；每次故障保持階段另有 60 秒牆鐘上限，模擬暫停也會失敗。
+
+| 驗收項目 | 提案門檻 |
+| --- | --- |
+| 命令停止 | 注入送出起 0.8 秒模擬時間內，`abs(vx) <= 0.02 m/s` 且 `abs(wz) <= 0.05 rad/s` |
+| 真值停止 | 注入送出起 1.5 秒內，同上速度門檻；使用未注入的 `/sim/ground_truth_odom` |
+| 持續停止 | 停止後直到 clear 前均維持門檻，至少 0.3 秒；晚到的非零命令會使停止延遲重新計算 |
+| 資料覆蓋 | 故障期間兩個資料流的起端、尾端及中間缺口均不超過 0.25 秒；缺資料不能當零速 |
+| 噪聲情境 | 不要求停車，量測命令／真值並檢查資料覆蓋；命令 abs(vx) <= 0.51 m/s、abs(wz) <= 1.01 rad/s（預設上限加數值餘量）與清除後恢復 |
+
+工具以 `/clock` 對齊的本機接收時間計算延遲，同一模擬 tick 若收到多筆速度，保留非零命令以免掩蓋衝突；不是精確傳輸延遲量測。測試適用預設控制速度與逾時參數，改參數須同步審查門檻。每輪應分別以 `route_around:=false` 和 `true` 執行，並在導航交接時手動重測；自動腳本不保證注入時正處於 NAV2_HANDOFF，也不控制人物相位或路線，無法替代具固定情境的整合測試。目前測試僅驗證純邏輯與假回呼，尚未執行 ROS／Gazebo 故障驗收。

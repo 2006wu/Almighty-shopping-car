@@ -209,6 +209,37 @@ VNC 密碼讀取環境變數，未設定時為 `shopping`；主機連接埠僅�
 
 Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執行 `env DOCKER='sudo docker' ./scripts/dev.sh up`。自訂世界須保留 `supermarket` 世界名稱、`person` 模型及對應橋接主題；目前 world 參數提供替換檔案路徑，尚未自動推導世界名稱。
 
+## 模擬故障注入與停車驗證
+
+重新 colcon 建置後，停止其他移動流程，只啟動一個跟隨模擬：
+
+```bash
+./scripts/dev.sh follow fault_injection:=true
+# In another terminal, against the same running simulation
+./scripts/dev.sh fault-check
+```
+
+`fault_injection` 預設為 `false`；一般 sim／mapping／guide／follow 的 topic 路徑維持原狀。啟用後，模擬套件的 `fault_injector` 透過 `/sim/raw/*` 中繼 UWB、雷射與里程計，獨立的 `/sim/ground_truth_odom` 不受影響。只在 follow 啟用里程計新鮮度保護；guide 的故障停止機制不在本次驗收範圍。可先用 `route_around:=false` 驗證直接跟隨，再以預設 `route_around:=true` 重測 Nav2 交接；測試時不得另外送導航目標或鍵盤速度。
+
+也可在已載入 ROS 環境的容器終端機手動注入：
+
+```bash
+ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "uwb_stale"}'
+ros2 topic echo /sim/fault_status --qos-durability transient_local
+# In another terminal
+ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
+```
+
+支援 `uwb_stale`、`uwb_dropout:3.0`（秒）、`uwb_noise:0.5`（測距高斯標準差，公尺）、`lidar_drop`、`lidar_freeze`、`odom_freeze`、`clear`。凍結保留舊時間戳；UWB 原始測距沒有時間戳，因此 stale 在估測目標上注入。除 dropout 外，手動故障持續到 clear；不同故障可以疊加。狀態為目前故障名稱的 JSON 陣列，使用 transient_local 保留最後一筆。
+
+排程使用 YAML 字串參數清單，`time` 是收到第一筆非零模擬時間後的相對秒數，`duration: 0` 表示持續到清除：
+
+```bash
+./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 20.0, fault: lidar_drop, duration: 3.0}, {time: 40.0, fault: "uwb_noise:0.5", duration: 5.0}]'
+```
+
+`fault-check` 請使用空排程。工具依序測六種故障，每次保持約 4 秒模擬時間、清除並等待恢復，輸出 PASS／FAIL 表與非零失敗結束碼。使用 `python3 scripts/fault_check.py --help` 可查看等待選項；門檻、預期反應及限制見[架構文件](docs/ARCHITECTURE.md#模擬故障注入與驗收)。目前只有純 Python／靜態測試，尚未取得 Gazebo 故障量測結果。
+
 ## 安全與驗證狀態
 
 所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用（`use_mux:=false` 時維持 launch 直接啟用）；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。

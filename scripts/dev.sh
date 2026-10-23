@@ -29,6 +29,7 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   map-tour [NAME]          Run mapping tour and save maps (default: supermarket)
   loc-check [ROS_ARGS...]   Check all zones against simulation truth
   mode MODE | estop | reset  Request idle/guide/follow/teleop/estop/reset
+  fault-check [ARGS...]    Verify faults against a running opt-in follow sim
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
@@ -54,6 +55,7 @@ EOF
   mapping|slam) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
   guide|nav) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
   follow) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
+  fault-check) run python3 /repo/scripts/fault_check.py "$@" ;;
   goto)
     [[ $# -ge 1 ]] || { echo 'Usage: dev.sh goto ZONE [--timeout S]' >&2; exit 2; }
     run ros2 run shopping_zone_manager goto_zone "$@" --ros-args -p use_sim_time:=true
