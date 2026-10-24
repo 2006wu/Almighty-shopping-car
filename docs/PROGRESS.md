@@ -935,7 +935,7 @@
 | 單一 Gazebo nav-check 與六區 loc-check | 待驗證 |
 | 全域規劃根因與 apt／fork 成本圖比對 | 待驗證 |
 
-## 2026-10-24：fork inscribed_radius_floor 0.25 模擬複驗（t36s，18:00 台北時間）
+## 2026-10-24：fork inscribed_radius_floor 0.25 模擬複驗（t36s，17:35 台北時間）
 
 - 設定：`nav2_stack:=fork`，local／global costmap `inscribed_radius_floor: 0.25`（前次 0.40），symlink-install 已確認生效。
 - nav-check（`--tolerance-check --max-final-error 0.35 --case-timeout 180`）：unknown zone、unreachable goal、busy policy PASS；cancel and stop「no navigation progress」、valid goal 與 zone tolerance 到 household (0, 4.5) ABORTED → **FAIL**。
