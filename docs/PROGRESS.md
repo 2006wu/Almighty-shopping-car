@@ -1234,3 +1234,9 @@
 | 真實驅動、實體感測器、arm64 | 未驗證（僅模擬；未連接任何硬體） |
 
 - 合併 develop 時 sim.launch.py 保留分源 bridge（lidar／imu／base 各自受 `use_real_*` 控制）並接上情境出生姿態與行人；測試替身新增 `pedestrian_actions`。
+
+## 2026-10-24 container-split review (merge to develop)
+- t42 (pre-hw tree cf88ae5): colcon test 667/0; split guide nav-check 5/5; XRCE comm-e2e 7/7.
+- Re-merged develop after hw-interfaces (#19): sim.launch.py keeps split's start_sim/start_localization GroupActions and adds hw's validate_sources, per-source lidar/imu/base bridges and wheel_odom_noise simulate_* flags. tests/test_hardware_launch.py now flattens GroupAction. pytest 972 passed.
+- NOT verified: Gazebo sim on the post-hw merged tree (70046eb+) — run guide nav-check + comm-e2e again next session.
+- Supersedes codex/microros-agent-e2e.
