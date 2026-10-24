@@ -1,4 +1,5 @@
 import math
+import json
 
 import rclpy
 from rclpy.action import ActionClient
@@ -61,6 +62,8 @@ class FollowNode(Node):
             self.tf_listener = TransformListener(self.tf_buffer, self)
         self.target = self.target_time = self.scan_time = self.scan = None
         self.los_clear_wide = False
+        self.guard_state, self.guard_time = None, None
+        self.create_subscription(String, '/safety/obstacle_state', self.on_guard, 10)
         self.obstacle = float('nan')
         self.last_time = seconds(self)
         self.goal_handle = None
@@ -82,6 +85,13 @@ class FollowNode(Node):
         self.create_subscription(LaserScan, '/scan', self.on_scan, qos_profile_sensor_data)
         self.create_service(SetBool, '/follow/enable', self.enable)
         self.create_timer(0.05, self.tick)
+
+    def on_guard(self, msg):
+        try:
+            data = json.loads(msg.data)
+            self.guard_state, self.guard_time = data['state'], float(data['t'])
+        except (ValueError, KeyError, TypeError):
+            self.guard_state, self.guard_time = None, None
 
     def on_enabled(self, msg):
         self.set_enabled(msg.data)
@@ -287,6 +297,14 @@ class FollowNode(Node):
                 and getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') != '/cmd_vel'):
             self.state.publish(String(data='IDLE: Disabled'))
             return
+        guard_fresh = (getattr(self, 'guard_time', None) is not None
+                       and 0 <= now-self.guard_time < 0.5)
+        if guard_fresh and self.guard_state in ('STOP', 'STALE'):
+            v = w = 0.0
+            self.control.v = self.control.w = 0.0
+            state, reason = 'OBSTACLE_STOP', 'Safety guard '+self.guard_state
+            if self.guard_state == 'STALE':
+                valid = False
         point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
         decision = self.supervisor.step(now, state, self.target, los, obstacle,
                                         self.nav_status, map_target=point,

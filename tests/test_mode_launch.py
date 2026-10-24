@@ -87,8 +87,36 @@ def test_launch_defaults_and_manager_inclusion(name, initial):
         assert dict(manager.launch_arguments)['initial_mode'].name == 'initial_mode'
     else:
         nodes = [a for a in actions if a.kind == 'Node']
-        assert {n.executable for n in nodes} == {'cmd_vel_mux', 'cmd_vel_watchdog'}
+        assert {n.executable for n in nodes} == {
+            'cmd_vel_mux', 'cmd_vel_watchdog', 'obstacle_guard',
+            'collision_monitor', 'lifecycle_manager'}
+        nodes = [n for n in nodes if n.executable.startswith('cmd_vel_')]
         for node in nodes:
             assert node.condition.kind == 'IfCondition'
             assert node.condition.args[0].name == 'use_mux'
             assert node.parameters[0]['use_sim_time'].name == 'use_sim_time'
+
+
+@pytest.mark.parametrize('guard', ['true', 'false'])
+@pytest.mark.parametrize('collision', ['true', 'false'])
+def test_safety_chain_has_no_final_velocity_bypass(guard, collision):
+    actions = load('shopping_robot_bringup/launch/mode_mux.launch.py')['generate_launch_description']()
+    context = {'use_mux': 'true', 'obstacle_guard': guard, 'collision_monitor': collision}
+    nodes = {a.executable: a for a in actions if a.kind == 'Node'}
+    watchdog = nodes['cmd_vel_watchdog']
+    assert resolve(watchdog.remappings[0][1], context) == (
+        '/cmd_vel_collision/output' if collision == 'true' else
+        '/cmd_vel_guard/output' if guard == 'true' else '/cmd_vel_mux/output')
+    monitor = nodes['collision_monitor']
+    assert resolve(monitor.parameters[-1]['cmd_vel_in_topic'].args[0], context) == (
+        '/cmd_vel_guard/output' if guard == 'true' else '/cmd_vel_mux/output')
+    assert resolve(nodes['obstacle_guard'].condition.args[0], context) == (guard == 'true')
+    assert resolve(monitor.condition.args[0], context) == (collision == 'true')
+    assert resolve(nodes['lifecycle_manager'].condition.args[0], context) == (collision == 'true')
+    declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
+    assert declarations['obstacle_guard'].default_value == 'true'
+    assert declarations['collision_monitor'].default_value == 'false'
+    assert declarations['use_mux'].choices == ['true']
+    # Launch arguments must exist before nodes evaluate their substitutions.
+    first_node = next(i for i, a in enumerate(actions) if a.kind == 'Node')
+    assert all(a.kind == 'DeclareLaunchArgument' for a in actions[:first_node])

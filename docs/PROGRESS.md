@@ -825,3 +825,42 @@
 | serial_loopback `comm-sim` + `comm-check` | 10/10 PASS |
 | `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
 | 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
+
+## 2026-10-24：獨立障礙安全層、選用 collision_monitor 與故障觀測
+
+### 修改內容
+
+- 新增不匯入 ROS 的 obstacle_guard 幾何／判定模組與 ROS 節點：依要求速度檢查正向／反向矩形掃掠、曲線及原地旋轉外接圓，具速度相關停止／減速區、立即收緊及加寬／時間遲滯。整合啟動直接讀取已安裝 Nav2 的 local／global 足跡，拒絕不一致或不支援的形狀；pytest 與 description xacro 比對尺寸。
+- 接線為 mux → guard → 選用 collision_monitor → watchdog → `/cmd_vel`；watchdog 仍為唯一最終速度發布者。guard 自行檢查 mux 逾時，雙重檢查 scan header／單調壁鐘、TF、完整掃描與無效讀值，20 Hz 壁鐘定時器使模擬暫停也會停車。最終 watchdog 的恢復加速度限制採共同比例保留曲率，安全減速／零速立即套用，不能超出上游限制。
+- guide／follow／mode_mux 新增 obstacle_guard 預設 true、collision_monitor 預設 false。停用整合 launch 的 use_mux:=false 旁路，保留 Nav2 controller／BT 與 navigation.launch.py 原樣。collision_monitor 使用 Humble 的 points／max_points 參數、獨立 lifecycle manager；compute Dockerfile 宣告 apt 套件，未實際安裝或建置映像。
+- `/safety/obstacle_state` 提供 CLEAR／SLOW／STOP／STALE、倍率、模擬時間及掃掠間距。follow_handoff 沿用既有交接監督器：STOP 可進入持續障礙判定，STALE 禁止繞行並歸零。加入 lidar_front 距離故障，沿用 lidar_drop／lidar_freeze；fault-check 增加 obstacle suite、移動基線／恢復要求與唯一 cmd_vel publisher 檢查。
+- 錄製清單及 bag_converter 接上 guard STOP／STALE trigger，沿用 METRICS 的停止延遲與既有世界真值間距流程。新增 OBSTACLE_SAFETY，更新 README／ARCHITECTURE／METRICS。ROADMAP 未修改、未勾選。
+
+### 本機自行檢查
+
+使用指定既有環境執行 `/workspace/scratch/venv-shop/bin/python -m pytest -q`：781 項通過，既有 xacro 棄用警告 1 項。`/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，涵蓋 18 個 YAML／RViz、11 個 XML／SDF／xacro、106 個 Python、4 個 Bash，以及兩／三錨點、ekf／ground_truth xacro 展開。`git diff --check` 通過。未安裝套件、建立 venv、執行 Docker、提交或推送。
+
+### 限制與下一步
+
+- 本次只有純 Python、回呼替身與靜態驗證，ROS／DDS／colcon／Gazebo／amd64／arm64 實際整合均未驗收。維護者須依 OBSTACLE_SAFETY 的命令重建容器並逐次執行 headless follow／guide／teleop，以及 collision_monitor 開／關。
+- 等速掃掠與旋轉外接圓屬保守模型，尚未用真值辨識煞車能力或驗證停止距離；雷射平面外物體、漏測及真實滑移不在模型內。預設仍禁止倒車，倒車僅有純邏輯驗證。
+- 減速試驗目前要求 SLOW 倍率與仍有移動命令，不等於真值減速度驗收。假障礙只有感測器回波，沒有 Gazebo collision；swept_clearance 不能冒充 METRICS 的真值最小足跡間距。時間以 guard 狀態與故障命令起點分別解讀，不能混合門檻。
+- route_around=true 時的 STOP 可能隨上游停車要求重新評估，持續交接仍搭配原有 LOS 遲滯。維護者需在實際貨架情境驗證 NAV2_HANDOFF、繞行與返回 DIRECT；平行 Nav2 fork 的 TEB／Shrink+Wait recovery 尚未整合驗證，未新增另一套導航恢復策略。
+- watchdog 程序、橋接或 Gazebo 本身故障的停止保證維持既有限制；本次沒有新增硬體控制或 Fortress 底盤命令逾時外掛。
+
+### 審查驗證
+
+以下由審查者執行與填寫，本次自行檢查不代填。
+
+| 項目 | 結果 |
+| --- | --- |
+| 區域、速度、方向、曲線、旋轉、遲滯與過期 pytest | 待驗證 |
+| 缺 TF、mux 失聯、雷射舊 header、時間倒退與恢復加速度 | 待驗證 |
+| launch 四種 guard／collision_monitor 組合與唯一 cmd_vel 發布者 | 待驗證 |
+| Humble colcon build／test 與 apt collision_monitor lifecycle／QoS | 待驗證 |
+| headless follow 減速／停止／掉訊／凍結與解除恢復 | 待驗證 |
+| guide／TELEOP 共用安全鏈路、急停／reset 與程序失聯 | 待驗證 |
+| 原地旋轉淨空、側邊障礙與真值最小間距／停止距離 | 待驗證 |
+| NAV2_HANDOFF 繞行、恢復 DIRECT 與平行 Nav2 fork 整合 | 待驗證 |
+| bag 停止 trigger／真值延遲與 METRICS 報表 | 待驗證 |
+| amd64／arm64 原生模擬回歸 | 待驗證 |

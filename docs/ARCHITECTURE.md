@@ -29,7 +29,10 @@ flowchart LR
     nav -->|/cmd_vel_nav| smooth[velocity_smoother]
     smooth -->|/cmd_vel/nav| mux[cmd_vel_mux]
     follow -->|/cmd_vel/follow| mux
-    mux -->|/cmd_vel_mux/output| watchdog[獨立 cmd_vel_watchdog]
+    mux -->|/cmd_vel_mux/output| guard[obstacle_guard]
+    guard -->|/cmd_vel_guard/output| watchdog[獨立 cmd_vel_watchdog]
+    guard -. 選用 .-> collision[Nav2 collision_monitor]
+    collision -->|/cmd_vel_collision/output| watchdog
     watchdog -->|/cmd_vel| bridge
   end
   subgraph display[顯示容器]
@@ -217,9 +220,9 @@ flowchart LR
 | OBSTACLE_STOP | 前方障礙 ≤ 0.65 公尺，線速度立即歸零；有效且不過近的目標允許原地轉向，角速度 ≤ 1.0 rad/s、角加速度 ≤ 1.5 rad/s²；雷射失效時立即零 Twist |
 | IDLE | 停用或控制時間間隔無效，立即零 Twist |
 
-TOO_CLOSE、LOST 與停用優先於障礙轉向。前方扇區為正前方左右各 30 度；無有效前方讀值或無效掃描角度時回報不可用並停止，正無限遠讀值視為無命中，零距離及低於量測下限的非負讀值視為需立即停止前進。控制時間倒退或無效時也歸零；直接控制仍是局部停止保護；啟用交接後由 Nav2 規劃繞行。Nav2 使用雷射障礙層與膨脹層，速度平滑由官方 navigation_launch 接線。尚未啟用 collision_monitor。
+TOO_CLOSE、LOST 與停用優先於障礙轉向。前方扇區為正前方左右各 30 度；無有效前方讀值或無效掃描角度時回報不可用並停止，正無限遠讀值視為無命中，零距離及低於量測下限的非負讀值視為需立即停止前進。控制時間倒退或無效時也歸零；直接控制仍是局部停止保護；啟用交接後由 Nav2 規劃繞行。Nav2 使用雷射障礙層與膨脹層，速度平滑由官方 navigation_launch 接線。障礙安全層已加入獨立 obstacle_guard，並可明確啟用預設 false 的 collision_monitor；後者的輸出仍須經 watchdog。接線、掃掠幾何與驗收見 [障礙安全鏈路](OBSTACLE_SAFETY.md)。
 
-預設引導／跟隨已加入模式管理與獨立速度逾時看門狗；繞過仲裁的舊接線及單獨建圖流程仍需操作者保持速度來源互斥。障礙恢復與容器整合驗收仍需後續確認。所有硬體驅動將另行設計成明確選用，現階段沒有實作。
+預設引導／跟隨已加入模式管理與獨立速度逾時看門狗；整合 launch 不再接受 use_mux:=false；單獨建圖流程仍需操作者保持速度來源互斥。障礙恢復與容器整合驗收仍需後續確認。所有硬體驅動將另行設計成明確選用，現階段沒有實作。
 
 ## 版本參考
 
