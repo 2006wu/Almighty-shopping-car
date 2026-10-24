@@ -266,6 +266,62 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 
 `dev.sh record` 透過 `scripts/record_bag.py` 載入區域管理套件的 `config/record_topics.yaml`，以 Humble sqlite3 和模擬接收時間保存至主機共用的 `bags/`。不錄雷射與 TF，使用獨立 `sim_world` 真值及既有區域狀態還原指標。`bag_to_eval.py` 是讀取 ROS 訊息的薄層；`bag_converter.py` 以純 Python 進行有界時間同步、區域回合還原與保護狀態事件轉換，再交給既有 `eval_report`。`eval-bag` 產生觀測 JSONL、轉換中繼資料與 JSON／Markdown 報告；固定場景採 map→世界零位移與零旋轉，其他對齊須明確提供。完整來源、缺資料與回放隔離規則見 [評估指標](METRICS.md#rosbag-記錄轉換與可重現流程)。這是旁路資料處理，不新增命令來源或改動 TF 所有權。
 
+## 人物同步與跟隨量測
+
+`shopping_uwb_follow.evaluation_metrics` 是不匯入 ROS 的純 Python 指標層；`evaluation_node` 提供 `person_sync_check` 與 `follow_eval` 兩個唯讀命令入口，訂閱回呼採 Humble 的單一 msg 引數。工具預設強制模擬時鐘，記錄一個有限時間窗，檢查來源時間、框架、0.25 秒資料覆蓋缺口，輸出表格、JSON 與結束碼。控制器、速度命令和調參維持原樣；ROADMAP 不自動勾選。
+
+人物路徑仍只來自 Gazebo 套件的 `config/person_path.yaml`。世界 SceneBroadcaster 的 `/simulation/poses` 保留給既有 UWB 模擬；其 Pose_V 外層時間不會經 Humble TFMessage 轉換保留，因此人物模型額外載入 Fortress 唯讀 PosePublisher，發布各筆帶時間／父子框架的 Pose_V。follow launch 專用 `bridge_person.yaml` 將 `/model/person/pose` 單向接至 `/simulation/person_pose`，沒有接入 `/tf`。預期 `supermarket → person` 的平面位置與人物真值 `sim_world` 使用同一世界原點，不能用估測 `odom` 取代。未變更真值、EKF 或車體 TF 的發布權限。
+
+同步檢查同時比較幾何、UWB 真值與解析路徑；預設平均偏差 <0.05 m、延遲絕對值 <0.1 s。跟隨評估從車體真值姿態轉換人物真實相對位置，搜尋 ±0.5 秒、0.01 秒格距的最佳位移；只對各候選皆可插值的共同樣本計算，不跨大缺口或外插。另按解析路徑航向率分直線／轉彎、統計真實距離與估測誤差，按 YAML 停止距離檢查近停後 0.5 秒內是否達到 ≤0.03 m/s 與 ≤0.05 rad/s 並持續停止，以及 UWB stale／LOST 後新鮮估測至 FOLLOWING 的時間（≤2 秒）。濾波延遲門檻為絕對值 <0.3 秒，分段距離偏差 RMSE <1.5 m。
+
+狀態訊息沒有 header，以接收時模擬時間記錄；其排程誤差會影響恢復時間。延遲估計也包含取樣、橋接及位置偏差影響，不是內部函式耗時。缺少運動或搜尋結果貼邊不允許通過延遲檢查；缺少近停、轉彎、恢復情境或紀錄邊界截斷時標記 `NOT_COVERED`，不能當成完成驗收。近停與距離統計獨立於估測是否存在；缺包不會刪掉安全事件。使用者須先驗證同步，再安排缺口及近停情境。完整命令、門檻覆寫、結束碼和來源實作連結見 README 的「人物同步與跟隨評估」。
+## MCU 通訊層（選用，2026-10-24）
+
+`shopping_mcu_bridge/config/interface.yaml` 是標準訊息介面的唯一來源；`sim_mcu_firmware` 直接使用 DDS 模擬 MCU，`serial_bridge` 預設用程序內 PTY 與相同安全模型交換 CRC16 二進位訊框。兩者只訂閱 watchdog 輸出的 `/cmd_vel`，不新增速度發布者，輪速／encoder／IMU／狀態都隔離於 `/mcu/*`，不接入現有 EKF 或 TF。輪模型由 description xacro 取得輪徑與有效輪距；沒有新增馬達、裝置或板卡驅動。
+
+`mcu_link_monitor` 發布 `/pc/heartbeat`，檢查 MCU heartbeat／status／急停；選用 `estop_on_link_loss` 時向既有 `/mode_manager/request` 請求 estop。安全期限使用單調壁鐘，訊息 stamp 使用 ROS 時鐘。失聯恢復需要三筆新 heartbeat，MCU latch 與 PC 模式急停均須明確重設。純邏輯、codec、transport 與 ROS 節點分開測試。
+
+`comm.launch.py` 選 `sim_ros` 或 `serial_loopback`；follow／guide 以預設 false 的 `mcu_comm` 引入並沿用 `use_sim_time`。獨立 `dev.sh comm-sim` 才啟動額外 mux／watchdog。compose `comm` profile 的 agent 預設 UDP4:8888、無裝置映射，僅供未來真正 XRCE client；目前兩種模擬均不經 agent。未來硬體 EKF 接法、serial 的雙重啟用條件與驗收限制見 [MCU_INTERFACE.md](MCU_INTERFACE.md) 與 [MICROROS_GUIDE.md](MICROROS_GUIDE.md)。
+## 私人 Nav2 fork underlay 與選擇流程
+
+主專案是公開儲存庫，Eurobot Nav2 fork 是私人儲存庫，因此以 `third_party/eurobot_nav2` submodule 固定版本，由主機使用者自己的 Git 憑證初始化。不將私人 C++ 複製進主專案，也不在 Dockerfile clone；建置 context 的 `.dockerignore` 排除 `third_party`，image build 無需 GitHub token。只有依需求調整的 BT XML 複本與購物車參數放在主專案。無權限的協作者略過 submodule，保留 apt 開發流程。
+
+compute 唯讀掛載 `../third_party/eurobot_nav2/src → /nav2_ws/src`，`nav2_build`、`nav2_install`、`nav2_log` 三個具名 volume 承接產物。入口依序 source `/opt/ros/humble/setup.bash`、存在的 `/nav2_ws/install/setup.bash`、存在的 `/ws/install/setup.bash`；workspace 建置、測試與長期容器 exec 共用此入口。fork 建置用獨立 Bash 入口只 source apt，避免前次建置的 fork／應用層污染。commit 在主機解析並傳入建置容器，避免 worktree 的 `.git` 相對路徑在容器內失效。`nav2-status` 列出主機 checkout commit 與上次成功通過 linkage 檢查的 build commit；版本不同時須重建。失敗建置可能留下部分產物，不應據 setup 檔存在就當作驗收通過。
+
+唯一建置清單為 `docker/nav2_fork_packages.txt`，`colcon build --packages-up-to` 只走清單與其相依閉包。涵蓋導航 servers、BT、behaviors、controller、NavFn、smoother、velocity smoother、lifecycle、map server、costmap、waypoint、msgs／util／core／common，另加 `custom_controller`、`custom_nav_to_pose`。規劃器沿用 NavFn，故不建 Smac。Eurobot docking、custom layers、camera offset、navigation2_run 與 fork RViz plugins 都不在清單。固定 Release、`BUILD_TESTING=OFF`，預設兩個 colcon workers／make 三工，可用環境變數降低。
+
+依選定套件的 CMake／package.xml 檢查後，image 補上 GraphicsMagick++（map server）、Eigen3／yaml-cpp（custom controller）、OpenCV／cv_bridge／image_transport（waypoint follower）、CMake／編譯器／pkg-config，並明列 BehaviorTree.CPP v3、bondcpp、nav2_voxel_grid；其餘 ROS 相依由 Humble navigation2／bringup apt 安裝。這份 TEB 是 fork 自有實作，不使用 Ceres／g2o；未選 Smac，亦不需為其加入 OMPL／xtensor。未執行 rosdep install 或任何跨架構／板卡 SDK 安裝。
+
+### apt 套件與 ABI 邊界
+
+`nav2_amcl`、`nav2_bringup`、RPP、collision_monitor 與其他未 fork 套件留在 apt。覆蓋 `nav2_util`、`nav2_msgs`、`nav2_costmap_2d`／core 後，apt shared libraries 可能在執行時載入 fork 版本；即使同為 Humble／1.1.x，也可能有 ABI、訊息型別或行為不一致。`--allow-overriding` 只是承認覆蓋，不能證明相容。
+
+`nav2-build` 成功後 source underlay，以 `scripts/check_nav2_linkage.py` 對 fork shared libraries、apt `libnav2*.so`（含 RPP／collision monitor）及 AMCL 執行 `ldd -r`，缺 library、未定義 symbol 或非零結束碼都使建置失敗，通過才寫 build commit。這能攔截動態連結缺失，無法偵測 C++ layout／vtable 語意變化或 DDS 訊息相容問題；維護者仍須以當前 image apt 版本執行 colcon、AMCL lifecycle 啟動、action／取消／recovery 與 Gazebo 真值回歸。若失敗，回報精確 symbol 與套件版本，決定在 fork 修正 ABI 或增加必要的原始碼重建範圍，不能略過檢查假裝通過。display 不掛 fork，沿用 apt RViz plugins；跨容器 action／訊息仍要驗證。
+
+`nav2_stack` 的純邏輯 helper 不匯入 ROS。`auto` 以 ament index 同時出現 `custom_controller` 與 `custom_nav_to_pose` 選 fork；明確 `fork` 缺套件就失敗；`apt` 保留原參數與 RPP。只換 YAML 並不能換回 apt binaries，所以在 fork underlay 存在而選 apt 時，launch 用移除 `/nav2_ws` 搜尋路徑的環境啟動子程序，source apt 與應用層的 `local_setup.bash`（不重播已記錄的 underlay），再執行相同導航 launch。guide／follow 將選擇參數傳入導航，其他 SLAM、EKF、模擬、模式管理流程不變；AMCL 仍是 apt 套件。一次只執行一個 bringup。若曾建置 fork，未初始化的主機 checkout 不會自動刪除既有 underlay volumes；`auto` 仍依容器 index 判定，要比對 apt 請明確選 apt。
+
+### TEB、BT 與速度出口
+
+`nav2_params_fork.yaml` 從原購物車參數複製，只調整 controller、BT 與 recovery plugins；frames、時間、車體 footprint、代價地圖、膨脹、NavFn 與速度平滑參數維持相同。`Slow`／`Fast` 使用 `teb_controller::TebController`，0.30／0.40 m/s、0.8 rad/s，平移／角加速度 0.4 m/s²／1.5 rad/s²。非全向與 gentle 參數使用 fork 平行工作的合約：不輸出側向速度，遇人降至最多 0.15 m/s，距離 0.45 m 停止，等待 1.5 s 再請求重規劃，關閉 rival topic。這些是待模擬調整的初始值，不是性能驗收。建置前 `check_nav2_contract.py` 會確認 TEB 原始碼包含八個新參數名稱；初始 pin `31c3ef1` 尚無合約而被拒絕；目前固定在已含合約的 `shopping-car` `bf60ee0`。
+
+controller selector 預設 `Slow`，goal checker selector 預設 `Loose`，可無外部 topic publisher 執行；`Precise` 與 fork 原有名稱 `NonStopGoalChecker` 也有定義。後者實際是 `SimpleGoalChecker` profile、yaw 容差 6.28 rad；沒有臆造不存在的 `nav2_controller::NonStopGoalChecker` class。一般區域目標使用 `Loose` 的 0.15 m／0.25 rad 容差，NavFn 終點容差仍為 0.8 m。
+
+安裝的 `navigate_to_pose_shopping.xml` 保留 fork StopController／ResetRecovery／RecoveryNode／重規劃與 selector 結構，僅將 recovery 改為 `GoalUpdated OR Sequence(Shrink, Wait)`，完全移除 Escape。launch 用 `RewrittenYaml` 將預設 to_pose BT 改成 ament share 的絕對路徑。載入的額外 libraries 是 `nav2_stop_controller_bt_node`、`nav2_reset_recovery_bt_node`、`nav2_shrink_action_bt_node`，selector libraries 沿用 fork 同名實作。所有現有購物與跟隨入口用 `NavigateToPose` 且不指定 BT，所以會使用新的預設 XML；沒有另行改動多目標 BT。
+
+behavior server 與 velocity smoother 出口仍 remap `/cmd_vel/nav`；fork StopController 在 `bt_navigator_navigate_to_pose_rclcpp_node` 上直接發布絕對 `/cmd_vel`，因此另加該節點專用 remap。controller 的 `cmd_vel → cmd_vel_nav` 內部平滑鏈維持不變，預設 mux／watchdog 才能發布最終 `/cmd_vel`。`use_mux:=false` 仍保留既有明確選用的舊接線，驗收預設須為 true。
+
+### Shrink 上游限制與後續驗收
+
+XML 的 `shrink_to=0.40 m` 提案高於車體半對角線 `sqrt(0.30²+0.25²) ≈ 0.391 m`，意圖避免 recovery 把規劃淨空縮到車體之內；**目前 fork 實作無法落實此提案**：
+
+- （已於 fork `bf60ee0` 以 opt-in `safe_recovery` 修正）原 `Shrink::onRun` 忽略 `shrink_to`、InflationLayer 寫死 0.15 m 並把 `inscribed_radius_` 設為 0；購物車參數開啟 `safe_recovery`，Eurobot 預設行為不變。
+- Shrink 另等待 `/rival_layer/set_mode` 與 `/object_layer/set_mode`，兩者未載入，會逾時跳過並增加 recovery 延遲。local／global inflation layers 都使用同一個絕對 service 名稱，實際哪一層收到請求也須檢查。
+- Shrink 的目標來源為 `/move_base_simple/goal`，正常 `NavigateToPose` 不發布該 topic，因此終點 cost 判斷不保證對應目前目標；其 costmap 索引亦缺範圍保護。Wait 只有 Shrink 成功後才會執行。
+
+上述差異位於禁止修改的 fork，保留實作並記錄，下一步由 fork 維護者處理半徑、目標來源與 service／索引問題，再以窄走道、受阻目標、取消／更新目標與跟隨交接驗證。不能以本專案的 XML／YAML 靜態測試宣稱 recovery 已安全可用。
+
+比較工具的資料流為同一份 zones 清單 → nav-check 共用的 ZoneNavigator → NavigateToPose → 模擬真值取樣 → 每目標 JSON → ROS-free 並列表。需以相同格網、起點與 AMCL 設定分開重啟 apt／fork，記錄 action 結果、模擬時間、真值路徑長度及原始目標平面誤差；真值不完整時不產生誤導性的成功量測。具體指令見 README。純 Python 測試涵蓋選擇、apt 環境隔離、資料量測與並列表；配置測試覆蓋 BT／TEB 名稱、速度路由、容器掛載與建置範圍，靜態檢查排除由私人儲存庫自行維護的 third_party 檔案。
+
 ## 情境與動態行人
 
 `shopping_robot_gazebo/config/scenarios/*.yaml` 經純 Python `scenarios.py` 驗證，選定世界座標的出生姿態、人物路徑與行人。`default` 直接參照既有 `config/person_path.yaml`，內容不變；其他情境可參照同檔或提供相同的 `speed`／`waypoints`，另支援逐航點的 `pauses` 秒數。launch 只解析一次，在暫存目錄產生本次 SDF 與解析後設定；人物模型的 `person_path_node` 和 UWB 的 `uwb_sim_node` 繼承同一個 `scenario_person_path` 檔案名稱，關閉 launch 後清除暫存檔。停留、循環與移動速度共用不匯入 ROS 的軌跡函式，時間皆來自 `/clock`。
@@ -277,3 +333,5 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 `/sim/pedestrians` 是量測自 Gazebo 的 `geometry_msgs/PoseArray`，frame 為 `sim_world`，與 `/sim/ground_truth_odom` 相同；順序固定為 YAML 的 pedestrians 順序，不含主要跟隨人物，也不發布估算路徑位置冒充真值。無行人情境不啟動 mover，也沒有此 topic。資料過期時停止行人命令；Fortress 外掛本身沒有命令逾時，節點遭強制終止的故障仍須結束整個模擬。
 
 出生姿態寫入 Gazebo spawn 與 EKF 的 15 維 `initial_state`。獨立 `scenario_initial_pose` 節點等待 `/initialpose` 訂閱者及模擬時鐘後發布一次 AMCL 起點；需等定位就緒才移動。slam_toolbox 定位使用明確 `map_start_pose` 覆寫，不修改 Nav2 launch／參數。預設出生仍為 `(0,0,0)`；替代起點改變機器人在世界中的位置，並未重定義世界原點。標準地圖、zones 與離線檢查假設 map→world 為單位轉換，不得用待評估的 map→odom 校正真值；自訂地圖需另外驗證座標關係。
+
+情境與 Nav2 stack 選擇共存：guide／follow 保留 `scenario`、`nav2_stack`、預設關閉的 `mcu_comm` 與人物唯讀位姿橋接。導航 launch 宣告選用的 `spawn_x`／`spawn_y`／`spawn_yaw`，隔離 apt 子程序時明確轉送；三者皆有值才覆寫 slam_toolbox 定位起點，未提供時保留原 dock 設定。預設模式沿用 Nav2／follow → mux → watchdog → `/cmd_vel`，本次合併未新增底盤速度發布者。

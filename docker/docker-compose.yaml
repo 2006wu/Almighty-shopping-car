@@ -18,6 +18,10 @@ services:
     environment: *ros-env
     volumes:
       - ../ros2_ws/src:/ws/src
+      - ../third_party/eurobot_nav2/src:/nav2_ws/src:ro
+      - nav2_build:/nav2_ws/build
+      - nav2_install:/nav2_ws/install
+      - nav2_log:/nav2_ws/log
       - ..:/repo
       - build:/ws/build
       - install:/ws/install
@@ -33,6 +37,15 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+  microros_agent:
+    image: microros/micro-ros-agent:humble
+    profiles: [comm]
+    command: [udp4, -p, '8888', -v4]
+    environment: *ros-env
+    volumes:
+      - ./fastdds_udp.xml:/etc/fastdds_udp.xml:ro
+    networks: [ros]
+    # UDP 8888 is intentionally internal; no device access or host port by default.
   display:
     build:
       context: ..
@@ -68,3 +81,6 @@ volumes:
   build:
   install:
   log:
+  nav2_build:
+  nav2_install:
+  nav2_log:

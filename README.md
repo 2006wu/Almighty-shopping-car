@@ -320,6 +320,125 @@ python3 scripts/check_static.py
 
 完整時間規則、已支援與無法還原的觀測、固定情境及兩次報告比較方式見 [評估指標](docs/METRICS.md#rosbag-記錄轉換與可重現流程)。沙盒僅驗證純 Python 與靜態配置，ROS／Gazebo 實際錄製回放須由維護者在容器驗證。
 
+### 人物同步與跟隨評估（純模擬）
+
+重新建置後，只啟動一個 follow 模擬；兩個檢查工具都是唯讀訂閱，不會發布速度、改人物路徑或注入故障。以下各指令在不同終端機執行，檢查工具須在模擬時間 120 秒前開始，才能觀察排程的 UWB 缺口：
+
+```bash
+./scripts/dev.sh colcon-build
+./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 120.0, fault: uwb_stale, duration: 3.0}]'
+./scripts/dev.sh person-sync-check --duration 60 --output /tmp/person-sync.json
+./scripts/dev.sh follow-eval --duration 180 --output /tmp/follow-eval.json
+```
+
+JSON 路徑位於 compute 容器內；可改成 `/repo/` 下可寫路徑以保留於主機。工具各自等待 `/clock`、略過開始後 2 秒，再量測指定的模擬秒數；`--wall-timeout` 預設為 `4*duration+30` 秒，避免模擬暫停時無限等待。直接在已 source 的容器執行也可以：
+
+```bash
+ros2 run shopping_uwb_follow person_sync_check --duration 60 --output /tmp/person-sync.json --ros-args -p use_sim_time:=true
+ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eval.json --ros-args -p use_sim_time:=true
+```
+
+`person_sync_check` 比較 `/uwb/person_ground_truth`、`/simulation/person_pose` 的人物幾何位置，以及共用 `person_path.yaml` 在各筆來源模擬時間的位置；輸出平面偏差的平均、RMSE、最大值及延遲搜尋結果。每組平均偏差須小於 0.05 m、延遲絕對值須小於 0.1 s，可用 `--mean-limit`、`--lag-limit` 更改驗收門檻。人物模型父框架必須為 `supermarket`、子框架為 `person`，對應 SDF 世界原點；人物真值必須為 `sim_world`。這是同一個模擬世界座標，不拿 EKF 的 `odom` 當真值。
+
+既有 `/simulation/poses` 保留原用途。Fortress [SceneBroadcaster](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/scene_broadcaster/SceneBroadcaster.cc) 的時間戳在外層 Pose_V，而 Humble [TFMessage 轉換](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/src/convert/tf2_msgs.cpp) 讀取各筆 pose，無法保留該外層時間。此次增加人物唯讀 [PosePublisher](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/pose_publisher/PosePublisher.cc)，產生各筆時間與框架；只有 follow launch 將 `/model/person/pose` 單向橋接至 `/simulation/person_pose`（TFMessage），不接入 `/tf`。這是量測來源時間的補足，沒有修改人物移動或 UWB 生成演算法；SDF 的觀察外掛在其他模擬也會載入，但沒有新增 ROS 橋接。
+
+`follow_eval` 使用人物真值與 `/sim/ground_truth_odom`（`sim_world → base_footprint_gt`），將真實相對位置轉到車體平面座標，再和 `/uwb/target`（`base_link`）比較。平移原點相同的假設來自目前 URDF 的固定關節。表格包含下列指標，門檻是初始驗收提案，並非控制器調參：
+
+| 項目 | 定義與預設門檻 |
+| --- | --- |
+| 濾波延遲 | 相對位置向量最佳時間位移，絕對值 <0.3 s；`--latency-limit` 可改 |
+| 直線／轉彎追蹤 | 共用人物路徑在前後各 0.5 s 的航向變化率 >0.3 rad/s 視為轉彎；各類至少 10 筆真值，真實距離減 `follow_distance` 的 RMSE <1.5 m（`--tracking-limit`）；另列距離及估測位置誤差統計 |
+| 近距停止 | 真實距離嚴格小於 YAML 的 `stop_distance`；0.5 s（`--stop-deadline`）後平面速度須 ≤0.03 m/s、角速度絕對值須 ≤0.05 rad/s，並維持到離開近距區間；列出所有違規時間 |
+| 重新取得 | 估測來源時間缺口超過 YAML 的 `lost_timeout` 或狀態進入 LOST，從下一筆新鮮估測到 `/follow/state` 回到 FOLLOWING 須 ≤2 s（`--reacquire-limit`）；另列遺失至恢復的總時間，NAV2_HANDOFF 不當作 FOLLOWING |
+
+停止距離、期望跟隨距離和 stale 門檻讀取安裝的 `shopping_uwb_follow/config/uwb_follow.yaml`；若模擬使用自訂設定，量測時也須指定相同的 `--follow-params`。`--person-path` 只供指定模擬已使用的同一份路徑，不能用另一條路徑作為真值。JSON 會記錄設定內容、門檻、來源路徑與各項結果。
+
+延遲以整段紀錄為搜尋窗，在 ±0.5 s 內每 0.01 s 搜尋向量均方差；正值代表觀察訊號落後真值。每個候選使用相同樣本集合，至多跨 0.25 s 缺口插值，不外插；至少需要 10 筆與 0.02 m 的運動激發，邊界最佳值視為無法辨識。空間偏差、取樣與服務呼叫排程可能混入延遲，故不是純濾波器內部耗時，也不能把 0.01 s 搜尋格距當成實際精度。統計依樣本加權；轉彎分類依預期人物路徑，因此應先通過同步檢查。
+
+缺資料、框架不符、時間倒退、時鐘逾時或不符合門檻會 FAIL；沒有轉彎／近停／恢復事件，或近停區間碰到紀錄邊界、太短或有資料缺口，顯示 `NOT_COVERED`。恢復期間狀態缺資料或尚未觀察到恢復也會標記未涵蓋；新鮮估測已恢復但在充分觀察後仍未回到 FOLLOWING 則 FAIL。結束碼為 0（全部 PASS）、1（有 FAIL）、2（僅有未涵蓋）。一般路徑不保證出現近距停止，工具也不會為此改動控制器；應由維護者安排可重現的模擬情境，重新量測未涵蓋項目。以上純 Python 測試不代表 ROS／Gazebo 驗收，兩錨點歧義與 NLOS 限制仍適用。
+### 偏航率校正與格網幾何檢查
+
+`yaw-check` 用於**全新、單獨執行的純 sim**。純 sim 沒有 mux／watchdog，命令由 `/cmd_vel` 經 `ros_gz` 直接送至 Fortress DiffDrive；不要同時執行 guide、follow、mapping、鍵盤或其他速度發布器。兩個終端機分別執行：
+
+```bash
+./scripts/dev.sh sim headless:=true odom_source:=ekf person:=false
+./scripts/dev.sh yaw-check --settle 2 --sample 3 --old-factor 2.0
+```
+
+工具以 20 Hz 持續送命令，依序測試 `(linear.x, angular.z)`：`(0, 0.2/0.4/0.6/0.8)` 與 `(0.2/0.4, 0.3)`；每列前零速 1 秒、排除 2 秒暫態，再採樣 3 秒（可調）。由 `/sim/ground_truth_odom` 與 EKF `/odom` 的來源時間戳、位置及解纏偏航估計角速度與平面路徑速率，列出實測／命令比值；原地線速比值不適用。速率來自 pose 差分，不依賴兩種 odometry 的 twist 框架慣例。平面速率含側滑，EKF 位置雜訊也會使路徑長稍增。來源時間須覆蓋採樣窗至少 80%，間隔不得大於 0.3 秒。
+
+完成、Ctrl-C 或錯誤時重複發布零 Twist；資料過期 0.5 秒、時鐘倒退／停止、每列超過 `--wall-timeout 45` 秒或雷射距離低於 `--clearance 0.6` 公尺均中止。弧線可能接近貨架而提前停止，這是失敗的量測，不能作為完整六列驗收；需在模擬中重新選擇空曠起點與朝向後再量測。`--in-place-only` 可先單獨完成四列原地測試；若弧線中止，仍保留四列原地擬合結果。此工具沒有底盤程序失效保護，不能用於硬體；停止工具後也應確認車體停止。
+
+擬合只採四列原地真值比值的算術平均。固定輪速時，里程計輪距校正為 `factor_old × ratio`；但 Fortress **命令轉輪速**使用 `wheel_speed = (v ± w × separation / 2) / radius`，本專案 xacro 的試調方向是 `factor_old / ratio`。工具分別列出 `fixed_wheel_rate_separation` 與 `fortress_command_factor`，不可混用。此公式已核對 [Fortress DiffDrive 原始碼](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/diff_drive/DiffDrive.cc)。例如單點 0.855/0.6 推得候選約 1.404，並非 2.85；摩擦起轉門檻與有線速時的側向滑移不保證符合單一倍率，目前仍保留 2.0。若日後校正，必須重驗低速起轉、Nav2 與跟隨調校。
+
+離線幾何工具不需 ROS，僅需既有 Python 與 PyYAML：
+
+```bash
+python3 scripts/map_geometry_check.py
+python3 scripts/map_geometry_check.py --map ros2_ws/src/shopping_robot_navigation/maps/supermarket.yaml --json /tmp/map_geometry.json
+# Or, inside the existing compute container:
+./scripts/dev.sh shell compute
+python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
+```
+
+工具讀取 P2／P5（含 16 位元）PGM、YAML 的解析度／原點／旋轉／占用門檻，直接使用淨空測試所依據的 world SDF 碰撞盒。每個面在預測邊緣附近 `--search 0.3` 公尺內，以切向格子各取最近占用格中心、排除角落並擬合直線；搜尋距離另限制小於物件半厚度，避免把內牆面誤當外牆面。輸出四面偏移中位數、覆蓋率、物件中心平移、旋轉與尺寸倍率，JSON 另有每面旋轉及擬合 RMS。平移／尺寸要求兩面覆蓋至少 50%，缺面標為 `missing`，不補零。這是有對應搜尋範圍限制的估計，單面、厚邊／重影、遮蔽與未知格都限制推論；格中心約有半格量化誤差，不等同量到實際物體表面。
+
+另依 `zones.yaml` 與貨架幾何，輸出區域附近一公尺長走道邊緣的橫向平移／旋轉／寬度倍率。snacks 本次為 +0.005 m／0°／1.000，兩側覆蓋皆 100%；平行貨架無法單獨約束沿走道的定位誤差。詳細全店量測與 AMCL 調整理由見 [進度紀錄](docs/PROGRESS.md)。AMCL 此次為待模擬確認的試調，須先用同一提交格網重新啟動 `guide slam_mode:=map_server` 並跑 `loc-check`；尚無證據需要重建地圖。若仍失敗，保留 JSON 並比較誤差方向、AMCL 更新與 EKF 殘差，再考慮重新 map-tour，勿手改格網或移動區域目標來通過門檻。
+## MCU 通訊（預設模擬，選用啟動）
+
+新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/MICROROS_GUIDE.md)。
+
+`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+## Nav2 fork、TEB 與 apt 對照
+
+`third_party/eurobot_nav2` 是私人儲存庫 `2006wu/Eurobot-2027-Navigation2` 的 git submodule（Humble／Nav2 1.1.16，目前固定於 fork 的 `shopping-car` 分支 `bf60ee0`）。有權限的使用者在**主機**用自己的 Git 憑證初始化；沒有權限的人直接略過，選 `nav2_stack:=auto` 時若找不到 `custom_controller` 與 `custom_nav_to_pose` 會自動使用 apt Nav2。
+
+```bash
+git submodule update --init third_party/eurobot_nav2
+./scripts/dev.sh build compute
+./scripts/dev.sh nav2-build
+./scripts/dev.sh nav2-status
+./scripts/dev.sh colcon-build
+./scripts/dev.sh colcon-test
+./scripts/dev.sh test
+./scripts/dev.sh up
+```
+
+私人原始碼以唯讀掛載進 compute 的 `/nav2_ws/src`，產物留在具名 volume；Dockerfile 不 clone、不接收 GitHub token，`.dockerignore` 排除整個 `third_party`。這能讓公開主專案保留整合設定與固定版本指標，而不複製私人實作。顯示容器維持 apt RViz plugins。`nav2-build` 預設 `--parallel-workers 2` 與 `MAKEFLAGS=-j3`；記憶體較少時可用 `env NAV2_PARALLEL_WORKERS=1 MAKEFLAGS=-j1 ./scripts/dev.sh nav2-build`，不指定架構。
+
+**目前固定版本：** fork `shopping-car` 分支 `bf60ee0` 已含非全向／gentle TEB 參數合約與 opt-in 的 Shrink `safe_recovery`（遵守 `shrink_to`、0.40 m 下限、local／global 各自的 inflation service、optional rival／object layer 逾時、結束或取消時還原）。建置前檢查仍會拒絕缺少合約的版本。2026-10-24 模擬中 fork 建置、連結、lifecycle、BT 與 Shrink 均正常，但 gentle TEB 在店內走道仍常判定阻擋、未能抵達區域目標，因此 launch 預設維持 `apt`（見 PROGRESS）。
+
+`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `apt`（fork TEB 尚在調參，2026-10-24 起需明確指定 `fork` 或 `auto`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
+
+```bash
+./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# After stopping the previous bringup with Ctrl-C:
+./scripts/dev.sh guide nav2_stack:=apt slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+```
+
+fork 使用 `Slow`（0.30 m/s）／`Fast`（0.40 m/s）TEB、`holonomic: false`、`avoidance_mode: gentle` 與 `use_rival_topic: false`，預設 selector 選 `Slow`／`Loose`，不需額外發布者。`Loose` 維持區域目標 0.15 m／0.25 rad 容差；`NonStopGoalChecker` 沿用 fork 中以 `SimpleGoalChecker` 定義、忽略朝向的 profile 名稱，不是獨立 plugin class。NavFn 的既有 0.8 m 可接受終點容差維持不變，仍須量測原始目標誤差。跟隨交接、區域引導、nav-check 與 map-tour 都使用 `NavigateToPose`，空白 `behavior_tree` 會選新的預設樹。
+
+to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。Shrink 使用 fork 的 `safe_recovery: true`：BT `shrink_to=0.45 m`，下限 0.40 m（大於 0.60 × 0.50 m 車體半對角線約 0.391 m），兩個 costmap 各用自己的 inflation service，結束或取消時還原；缺少的 rival／object layer service 只等待 0.05 s 即略過。詳見 [架構文件](docs/ARCHITECTURE.md)。
+
+### 記錄兩種導航的同一路線
+
+每輪從全新 guide 模擬、相同出生點、同一張已儲存格網與 `slam_mode:=map_server` 開始，人物預設關閉，保持 GUIDE 模式；比較期間不送其他 goto、map-tour、nav-check、跟隨或鍵盤命令。以下步驟分別在兩個終端機執行；每輪檢查結束後先停止 guide，再重新開始，不能在執行途中切換 stack。
+
+```bash
+# Terminal 1: first run
+./scripts/dev.sh guide nav2_stack:=apt slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# Terminal 2: record drinks, snacks, produce, household, checkout, entrance
+./scripts/dev.sh nav-compare --stack apt --output /repo/output/nav-apt.json
+# Stop Terminal 1, restart from spawn with fork, then record again:
+./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+./scripts/dev.sh nav-compare --stack fork --output /repo/output/nav-fork.json
+./scripts/dev.sh nav-compare --reports /repo/output/nav-apt.json /repo/output/nav-fork.json
+```
+
+工具重用 nav-check 的 `ZoneNavigator(enable_interfaces=False)` 與區域清單，先確認執行中的 controller profile 符合 `--stack`，逐一記錄 action 結果、模擬時間、真值軌跡折線長度及終點平面距離誤差，輸出並列表。真值只接受 `/sim/ground_truth_odom` 的 `sim_world`，不退回 EKF odom；缺值、倒退或超過 0.5 模擬秒的取樣缺口會報錯。時間涵蓋送目標前最近一筆至結果後第一筆真值；失敗／逾時也保留結果，逾時會等待取消確認，無法確認則停止後續目標。`SUCCEEDED` 表示 action 成功，未額外保證終點誤差門檻；需一起檢視 error 欄。不同電腦負載、定位漂移與規劃隨機性仍會影響結果，建議重複多輪。JSON 預設例子存入忽略版控的 `output/`。
+
+完整回歸請在各自獨立的模擬場次執行 `dev.sh nav-check --tolerance-check`、`dev.sh loc-check`、mapping 加 map-tour，以及 `dev.sh follow nav2_stack:=fork fault_injection:=true` 加 `dev.sh fault-check`。Nav2 underlay 的 ABI 檢查與限制見架構文件；本機 Python／靜態 PASS 不代表容器或 Gazebo 通過。
+
 ## 模擬情境
 
 `sim`、`mapping`、`guide`、`follow` 都接受 `scenario:=default`。使用 `./scripts/dev.sh scenario-list` 可在本機列出並驗證七種設定，不啟動 Docker；可用 `PYTHON=/path/to/python` 指定已有 PyYAML 的 Python。情境涵蓋中間走道穿越、1.6 公尺窄走道迎面行人、結帳排隊、急轉／走道末端迴轉、人物停走與不同出生位置／朝向。
@@ -334,3 +453,5 @@ python3 scripts/check_static.py
 ```
 
 錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
+
+情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設仍為 `apt`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。

@@ -358,6 +358,18 @@
       </link>
     </model>
     <model name="person">
+      <!-- Read-only observer with per-pose timestamps; never publishes ROS TF. -->
+      <plugin filename="ignition-gazebo-pose-publisher-system" name="ignition::gazebo::systems::PosePublisher">
+        <publish_model_pose>true</publish_model_pose>
+        <publish_nested_model_pose>true</publish_nested_model_pose>
+        <publish_link_pose>false</publish_link_pose>
+        <publish_visual_pose>false</publish_visual_pose>
+        <publish_collision_pose>false</publish_collision_pose>
+        <publish_sensor_pose>false</publish_sensor_pose>
+        <use_pose_vector_msg>true</use_pose_vector_msg>
+        <static_publisher>false</static_publisher>
+        <update_frequency>30</update_frequency>
+      </plugin>
       <static>true</static>
       <pose>20 20 0.85 0 0 0</pose>
       <link name="body">

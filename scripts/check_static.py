@@ -15,14 +15,17 @@ SRC = ROOT/'ros2_ws/src'
 
 
 def main():
-    yaml_files = sorted([*ROOT.rglob('*.yaml'), *ROOT.rglob('*.rviz')])
+    def owned(paths):
+        return sorted(p for p in paths if 'third_party' not in p.relative_to(ROOT).parts)
+
+    yaml_files = owned([*ROOT.rglob('*.yaml'), *ROOT.rglob('*.rviz')])
     for path in yaml_files:
         yaml.safe_load(path.read_text())
-    xml_files = sorted([*ROOT.rglob('*.xml'), *ROOT.rglob('*.sdf'),
+    xml_files = owned([*ROOT.rglob('*.xml'), *ROOT.rglob('*.sdf'),
                         *ROOT.rglob('*.urdf'), *ROOT.rglob('*.xacro')])
     for path in xml_files:
         ET.parse(path)
-    python_files = sorted(ROOT.rglob('*.py'))
+    python_files = owned(ROOT.rglob('*.py'))
     with tempfile.TemporaryDirectory(prefix='shopping-check-') as tmp:
         for index, path in enumerate(python_files):
             py_compile.compile(str(path), cfile=str(Path(tmp)/f'{index}.pyc'), doraise=True)

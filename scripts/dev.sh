@@ -16,10 +16,16 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   build [SERVICE...]       Build native-architecture images
   up | down | status       Manage compute and display containers
   shell [compute|display]  Open a ROS-sourced shell
+  nav2-build              Build the initialized private Nav2 underlay
+  nav2-status             Show fork checkout and build commit
+  nav-compare [ARGS...]    Record one stack or compare two JSON reports
   colcon-build             Build ROS packages
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
   scenario-list            List validated simulation scenarios (no Docker)
+  comm-up | comm-down     Manage the opt-in UDP micro-ROS agent
+  comm-sim [LAUNCH_ARGS...]  Standalone simulated MCU, monitor, mux and watchdog
+  comm-check              Check an isolated running comm-sim (injects motion/faults)
   sim [LAUNCH_ARGS...]     Headless simulation
   mapping | slam [LAUNCH_ARGS...]    Simulation and online mapping
   guide | nav [LAUNCH_ARGS...]     Simulation, localization/mapping, Nav2, zones
@@ -30,6 +36,9 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   map-tour [NAME]          Run mapping tour and save maps (default: supermarket)
   loc-check [ROS_ARGS...]   Check all zones against simulation truth
   mode MODE | estop | reset  Request idle/guide/follow/teleop/estop/reset
+  person-sync-check [ARGS...]  Compare person model, UWB truth and shared path
+  follow-eval [ARGS...]     Measure latency, turns, near stops and reacquisition
+  yaw-check [ARGS...]      Measure yaw/speed against a running plain sim
   fault-check [ARGS...]    Verify faults against a running opt-in follow sim
   record NAME [--duration S] [TOPICS...]  Record evaluation bag (wall seconds)
   eval-bag NAME [ARGS...]  Convert bag and write report.json/report.md
@@ -56,16 +65,43 @@ EOF
     [[ "$service" == compute || "$service" == display ]] || { echo 'Invalid service' >&2; exit 2; }
     "${compose[@]}" exec "$service" /usr/local/bin/compute-entrypoint bash
     ;;
+  nav2-build)
+    [[ -f "$repo_dir/third_party/eurobot_nav2/src/custom_controller/package.xml" ]] || {
+      echo 'Nav2 fork 未初始化 / not initialized: git submodule update --init third_party/eurobot_nav2' >&2
+      exit 2
+    }
+    "${compose[@]}" run --rm --no-deps --entrypoint /bin/bash \
+      -e "NAV2_FORK_COMMIT=$(git -C "$repo_dir/third_party/eurobot_nav2" rev-parse HEAD)" \
+      -e "NAV2_PARALLEL_WORKERS=${NAV2_PARALLEL_WORKERS:-2}" -e "MAKEFLAGS=${MAKEFLAGS:--j3}" \
+      compute /repo/scripts/nav2_build.sh "$@"
+    ;;
+  nav2-status)
+    if [[ -f "$repo_dir/third_party/eurobot_nav2/src/custom_controller/package.xml" ]]; then
+      echo "Fork initialized: $(git -C "$repo_dir/third_party/eurobot_nav2" rev-parse HEAD)"
+    else
+      echo 'Fork not initialized / 尚未初始化 (auto uses apt)'
+    fi
+    "${compose[@]}" run --rm --no-deps --entrypoint /bin/bash compute -c \
+      'if [[ -f /nav2_ws/install/setup.bash && -f /nav2_ws/install/fork_commit ]]; then echo "Built fork: $(cat /nav2_ws/install/fork_commit)"; else echo "Fork not built / 尚未建置"; fi'
+    ;;
+  nav-compare) run ros2 run shopping_zone_manager nav_compare "$@" --ros-args -p use_sim_time:=true ;;
   colcon-build) workspace_task colcon build --symlink-install "$@" ;;
   colcon-test)
     workspace_task colcon test "$@"
     workspace_task colcon test-result --verbose
     ;;
   test) workspace_task bash /repo/scripts/run_unit_tests.sh python3 "$@" ;;
+  comm-up) "${compose[@]}" --profile comm up -d microros_agent ;;
+  comm-down) "${compose[@]}" --profile comm stop microros_agent ;;
+  comm-sim) run ros2 launch shopping_mcu_bridge comm.launch.py standalone:=true "$@" ;;
+  comm-check) run ros2 run shopping_mcu_bridge comm_check "$@" ;;
   sim) run xvfb-run -a -n 50 ros2 launch shopping_robot_gazebo sim.launch.py "$@" ;;
   mapping|slam) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
   guide|nav) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
   follow) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
+  person-sync-check) run ros2 run shopping_uwb_follow person_sync_check "$@" --ros-args -p use_sim_time:=true ;;
+  follow-eval) run ros2 run shopping_uwb_follow follow_eval "$@" --ros-args -p use_sim_time:=true ;;
+  yaw-check) run python3 /repo/scripts/yaw_rate_check.py "$@" ;;
   fault-check) run python3 /repo/scripts/fault_check.py "$@" ;;
   goto)
     [[ $# -ge 1 ]] || { echo 'Usage: dev.sh goto ZONE [--timeout S]' >&2; exit 2; }

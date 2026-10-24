@@ -16,7 +16,8 @@ def start(context):
     overrides = {'use_sim_time': LaunchConfiguration('use_sim_time')}
     if mode == 'localization':
         overrides['map_file_name'] = graph
-        if 'spawn_x' in context.launch_configurations:
+        if all(context.launch_configurations.get('spawn_'+key, '') != ''
+               for key in ('x', 'y', 'yaw')):
             overrides['map_start_at_dock'] = False
             overrides['map_start_pose'] = [float(context.launch_configurations['spawn_'+key])
                                            for key in ('x', 'y', 'yaw')]
