@@ -934,3 +934,11 @@
 | Slow／Fast configure 與 1 Hz INFO | 待驗證 |
 | 單一 Gazebo nav-check 與六區 loc-check | 待驗證 |
 | 全域規劃根因與 apt／fork 成本圖比對 | 待驗證 |
+
+## 2026-10-24：fork inscribed_radius_floor 0.25 模擬複驗（t36s，18:00 台北時間）
+
+- 設定：`nav2_stack:=fork`，local／global costmap `inscribed_radius_floor: 0.25`（前次 0.40），symlink-install 已確認生效。
+- nav-check（`--tolerance-check --max-final-error 0.35 --case-timeout 180`）：unknown zone、unreachable goal、busy policy PASS；cancel and stop「no navigation progress」、valid goal 與 zone tolerance 到 household (0, 4.5) ABORTED → **FAIL**。
+- loc-check：snacks、produce 導航成功並 PASS（前次 0.40 時 drinks 起即失敗）；drinks 仍 navigation_success=false，household 未通過。
+- planner log 仍為「NavFn has no reachable goal within tolerance 0.80 … goal_cost=253」（goal_cell (118,151)／(70,101)），代表 household／drinks 目標附近仍被 fork 的膨脹層視為致命；另有一次 worldToMap 超界（目標座標在 costmap 外）。
+- 結論：0.25 改善部分走道，但 fork 仍未達 apt 的 nav-check 5/5；**不合併**，預設維持 `nav2_stack:=apt`。下一步：比對 fork InflationLayer 與 apt 在 household／drinks 目標格的 cost，檢查 min_inflation_radius≥0.4 與 cost_scaling 是否把目標格推到 253，以及 TEB 控制器在 cancel-stop 不出發的原因。
