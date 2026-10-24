@@ -1,0 +1,12 @@
+# Minimal simulation evaluation inputs; optional diagnostics remain recorded only.
+topics:
+  - /clock
+  - /sim/ground_truth_odom
+  - /odom
+  - /cmd_vel
+  - /uwb/person_ground_truth
+  - /uwb/target
+  - /follow/state
+  - /shopping/zone_status
+  - /mode_manager/state
+  - /sim/fault_status
