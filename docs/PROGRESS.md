@@ -994,3 +994,5 @@
 | 公式、地圖數值與離線測試審查 | 待驗證 |
 | 執行期原始成本、參數與地圖差異定位 | 待驗證 |
 | Gazebo 目標導航與取消停止（待模擬驗證） | 待驗證 |
+
+- 補充（17:46 台北時間，審查）：t36s 的 global costmap StaticLayer 每 2 秒重新調整尺寸（236×199 → 237×200），代表 guide 使用即時 SLAM 地圖，household／drinks 附近在探索前多為未知格（255）。這與上方推論一致：fork NavFn `setCostmap` 先以 `v >= 253` 判為障礙，使未知格無法依 `allow_unknown` 通行，而 apt NavFn 可穿越未知格。下一步優先在 fork 修正 NavFn 未知格順序（先判 255 再判障礙門檻），重建 fork 後重跑 nav-check／loc-check。
