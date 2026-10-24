@@ -395,6 +395,10 @@ python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
 新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/MICROROS_GUIDE.md)。
 
 `dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+## 未來硬體介面（預設全部模擬）
+
+[硬體介面規格](docs/HARDWARE_INTERFACES.md) 定義感測器、底盤、急停與心跳契約，以及 `shopping_interfaces` 的四種 UWB 訊息。`hardware.launch.py` 是含 Gazebo 的待機介面驗證入口，`use_real_lidar`、`use_real_imu`、`use_real_uwb`、`use_real_base` 全部預設 `false`；只有明確選用並提供對應 driver package／launch 才會引入未來驅動，缺設定只記錄錯誤，不探測裝置。入口使用 EKF、待機模式與唯一 `/cmd_vel` watchdog，沒有移動命令來源。現有 UWB 模擬／估測仍使用原訊息；目前沒有實體驅動、裝置連線或完整實車 bringup，guide／follow 也尚未整合硬體選項。
+
 ## Nav2 fork、TEB 與 apt 對照
 
 `third_party/eurobot_nav2` 是私人儲存庫 `2006wu/Eurobot-2027-Navigation2` 的 git submodule（Humble／Nav2 1.1.16，目前固定於 fork 的 `shopping-car` 分支 `bf60ee0`）。有權限的使用者在**主機**用自己的 Git 憑證初始化；沒有權限的人直接略過，選 `nav2_stack:=auto` 時若找不到 `custom_controller` 與 `custom_nav_to_pose` 會自動使用 apt Nav2。

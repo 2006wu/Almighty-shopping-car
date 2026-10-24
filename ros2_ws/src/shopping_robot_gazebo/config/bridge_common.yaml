@@ -1,0 +1,15 @@
+- ros_topic_name: /clock
+  gz_topic_name: /world/supermarket/clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: ignition.msgs.Clock
+  direction: GZ_TO_ROS
+- ros_topic_name: /sim/ground_truth_odom
+  gz_topic_name: /sim/ground_truth_odom
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS
+- ros_topic_name: /simulation/poses
+  gz_topic_name: /world/supermarket/pose/info
+  ros_type_name: tf2_msgs/msg/TFMessage
+  gz_type_name: ignition.msgs.Pose_V
+  direction: GZ_TO_ROS
