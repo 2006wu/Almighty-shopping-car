@@ -814,3 +814,14 @@
 | follow／guide mcu_comm 預設關閉與明確啟用 | 待驗證 |
 | 模式急停請求、唯一 cmd_vel 發布者及現有 EKF／TF 不受影響 | 待驗證 |
 | 實體 serial 與 MCU 韌體／硬體安全 | 待驗證 |
+
+### 審查驗證結果（2026-10-24 14:40 臺北時間，盒內 Linux amd64 Docker）
+
+| 項目 | 結果 |
+| --- | --- |
+| 盒內 pytest／`check_static.py` | 755 passed／PASS（rebase 至 develop 3346718 後） |
+| 容器 colcon build + test | 624 tests，0 errors，0 failures，5 skipped。修正：套件測試在容器（`/ws/src`）找不到 repo 根目錄，37 項失敗 → 改為找不到 `docs/` 時使用 `/repo` |
+| sim_ros `comm-sim` + `comm-check` | 10/10 PASS。修正：首次執行因 DDS discovery 未完成，隔離檢查誤判 FAIL；改為最多輪詢 10 秒並在失敗時記錄發布／訂閱者 |
+| serial_loopback `comm-sim` + `comm-check` | 10/10 PASS |
+| `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
+| 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
