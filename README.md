@@ -391,7 +391,7 @@ python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
 `dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
 ## Nav2 fork、TEB 與 apt 對照
 
-`third_party/eurobot_nav2` 是私人儲存庫 `2006wu/Eurobot-2027-Navigation2` 的 git submodule（Humble／Nav2 1.1.16，初始固定於 `31c3ef1`）。有權限的使用者在**主機**用自己的 Git 憑證初始化；沒有權限的人直接略過，`nav2_stack:=auto` 在找不到 `custom_controller` 與 `custom_nav_to_pose` 時自動使用 apt Nav2。
+`third_party/eurobot_nav2` 是私人儲存庫 `2006wu/Eurobot-2027-Navigation2` 的 git submodule（Humble／Nav2 1.1.16，目前固定於 fork 的 `shopping-car` 分支 `bf60ee0`）。有權限的使用者在**主機**用自己的 Git 憑證初始化；沒有權限的人直接略過，選 `nav2_stack:=auto` 時若找不到 `custom_controller` 與 `custom_nav_to_pose` 會自動使用 apt Nav2。
 
 ```bash
 git submodule update --init third_party/eurobot_nav2
@@ -408,7 +408,7 @@ git submodule update --init third_party/eurobot_nav2
 
 **目前固定版本的限制：** `31c3ef1` 尚未包含平行工作中的非全向／gentle TEB 參數合約。建置前檢查會明確拒絕缺少合約的版本，避免 YAML 被舊控制器忽略後仍輸出全向速度。待 fork 維護者完成、審查並更新 submodule 固定版本後再執行 `nav2-build`；本輪沒有更動 fork 原始碼或指標。檢查參數名稱不能取代 C++ 行為測試。
 
-`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `auto`，啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
+`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `apt`（fork TEB 尚在調參，2026-10-24 起需明確指定 `fork` 或 `auto`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
 
 ```bash
 ./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml

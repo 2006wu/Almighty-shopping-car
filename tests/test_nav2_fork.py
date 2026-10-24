@@ -93,6 +93,23 @@ def test_fork_params_and_tree():
     assert {'nav2_stop_controller_bt_node', 'nav2_reset_recovery_bt_node',
             'nav2_shrink_action_bt_node', 'nav2_controller_selector_bt_node',
             'nav2_goal_checker_selector_bt_node'} <= set(libraries)
+    shrink = behaviors['shrink']
+    assert shrink['safe_recovery'] is True and shrink['min_inflation_radius'] >= 0.4
+    assert shrink['local_inflation_radius_service'] != shrink['global_inflation_radius_service']
+    assert shrink['local_inflation_service'] != shrink['global_inflation_service']
+    assert params['bt_navigator']['ros__parameters']['default_nav_through_poses_bt_xml'].endswith(
+        'navigate_through_poses_shopping.xml')
+    through = (NAV/'behavior_trees/navigate_through_poses_shopping.xml').read_text()
+    assert 'Escape' not in through and '<Spin' not in through and '<BackUp' not in through
+    fork_only = {'mode_service_name', 'radius_service_name', 'shrink_to',
+                 'min_inflation_radius', 'inscribed_radius_floor'}
+    for name in ('local_costmap', 'global_costmap'):
+        layer = params[name][name]['ros__parameters']['inflation_layer']
+        assert layer['min_inflation_radius'] >= 0.4 and layer['inscribed_radius_floor'] >= 0.4
+        assert layer['radius_service_name'] == shrink[name.split('_')[0]+'_inflation_radius_service']
+        assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
+        for key in fork_only:
+            layer.pop(key)
     for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator'}:
         assert apt[key] == params[key]
     assert 'behavior_trees' in (NAV/'CMakeLists.txt').read_text()

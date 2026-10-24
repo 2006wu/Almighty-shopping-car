@@ -19,7 +19,7 @@
           <ReactiveFallback name="RecoveryFallback">
             <GoalUpdated/>
             <Sequence>
-              <Shrink shrink_to="0.40"/>
+              <Shrink shrink_to="0.45"/>
               <Wait wait_duration="0.5"/>
             </Sequence>
           </ReactiveFallback>

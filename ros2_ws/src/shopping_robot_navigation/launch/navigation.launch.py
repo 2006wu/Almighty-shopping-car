@@ -33,7 +33,8 @@ def start(context):
     if stack == 'fork':
         from nav2_common.launch import RewrittenYaml
         params = RewrittenYaml(source_file=params, root_key='', param_rewrites={
-            'default_nav_to_pose_bt_xml': share + '/behavior_trees/navigate_to_pose_shopping.xml'},
+            'default_nav_to_pose_bt_xml': share + '/behavior_trees/navigate_to_pose_shopping.xml',
+            'default_nav_through_poses_bt_xml': share + '/behavior_trees/navigate_through_poses_shopping.xml'},
             convert_types=True)
     nav = get_package_share_directory('nav2_bringup')+'/launch/'
     common = {'use_sim_time': time, 'params_file': params, 'autostart': 'true', 'use_composition': 'False'}
@@ -56,6 +57,6 @@ def start(context):
 def generate_launch_description():
     return LaunchDescription([DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
                               DeclareLaunchArgument('use_sim_time', default_value='true'),
-                              DeclareLaunchArgument('nav2_stack', default_value='auto', choices=['auto', 'fork', 'apt']),
+                              DeclareLaunchArgument('nav2_stack', default_value='apt', choices=['auto', 'fork', 'apt']),
                               DeclareLaunchArgument('map', default_value=''),
                               DeclareLaunchArgument('slam_mode', default_value='mapping'), OpaqueFunction(function=start)])

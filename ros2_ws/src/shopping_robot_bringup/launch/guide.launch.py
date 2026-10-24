@@ -28,7 +28,7 @@ def generate_launch_description():
         DeclareLaunchArgument('headless', default_value='true'),
         DeclareLaunchArgument('person', default_value='false'),
         DeclareLaunchArgument('map', default_value=''),
-        DeclareLaunchArgument('nav2_stack', default_value='auto', choices=['auto', 'fork', 'apt']),
+        DeclareLaunchArgument('nav2_stack', default_value='apt', choices=['auto', 'fork', 'apt']),
         DeclareLaunchArgument('slam_mode', default_value='mapping'),
         include('shopping_robot_gazebo', 'sim.launch.py', {'fault_injection': LaunchConfiguration('fault_injection'), 'fault_schedule': LaunchConfiguration('fault_schedule'), 'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person')}),
         include('shopping_robot_navigation', 'navigation.launch.py', {'use_mux': LaunchConfiguration('use_mux'), 'nav2_stack': LaunchConfiguration('nav2_stack'), 'slam_mode': LaunchConfiguration('slam_mode'), 'map': LaunchConfiguration('map'), 'use_sim_time': time}),
