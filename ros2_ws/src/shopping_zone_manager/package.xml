@@ -4,6 +4,7 @@
  <maintainer email="2006wu@users.noreply.github.com">2006wu</maintainer><license>Apache-2.0</license>
  <buildtool_depend>ament_python</buildtool_depend>
  <exec_depend>rclpy</exec_depend>
+<exec_depend>shopping_robot_gazebo</exec_depend>
 <exec_depend>rosbag2_py</exec_depend>
 <exec_depend>ros2bag</exec_depend>
 <exec_depend>rosbag2_transport</exec_depend>

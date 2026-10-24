@@ -87,7 +87,7 @@ ros2 run shopping_zone_manager map_tour --ros-args -p use_sim_time:=true -p map_
 ros2 run shopping_zone_manager localization_check --ros-args -p use_sim_time:=true -p report_file:=/tmp/localization_check.json
 ```
 
-巡航、定位檢查、`goto`、`/shopping/goto_zone`、跟隨與鍵盤控制必須互斥操作；尚無模式管理器或速度仲裁。`map → odom` 在每次啟動時只由所選 slam_toolbox 或 AMCL 發布。定位用解析度、雷射上限及座標框架與 mapper 一致；slam_toolbox 保留 `map_start_at_dock: true`，從出生點的第一筆建圖掃描開始，不同時設定優先權更高的 `map_start_pose`（[Humble 實作](https://github.com/SteveMacenski/slam_toolbox/blob/humble/src/slam_toolbox_common.cpp)）。AMCL 使用 `(0,0,0)` 初始姿態，檢查工具的 `publish_initial_pose` 會在移動前另外發布 `/initialpose`。本次未調整控制器與規劃器，也尚未執行這套巡航及兩種離線定位的 ROS／Gazebo 驗收。
+巡航、定位檢查、`goto`、`/shopping/goto_zone`、跟隨與鍵盤控制必須互斥操作；尚無模式管理器或速度仲裁。`map → odom` 在每次啟動時只由所選 slam_toolbox 或 AMCL 發布。定位用解析度、雷射上限及座標框架與 mapper 一致；單獨的 slam_toolbox launch 保留 `map_start_at_dock: true`；情境 bringup 則以選定起點的 `map_start_pose` 覆寫定位起點（[Humble 實作](https://github.com/SteveMacenski/slam_toolbox/blob/humble/src/slam_toolbox_common.cpp)）。AMCL 由情境初始化節點發布選定的世界／標準地圖起點（default 為 `(0,0,0)`），檢查工具的 `publish_initial_pose` 可在移動前再次發布相同起點。本次未調整控制器與規劃器，也尚未執行這套巡航及兩種離線定位的 ROS／Gazebo 驗收。
 
 導航就緒後，從另一個終端機送出目標：
 
@@ -445,3 +445,21 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 
 完整回歸請在各自獨立的模擬場次執行 `dev.sh nav-check --tolerance-check`、`dev.sh loc-check`、mapping 加 map-tour，以及 `dev.sh follow nav2_stack:=fork fault_injection:=true` 加 `dev.sh fault-check`。Nav2 underlay 的 ABI 檢查與限制見架構文件；本機 Python／靜態 PASS 不代表容器或 Gazebo 通過。
 `dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 停止 client 與 agent；一般 `dev.sh up` 不受影響。Python 模擬韌體直接使用 DDS，**不經過 agent**。另以 `./scripts/dev.sh comm-e2e-up` 建置／啟動真正 C／rclc Linux XRCE client、agent 與前景 standalone mux／watchdog／monitor；第二終端執行 `./scripts/dev.sh comm-e2e-check`，驗證心跳、輪速、命令逾時與 PC 心跳失聯。C client 只模擬輪子，沒有裝置連線；本次尚未執行 Docker／ROS 驗收。測試前須停止 Gazebo 及其他韌體，結束後 Ctrl-C 前景 launch 再執行 `comm-down`。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+
+
+## 模擬情境
+
+`sim`、`mapping`、`guide`、`follow` 都接受 `scenario:=default`。使用 `./scripts/dev.sh scenario-list` 可在本機列出並驗證七種設定，不啟動 Docker；可用 `PYTHON=/path/to/python` 指定已有 PyYAML 的 Python。情境涵蓋中間走道穿越、1.6 公尺窄走道迎面行人、結帳排隊、急轉／走道末端迴轉、人物停走與不同出生位置／朝向。
+
+```bash
+./scripts/dev.sh guide scenario:=aisle_crossing headless:=true \
+  slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# In another terminal, record before sending goals.
+./scripts/dev.sh record aisle_crossing_01 --duration 120 /scan /simulation/poses
+./scripts/dev.sh goto household --timeout 90
+./scripts/dev.sh eval-bag aisle_crossing_01
+```
+
+錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
+
+情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設仍為 `apt`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。

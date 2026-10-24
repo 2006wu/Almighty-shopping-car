@@ -1,0 +1,22 @@
+robot_pose:
+  x: 0
+  y: 0
+  yaw: 0
+person_path: person_path.yaml
+pedestrians:
+- name: ped_queue_a
+  waypoints:
+  - - 3.3
+    - -1.8
+  speed: 0
+  radius: 0.25
+  start_delay: 0
+- name: ped_queue_b
+  waypoints:
+  - - 2.4
+    - -1.8
+  - - 2.8
+    - -1.8
+  speed: 0.08
+  radius: 0.25
+  start_delay: 0

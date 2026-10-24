@@ -4,6 +4,7 @@ import csv
 import json
 from pathlib import Path
 
+from .eval_repro import json_text, rounded
 from .eval_metrics import (clearance_metrics, finite, follow_metrics, load_store_boxes,
                            navigation_metrics, state_metrics, stop_metrics)
 
@@ -120,11 +121,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         report = evaluate_log(load_log(args.log), load_store_boxes(args.world),
-                              **{name: getattr(args, name) for name in
+                              **{name: rounded(getattr(args, name)) for name in
                                  ('target', 'band', 'too_close', 'length', 'width',
                                   'person_radius', 'linear_threshold', 'angular_threshold')})
         report['source'] = dict(log=str(args.log), world=str(args.world))
-        payload = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False)+'\n'
+        report = rounded(report)
+        payload = json_text(report)
         output = str(args.output)
         Path(output+'.json').write_text(payload, encoding='utf-8')
         Path(output+'.md').write_text(markdown_report(report), encoding='utf-8')

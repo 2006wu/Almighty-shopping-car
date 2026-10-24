@@ -52,6 +52,14 @@ def enabled(condition, context):
     return not value if condition.kind == 'UnlessCondition' else value
 
 
+class Scope(dict):
+    """Dict context that also exposes launch_configurations like LaunchContext."""
+
+    @property
+    def launch_configurations(self):
+        return self
+
+
 def nodes_for(filename, context):
     env = load(filename)
     env.update({name: action(name) for name in (
@@ -66,7 +74,7 @@ def nodes_for(filename, context):
             if not enabled(getattr(item, 'condition', None), scope):
                 continue
             if item.kind == 'OpaqueFunction':
-                yield from walk(item.function(scope), scope)
+                yield from walk(item.function(Scope(scope)), scope)
             elif item.kind == 'GroupAction':
                 yield from walk(item.actions, dict(scope))
             elif item.kind == 'IncludeLaunchDescription':

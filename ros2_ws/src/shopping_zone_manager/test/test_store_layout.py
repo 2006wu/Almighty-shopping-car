@@ -57,7 +57,10 @@ def test_zone_free_with_robot_clearance(zone):
 
 def test_spawn_pose_is_origin_and_free():
     launch = (SRC/'shopping_robot_gazebo/launch/sim.launch.py').read_text()
-    assert "'-x', '0', '-y', '0', '-z', '0.02', '-Y', '0'" in launch
+    from shopping_robot_sim.scenarios import load_scenario
+    assert load_scenario(SRC/'shopping_robot_gazebo/config', 'default')['robot_pose'] == dict(x=0, y=0, yaw=0)
+    for key in ('x', 'y', 'yaw'):
+        assert f"LaunchConfiguration('spawn_{key}')" in launch
     assert_free(0, 0, 0.7)
     # Include the laser offset and the full front sector out to 0.7 m.
     for degrees in range(-30, 31):
@@ -106,3 +109,24 @@ def test_mapping_tour_and_connecting_segments_have_footprint_margin():
     assert any((g.x, g.y) == (3, -1) for g in goals)
     assert {g.x for g in goals if g.y == 6.1} == {-2.4, 0, 2.4}
     assert {-2.4, 0, 2.4} <= {g.x for g in goals if g.y == 0}
+
+
+@pytest.mark.parametrize('name', sorted(p.stem for p in (SRC/'shopping_robot_gazebo/config/scenarios').glob('*.yaml')))
+def test_all_scenario_segments_starts_and_people(name):
+    from shopping_robot_sim.scenarios import load_scenario
+    scenario = load_scenario(SRC/'shopping_robot_gazebo/config', name)
+    start = scenario['robot_pose']
+    assert_free(start['x'], start['y'], 0.55)
+    metadata = yaml.safe_load((SRC/'shopping_robot_navigation/maps/supermarket.yaml').read_text())
+    tokens = (SRC/'shopping_robot_navigation/maps/supermarket.pgm').read_bytes().split(b'\n', 3)
+    width, height = map(int, tokens[1].split())
+    ox, oy, _ = metadata['origin']
+    assert ox < start['x'] < ox+width*metadata['resolution']
+    assert oy < start['y'] < oy+height*metadata['resolution']
+    for path, radius in [(scenario['person_path'], .25), *[(p, p['radius']) for p in scenario['pedestrians']]]:
+        points = path['waypoints']
+        for a, b in zip(points, points[1:]+points[:1]):
+            steps = max(1, math.ceil(math.dist(a, b)/.02))
+            for i in range(steps+1):
+                t = i/steps
+                assert_free(a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1]), radius+.05)
