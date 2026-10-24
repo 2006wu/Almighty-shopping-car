@@ -144,3 +144,23 @@ def test_already_stationary_baseline_cannot_pass():
     still = series(-1, -0.1, -2)
     assert not evaluate_trial(series(0, 4), series(0, 4), still, still,
                               series(5, 6, 10), series(5, 6, 10), 0, 4)[0]
+
+
+def test_phantom_front_preserves_stamp_and_other_rays():
+    engine = FaultEngine()
+    engine.command('lidar_front:0.2', 0)
+    scan = NS(ranges=[5.0]*720, angle_min=-3.141592653589793,
+              angle_increment=2*3.141592653589793/720, header=NS(stamp=123))
+    changed = engine.mutate('scan', scan)
+    assert changed.ranges[360] == 0.2
+    assert changed.ranges[0] == 5.0
+    assert changed.header.stamp == 123
+    assert scan.ranges[360] == 5.0
+    engine.command('clear', 1)
+    assert engine.mutate('scan', scan).ranges[360] == 5.0
+
+
+@pytest.mark.parametrize('command', ['lidar_front', 'lidar_front:nan', 'lidar_front:0'])
+def test_invalid_phantom_distance(command):
+    with pytest.raises(ValueError):
+        parse_command(command)

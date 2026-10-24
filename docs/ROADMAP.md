@@ -55,7 +55,7 @@
 
 - [x] 實作引導／跟隨／待機管理器及唯一的速度命令仲裁（2026-10-23，`use_mux:=true` 預設）。
 - [x] 加入獨立命令逾時看門狗、停用流程與重啟安全（2026-10-23）。
-- [ ] 整合障礙停止、可選 collision_monitor 與恢復行為。
+- [ ] 整合障礙停止、可選 collision_monitor 與恢復行為。（2026-10-24：obstacle_guard 已合併，obstacle 故障 4/4、follow 故障 7/7 PASS；collision_monitor 與繞行恢復尚未模擬）
 - [x] 設計跟隨繞障策略，驗證各狀態切換及故障注入（2026-10-23；fault-check 6/6。NAV2_HANDOFF 中注入、`route_around:=false` 尚未專門驗證）。
 
 ## 階段 5：穩健性與量測（2026 年 12 月–2027 年 1 月）

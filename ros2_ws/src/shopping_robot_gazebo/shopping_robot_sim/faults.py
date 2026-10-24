@@ -15,9 +15,9 @@ def parse_command(command):
     parts = command.strip().split(':')
     name = parts[0]
     if name not in {'clear', 'uwb_stale', 'uwb_dropout', 'uwb_noise',
-                    'lidar_drop', 'lidar_freeze', 'odom_freeze'}:
+                    'lidar_drop', 'lidar_freeze', 'lidar_front', 'odom_freeze'}:
         raise ValueError('Unknown fault')
-    if name in {'uwb_dropout', 'uwb_noise'}:
+    if name in {'uwb_dropout', 'uwb_noise', 'lidar_front'}:
         if len(parts) != 2:
             raise ValueError('Fault requires a positive numeric value')
         value = float(parts[1])
@@ -82,6 +82,12 @@ class FaultEngine:
                 self.cache[freeze] = deepcopy(message)
             return deepcopy(self.cache[freeze])
         result = deepcopy(message)
+        if stream == 'scan' and 'lidar_front' in self.active:
+            distance = self.active['lidar_front'][0].value
+            result.ranges = [min(r, distance) if abs(math.atan2(
+                math.sin(message.angle_min+i*message.angle_increment),
+                math.cos(message.angle_min+i*message.angle_increment))) <= 0.20 else r
+                for i, r in enumerate(message.ranges)]
         if stream == 'ranges' and 'uwb_noise' in self.active:
             sigma = self.active['uwb_noise'][0].value
             result.data = [max(0.0, v+self.random.gauss(0, sigma))
