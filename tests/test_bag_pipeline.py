@@ -293,3 +293,18 @@ def test_plain_message_handles_numpy_like_scalars_and_arrays():
         def get_fields_and_field_types(self):
             return {'covariance': 'double[2]', 'x': 'double'}
     assert plain_message(Message()) == {'covariance': [0.5, 0.0], 'x': 1.25}
+
+
+def test_guard_triggers_use_simulation_time_and_do_not_repeat():
+    records = [state('/safety/obstacle_state', 100+i,
+                     json.dumps(dict(t=t, state=s)))
+               for i, (t, s) in enumerate(((0, 'CLEAR'), (.1, 'STOP'),
+                                           (.2, 'STOP'), (.3, 'STALE')))]
+    records += [command(.15), robot(.25)]
+    rows, _ = convert_records(records)
+    triggers = [r for r in rows if r['type'] == 'trigger']
+    assert [(r['t'], r['event']) for r in triggers] == [
+        (.1, 'obstacle_guard_stop'), (.3, 'obstacle_guard_stale')]
+    report = evaluate_log(rows, [])
+    assert report['stop']['events'][0]['commanded_latency'] == pytest.approx(.05)
+    assert report['stop']['commanded_pending'] == 1

@@ -10,6 +10,8 @@
 <exec_depend>shopping_zone_manager</exec_depend>
 <exec_depend>shopping_uwb_follow</exec_depend>
 <exec_depend>shopping_mcu_bridge</exec_depend>
+<exec_depend>nav2_collision_monitor</exec_depend>
+<exec_depend>nav2_lifecycle_manager</exec_depend>
 <exec_depend>rviz2</exec_depend>
 <exec_depend>nav2_rviz_plugins</exec_depend>
 <exec_depend>launch</exec_depend>
