@@ -601,6 +601,73 @@
 - `eval-bag` 僅適用目前預設 map 與世界原點、朝向一致的程序；其他地圖要手動提供經驗證的 map→世界轉換。導航只還原區域管理器已送出的回合，無法涵蓋 RViz 目標、跟隨 handoff 或未送出前的未知區域／伺服器不可用；孤立終態與截止回合需連同中繼資料檢視。
 - 人物真值是唯一人物路徑模型的位置，非 Gazebo 人物模型實際到位量測；跟隨位置採有界內插，不外推或跨內部缺口。長紀錄目前在記憶體排序，沒有串流或自動情境執行器。
 - 無 header 的資料須由 `--use-sim-time` bag 接收時間對齊；同 topic、同 tick 的命令／跟隨狀態取最後一筆並揭露合併數，無法解析 tick 內延遲。LOST／OBSTACLE_STOP 不能區分 UWB 過期、掉訊、雷射／里程計失效或障礙；停止延遲從狀態公布算起，看門狗缺少獨立事件來源。固定種子仍不能消除 Gazebo／DDS／人物相位非決定性，應多次重複保存所有失敗。
+## 2026-10-24：偏航率差異與 AMCL 定位調查
+
+### 偏航率根因與量測
+
+- 已讀 xacro、world SDF、bridge／EKF、輪速加噪、sim／guide 接線與歷史紀錄。純 `sim.launch.py` 沒有模式仲裁或輸出看門狗；`/cmd_vel` 經 bridge 直接進 DiffDrive。預設 EKF 的 `odometry/filtered` 重新映射成 `/odom`，真值固定為獨立的 `/sim/ground_truth_odom`，未修改 TF 所有權。
+- 新增 `scripts/yaw_rate_check.py`、`dev.sh yaw-check`。預設六列為線速 0 的角速 0.2／0.4／0.6／0.8，以及線速 0.2／0.4 的角速 0.3。每列先停 1 秒、命令暫態 2 秒、採樣 3 秒；使用來源時間戳的解纏航向直線擬合及平面累積路徑速率，同列顯示真值、EKF、角速比與線速比。資料覆蓋不足、間隔過大、過期、時鐘倒退／停止與前方或側方雷射過近均中止。正常結束、例外與 Ctrl-C 皆重複送零速；有替身入口測試覆蓋中斷與例外清理。這不是底盤程序失效時的看門狗。
+- 重要公式方向：已核對 [Fortress DiffDrive 的 UpdateVelocity](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/diff_drive/DiffDrive.cc)。固定輪速時，解算 yaw 的確與 separation 成反比，故里程計輪距校正是 `old × ratio`；但此外掛在輸入側使用 `(v ± w × separation / 2) / radius`。因此本 xacro 增大 separation 會增加左右輪速差，近似固定滑移時應以 `old / ratio` 試調。工具保留並清楚命名兩種公式，不能把 `fixed_wheel_rate_separation` 套至 xacro。單點 0.855／0.6 = 1.425，兩種候選分別為 2.85 與 **1.404**；後者才是命令側的試調方向，但單點不足以校正整個速度範圍。
+- 幾何輪距為 `0.50 − 0.04 = 0.46 m`，目前命令側等效輪距 `0.92 m`。世界步長 0.001 秒；四輪前後位置 ±0.198 m，轉向必須橫向擦滑。車輪碰撞是轉軸沿 y 的圓柱，URDF gazebo 標記 `mu1=mu2=0.5`；world 地板未明訂 surface／摩擦，沒有 `fdir1`、方向性摩擦或 slip 參數。兩方向相同的摩擦值不提供低側向阻力，實際接觸行為仍依 URDF→SDF 轉換與 Fortress 物理後端。沒有容器轉換結果，不能宣稱某個摩擦標記已被忽略或確實生效。
+- 既有紀錄曾在幾何輪距下 ≤0.2 rad/s 無法起轉，故 2.0 是克服起轉阻力的補償，並非已校正的固定滑移常數。較高角速的過量補償是目前最合理假說，但摩擦起轉門檻可能使低速與高速無法共用倍率。有線速時左右輪滑移及橫向擦滑不同，不能以原地平均值保證弧線正確。
+- 外掛限速 0.6 m/s／1.2 rad/s，未設定加速度限制；仲裁的一般加速度限制僅適用 guide／follow，純 sim 不經過它。六列命令都在限速內；最大輪速需求約 5.38 rad/s，低於 joint 標記的 15 rad/s（不據此假定物理引擎必然執行 joint limit）。限幅不能解釋穩態 1.425 倍增益；暫態仍須排除。輪速加噪為線速 ×1.01、角速 ×1.02 加高斯噪聲；EKF 融合輪速 twist 與 IMU yaw rate，不回饋控制底盤，也不會改變獨立真值。因此 EKF 不是車體真值偏航增益的根因，但其輸出會與真值不同，工具會一併量測。
+- **保留 factor=2.0**，未新增未經證實的新預設；只修正原註解的 0.44 m 與實車校正措辭，明訂此為模擬待校正參數。維護者須先取得四列原地與兩列弧線的完整表，再決定是否以 xacro argument 提供校正值；若調整，重跑小角速起轉、Nav2 與人物跟隨，調校可能位移。
+
+### 格網幾何實測與 AMCL 修正假說
+
+- 新增 `scripts/map_geometry_check.py`，只用標準函式庫＋PyYAML，不匯入 ROS／numpy。支援 P2／P5、註解、16 位元大端序，保留二進位首像素的空白／井字號，拒絕截斷或超出範圍的影像。依 map YAML 的旋轉原點、解析度與占用門檻解析格子；未知格不當成占用。
+- 幾何直接讀淨空測試同一份 `worlds/supermarket.sdf` 的碰撞盒；遇到未支援的旋轉／link 或 collision 位姿會拒絕，避免靜默比錯。各面排除角落後，每個切向格取最近占用中心，搜尋預設 ±0.3 m 並限制在半厚度內，避免把內牆面重複認成外牆面；輸出覆蓋、偏移中位數、直線斜率／RMS。兩面覆蓋皆至少 50% 才估中心平移與尺寸比例。區域附近一公尺長走道另估橫向偏移、旋轉與寬度比例。
+- 本環境實際執行 `python scripts/map_geometry_check.py --json /tmp/shop-map-geometry.json`（使用指定既有 venv）。提交地圖解析度 0.05 m、原點 `[-5.92, -3.12, 0]`。以下偏移皆為「格中心 − 世界表面」，單位 m；約有半格量化誤差。此表是執行結果，非審查驗證。
+
+| 區域／物件 | 邊緣偏移與覆蓋 | 平移／旋轉／尺寸估計 |
+| --- | --- | --- |
+| north 內面、east 內面 | +0.005；99%、84% | 外面缺資料，無法估牆中心／厚度 |
+| west 內面 | +0.005；61% | 面旋轉約 −0.024°；外面缺資料 |
+| south_left／south_right 內面 | +0.005；100% | 外面缺資料，不將單面誤報為零厚度 |
+| shelf_0 | 右／下／上 +0.005；100% | y 平移 +0.005、y 倍率 1.000；左面缺資料 |
+| shelf_1 | 四面 +0.005；100% | dx/dy +0.005/+0.005、旋轉 0°、x/y 倍率 1.000/1.000 |
+| shelf_2 | 四面中位數 +0.005；100% | dx/dy +0.011/+0.005、面旋轉中位數 0°、x/y 倍率 0.985/1.000；局部邊緣有變化 |
+| shelf_3 | 左／下／上 +0.005；100% | y 平移 +0.005、y 倍率 1.000；右面缺資料 |
+| landmark_endcap | 四面中位數 +0.005；100% | dx/dy +0.005/−0.002、旋轉 0°、x/y 倍率 1.000/1.033 |
+| landmark_pillar | 右 +0.005；100%；其餘不足 | 無完整平移／尺寸估計 |
+| landmark_fridge | 右 +0.005、下 +0.055；100% | 可見面旋轉中位數約 2.450°；其餘缺面，不能視為完整剛體旋轉 |
+| landmark_display | 左／上 +0.005；50%／90% | 其餘不足，無完整平移／尺寸估計 |
+| checkout | 左／上 +0.005；100% | 其餘不足，無完整平移／尺寸估計 |
+| drinks／snacks／produce 目標附近 | 左右各 +0.005；100% | 橫向平移 +0.005、旋轉 0°、走道寬倍率 1.000 |
+| household 目標附近 | 左 +0.005、右 +0.030；100% | 橫向平移 +0.017、旋轉 +1.196°、走道寬倍率 1.015 |
+
+- snacks 的局部結果不支持 **0.166 m 的橫向格網變形**。長平行貨架對沿走道位置約束弱，少量局部厚邊、未知面及最近面對應仍可能漏掉問題；不能由此斷言地圖完全正確。區域座標與實體走道一致，未更改 goals、影像或 YAML 原點／解析度，未重建地圖。
+- 近乎恆定的採樣誤差也可能是停車後 AMCL 不再更新，而非必然是格網偏移。Humble 原始碼預設 `update_min_d=0.25`、`update_min_a=0.2`；在到站前最後一次更新後的短距離運動與 EKF 漂移，可能保留固定校正誤差。稀疏取樣與長直走道的縱向歧義也是候選。這些是待測假說，尚無誤差向量、粒子分布或逐次更新紀錄可證實因果。
+- 在 `nav2_params.yaml` 實作 AMCL 試調：更新門檻改為 0.05 m／0.05 rad；max_beams 60→180，提高非對稱走道端點的取樣機會；z_hit/z_rand 0.5/0.5→0.9/0.1、sigma_hit 0.2→0.1 m、likelihood 最大距離 2.0→0.5 m。顯式保留既有預設 likelihood_field、alpha1–5=0.2（diff model 不用 alpha5）、recovery alpha=0，沿用 set_initial_pose=true 與出生原點。參照 [Humble AMCL 預設與更新條件](https://github.com/ros-navigation/navigation2/blob/humble/nav2_amcl/src/amcl_node.cpp) 及 [likelihood field 計分](https://github.com/ros-navigation/navigation2/blob/humble/nav2_amcl/src/sensors/laser/likelihood_field_model.cpp)。
+- 調整目的是在停止前更頻繁修正、讓較精準的格網邊緣及更多方向光束提供約束；較窄分布可能降低錯誤初始位置的恢復範圍，較多光束及更新頻率會提高 CPU 用量，因此不宣稱已解決定位問題。沒有證據支持更改 motion noise、重設每區初始姿態、提高容差或調整 slam_toolbox；mapper 保留 0.05 m、scan matching／loop closure 與 0.1 m 最小移動距離。
+
+### 維護者重跑與限制
+
+先 `./scripts/dev.sh colcon-build`／`colcon-test`。每個 bringup 都包含模擬，以下各組須先以 Ctrl-C 結束上一組；每組第二行在另一終端機執行。
+
+```bash
+./scripts/dev.sh sim headless:=true odom_source:=ekf person:=false
+./scripts/dev.sh yaw-check --settle 2 --sample 3 --old-factor 2.0
+
+# Stop sim before starting guide.
+./scripts/dev.sh guide headless:=true slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml odom_source:=ekf person:=false
+./scripts/dev.sh loc-check -p publish_initial_pose:=true -p report_file:=/tmp/loc_amcl_yaw_calib.json
+
+# Optional comparison map only if further evidence calls for remapping; stop guide first.
+./scripts/dev.sh guide headless:=true slam_mode:=mapping odom_source:=ekf person:=false
+./scripts/dev.sh map-tour loc_yaw_compare
+```
+
+- 第一優先是同一提交格網的 AMCL 重測，建議每次全新模擬至少三次；預期六區皆成功、每筆定位位置誤差 <0.15 m／角度 <5°、最後真值距目標 ≤0.3 m，並確認其他五區沒有退步。這些是驗收目標，未在本環境觀測到。若仍失敗，需回報各區 JSON、誤差方向與 AMCL 更新／EKF 殘差，不以單次 PASS 宣告根因已證實。
+- 若偏航倍率四列差異大或低速不起轉，先檢視容器產生的 SDF／物理接觸，再做多點非線性校正；不要直接以單點 1.404 取代 2.0。弧線因雷射淨空中止須重新選擇模擬空曠姿態，不能降低安全門檻來掩蓋碰撞造成的速率偏差。
+- 選用比較建圖後，可對 `/ws/src/shopping_robot_navigation/maps/loc_yaw_compare.yaml` 執行離線幾何工具，再以相同 map_server／loc-check 步驟比較；不要覆寫提交格網來混淆 AMCL 調參效果。只有證據支持後才重新產生正式地圖。此次不需先 map-tour。
+- 未執行 Docker、ROS、colcon 或 Gazebo；未安裝套件、建立 venv、加入硬體／裝置程式、提交或推送。未勾選 ROADMAP。README 補齊兩工具操作與限制；靜態檢查及替身測試不代表容器整合驗收。
+
+### 本次執行檢查（非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：**640 passed**，包含本次新增 30 項測試；僅有既有 xacro Python 棄用警告。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：**PASS**，13 個 YAML／RViz、10 個 XML／SDF／xacro、81 個 Python、4 個 Bash；兩／三錨點與 ekf／ground_truth 的 xacro 展開及錨點一致性通過。
+- `git diff --check`：通過。離線格網工具已對提交地圖實際執行；ROS 傳輸、六列動態量測、AMCL 改善與 colcon 仍待維護者驗證。
 
 ### 審查驗證
 
@@ -688,3 +755,10 @@
 | `person-sync-check --duration 60`（follow 模擬） | truth_vs_path PASS（誤差 0）、person/model coverage PASS；**model_vs_path / model_vs_truth FAIL**：Gazebo 模型平均落後 0.105 m、延遲 0.30 s（補償延遲後 RMSE 0.029 m）。這是模擬中模型驅動的真實延遲，工具判定正確，列為待修項目（見 ROADMAP） |
 | `follow-eval` | 濾波延遲 0.07 s PASS、重新取得 0.049 s PASS、近距停止 NOT_COVERED、**tracking FAIL**（平均距離 3.35 m，目標 1.0 m，與 10/23 的 3.02 m 一致）：是跟隨控制器現況，非工具錯誤 |
 | 未驗證 | Mac arm64、Gazebo GUI、實車（只做模擬） |
+| 純邏輯、PGM／邊緣估計與中斷零速測試 | 待驗證 |
+| YAML／XML／xacro／launch／Bash 靜態檢查及差異空白檢查 | 待驗證 |
+| Humble colcon build／test | 待驗證 |
+| Fortress 六列偏航／線速比、低速起轉與中斷停止 | 待驗證 |
+| 容器 SDF 摩擦設定與實際接觸模型 | 待驗證 |
+| 提交格網的六區 AMCL 定位重測與跨次穩定性 | 待驗證 |
+| Nav2／跟隨回歸及選用比較建圖 | 待驗證 |
