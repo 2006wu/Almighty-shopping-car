@@ -521,7 +521,7 @@ def test_map_goal_and_both_los_checks_use_follow_distance(follow_distance, retur
     node = make_node()
     node.control.p.follow_distance = follow_distance
     # make_node substitutes map_goal_and_los; bind the production method here.
-    method = node_class().map_goal_and_los
+    method = type(node).map_goal_and_los
     namespace = method.__globals__
     class FakeTime:
         def __init__(self, **kwargs):
@@ -535,7 +535,7 @@ def test_map_goal_and_both_los_checks_use_follow_distance(follow_distance, retur
                      transform_xy=transform_xy, line_of_sight_clear=line_of_sight_clear,
                      PoseStamped=lambda: NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
     node.tf_buffer = Mock()
-    node.tf_buffer.lookup_transform.side_effect = [(10, 20, math.pi/2), (-0.18, 0, 0)]
+    node.tf_buffer.lookup_transform.side_effect = [(-0.18, 0, 0), (10, 20, math.pi/2)]
     node.scan = NS(header=NS(frame_id='laser', stamp=0), ranges=[math.inf, return_range, math.inf],
                    angle_min=-0.5, angle_increment=0.5, range_min=0.12, range_max=12)
     node.robot_half_width, node.los_margin = 0.4, 0.35
@@ -573,3 +573,85 @@ def test_node_relays_rotation_at_fixed_front_shelf_then_translation_and_expires(
     node.tick()
     cmd = node.publisher.publish.call_args.args[0]
     assert cmd.linear.x == cmd.angular.z == 0  # Fresh target cannot renew old Nav2 velocity.
+
+
+def configure_rotation_scan(node):
+    namespace = type(node).update_rotation_clearance.__globals__
+    namespace.update(Time=NS(from_msg=lambda stamp: stamp),
+                     TransformException=RuntimeError, planar_pose=lambda transform: transform)
+    node.robot_half_width = 0.4
+    node.tf_buffer = Mock()
+    node.tf_buffer.lookup_transform.return_value = (-0.18, 0, 0)
+    readings = [math.inf]*720
+    readings[360] = 0.593
+    node.scan = NS(header=NS(frame_id='laser', stamp=0), ranges=readings,
+                   angle_min=-math.pi, angle_increment=2*math.pi/719,
+                   range_min=0.12, range_max=12)
+    node.obstacle = 0.593
+    node.target = (3, 1)
+
+
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_direct_obstacle_rotation_without_nav2_or_map_tf(unavailable):
+    node = make_node()
+    configure_rotation_scan(node)
+    if unavailable:
+        node.client.server_is_ready.return_value = False
+        # Production map lookup fails after the scan TF has cleared rotation.
+        node.map_goal_and_los = type(node).map_goal_and_los.__get__(node)
+        namespace = type(node).map_goal_and_los.__globals__
+        namespace['Time'] = Mock(from_msg=lambda stamp: stamp)
+        node.tf_buffer.lookup_transform.side_effect = [(-0.18, 0, 0), RuntimeError('No map TF')]
+    else:
+        node.client = None
+        node.supervisor.route_around = False
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert node.rotation_clear
+    assert cmd.linear.x == 0 and cmd.angular.z == pytest.approx(0.075)
+    assert node.supervisor.mode == 'DIRECT'
+    assert node.state.publish.call_args.args[0].data.startswith('OBSTACLE_STOP:')
+
+
+@pytest.mark.parametrize('fault', ['scan_stale', 'target_stale', 'tf_missing', 'rear_blocked',
+                                  'disabled', 'guard_stop', 'guard_stale', 'parameter_false'])
+def test_direct_rotation_faults_and_parameter_stop_both_axes(fault):
+    node = make_node()
+    configure_rotation_scan(node)
+    node.client = None
+    node.supervisor.route_around = False
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].angular.z > 0
+    node.now = 0.1
+    if fault == 'scan_stale':
+        node.scan_time = -1
+    elif fault == 'target_stale':
+        node.target_time = -1
+    elif fault == 'tf_missing':
+        node.tf_buffer.lookup_transform.side_effect = RuntimeError('Missing scan TF')
+    elif fault == 'rear_blocked':
+        node.scan.ranges[0] = 0.3
+    elif fault == 'disabled':
+        node.enabled = False
+    elif fault.startswith('guard_'):
+        node.guard_time = node.now
+        node.guard_state = 'STOP' if fault == 'guard_stop' else 'STALE'
+    elif fault == 'parameter_false':
+        node.control.p.obstacle_stop_rotate = False
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0
+    assert node.control.v == node.control.w == 0
+
+
+def test_direct_rotation_resumes_following_after_front_clears():
+    node = make_node()
+    configure_rotation_scan(node)
+    node.client = None
+    node.supervisor.route_around = False
+    node.tick()
+    node.now = 0.1
+    node.obstacle = 0.9
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.04)
+    assert node.state.publish.call_args.args[0].data.startswith('FOLLOWING:')

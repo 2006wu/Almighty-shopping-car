@@ -52,6 +52,7 @@ class ControllerParams:
     follow_distance: float = 1.0
     stop_distance: float = 0.6
     obstacle_stop_distance: float = 0.65
+    obstacle_stop_rotate: bool = True
     lost_timeout: float = 0.5
     max_linear: float = 0.5
     max_angular: float = 1.0
@@ -76,8 +77,10 @@ class FollowController:
         nonnegative = {'velocity_feedforward', 'distance_hysteresis_enter',
                        'distance_hysteresis_exit', 'side_slow_clearance', 'side_sector_min',
                        'side_min_speed_factor', 'los_uncertain_speed_factor'}
+        if not isinstance(self.p.obstacle_stop_rotate, bool):
+            raise ValueError('obstacle_stop_rotate must be boolean')
         if any(not math.isfinite(v) or (v < 0 if k in nonnegative else v <= 0)
-               for k, v in vars(self.p).items()):
+               for k, v in vars(self.p).items() if k != 'obstacle_stop_rotate'):
             raise ValueError('Controller parameters must be finite and within their positive/nonnegative bounds')
         if self.p.stop_distance >= self.p.follow_distance:
             raise ValueError('Stop distance must be below follow distance')
@@ -91,7 +94,8 @@ class FollowController:
         self.holding_distance = False
         self.v = self.w = 0.0
 
-    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0, target_velocity=(0.0, 0.0)):
+    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
+             target_velocity=(0.0, 0.0), rotation_clear=False):
         p = self.p
         state, reason = 'FOLLOWING', 'Tracking target'
         if not enabled:
@@ -107,6 +111,15 @@ class FollowController:
             state, reason = 'IDLE', 'Invalid control interval'
         if state != 'FOLLOWING':
             self.holding_distance = False
+            if (state == 'OBSTACLE_STOP' and p.obstacle_stop_rotate
+                    and rotation_clear and math.isfinite(obstacle) and obstacle >= 0
+                    and math.isfinite(dt) and dt > 0):
+                self.v = 0.0
+                w = max(-p.max_angular, min(p.max_angular,
+                        p.kp_bearing*math.atan2(target[1], target[0])))
+                limit = p.max_angular_accel*min(dt, 0.2)
+                self.w += max(-limit, min(limit, w-self.w))
+                return self.v, self.w, state, 'Forward blocked; rotating toward target'
             self.v = self.w = 0.0
             return self.v, self.w, state, reason
         if not math.isfinite(dt) or dt <= 0:

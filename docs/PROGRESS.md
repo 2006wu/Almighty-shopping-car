@@ -1152,3 +1152,15 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 | --- | --- |
 | LOS 停止點與近距離回歸、節點參數轉送 | 待驗證 |
 | Gazebo follow-eval、貨架避障與交接安全 | 待驗證 |
+
+## 2026-10-24：障礙停車時安全原地轉向（待模擬驗證）
+
+- `shopping_uwb_follow` 新增並宣告布林參數 `obstacle_stop_rotate: true`。直接跟隨且未啟用繞行或 Nav2 不可用時，`OBSTACLE_STOP` 的線速度立即固定為 0；僅在目標新鮮、掃描有效且既有旋轉足跡檢查淨空時，依 `kp_bearing` 與原有角速度／角加速度限制朝人物原地轉向。設為 false 即恢復雙軸停止。
+- 直接跟隨也建立 TF listener；旋轉淨空只依賴雷射到車體的 TF，不要求 map TF 或 Nav2。目標遺失／過期、過近、掃描失效、旋轉不淨空、停用或安全 guard 的 STOP／STALE 均立即雙軸歸零；保留 Nav2 交接、LOS 與既有前方淨空恢復判斷。
+- 補上正負方位、角速度與加速度限制、持續零線速度、故障立即停止、參數停用、缺少 map／雷射 TF、Nav2 不可用與前方清空恢復的純邏輯及節點替身測試。本機自行檢查：`/workspace/scratch/venv-shop/bin/python -m pytest -q` 為 946 passed、1 skipped、1 warning（既有 xacro 棄用警告）；同一 Python 執行 `scripts/check_static.py` 為 PASS，包含 YAML、XML、Python／launch 語法與兩／三錨點、ekf／ground_truth xacro 展開。
+- 限制與下一步：未執行 Gazebo、Humble 或容器驗收；需以 `route_around:=false`、`fault_injection:=true` 重跑轉角跟隨及 fault-check，確認原地旋轉淨空、恢復移動與故障停止。未修改其他套件，未執行 git 指令。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| 原地旋轉安全條件、加速度限制與停用參數回歸 | 待驗證 |
+| Gazebo 轉角脫困、恢復跟隨與 fault-check 移動基準 | 待驗證 |

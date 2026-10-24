@@ -63,11 +63,11 @@ class FollowNode(Node):
         self.los_margin = self.declare_parameter('los_margin', 0.35).value
         if any(not math.isfinite(v) or v <= 0 for v in (self.robot_half_width, self.los_margin)):
             raise ValueError('LOS parameters must be positive and finite')
-        self.client = self.tf_buffer = self.tf_listener = None
+        self.tf_buffer = Buffer(node=self)
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.client = None
         if route_around:
             self.client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-            self.tf_buffer = Buffer(node=self)
-            self.tf_listener = TransformListener(self.tf_buffer, self)
         self.target = self.target_time = self.scan_time = self.scan = None
         self.los_clear_wide = False
         self.guard_state, self.guard_time = None, None
@@ -164,23 +164,33 @@ class FollowNode(Node):
             msg.ranges, msg.angle_min, msg.angle_increment,
             range_min=msg.range_min, range_max=msg.range_max)
 
-    def map_goal_and_los(self):
-        """Use nonblocking TF lookups at the corresponding measurement times."""
-        self.los_clear_wide = False
+    def update_rotation_clearance(self):
+        """Check the swept disk without requiring map TF or a Nav2 server."""
         self.rotation_clear = False
-        if self.target is None or self.scan is None:
-            return None, False
+        if self.scan is None:
+            return None
         try:
-            robot = planar_pose(self.tf_buffer.lookup_transform(
-                'map', 'base_link', Time(seconds=self.target_time)))
             laser = planar_pose(self.tf_buffer.lookup_transform(
                 self.scan.header.frame_id, 'base_link', Time.from_msg(self.scan.header.stamp)))
         except TransformException:
-            return None, False
+            return None
         self.rotation_clear = rotation_scan_clear(
             self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
             self.scan.range_min, self.scan.range_max, laser,
             max(math.hypot(0.30, 0.25), self.robot_half_width)+0.05)
+        return laser
+
+    def map_goal_and_los(self):
+        """Use nonblocking TF lookups at the corresponding measurement times."""
+        self.los_clear_wide = False
+        laser = self.update_rotation_clearance()
+        if self.target is None or laser is None:
+            return None, False
+        try:
+            robot = planar_pose(self.tf_buffer.lookup_transform(
+                'map', 'base_link', Time(seconds=self.target_time)))
+        except TransformException:
+            return None, False
         point = transform_xy(standoff_target(self.target, self.control.p.follow_distance), robot)
         pose = PoseStamped()
         pose.header.frame_id = 'map'
@@ -311,6 +321,8 @@ class FollowNode(Node):
             obstacle = float('nan')
         if self.client is not None:
             pose, los = self.map_goal_and_los()
+        else:
+            self.update_rotation_clearance()
         p = self.control.p
         clearance = (side_clearance(scan.ranges, scan.angle_min, scan.angle_increment,
                                     p.side_sector_min, p.side_sector_max) if valid else math.nan)
@@ -321,6 +333,9 @@ class FollowNode(Node):
             factor = min(factor, p.los_uncertain_speed_factor)
         v, w, state, reason = self.control.step(
             self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
+            rotation_clear=(valid and self.rotation_clear
+                            and (not self.supervisor.route_around or self.client is None
+                                 or not self.client.server_is_ready())),
             target_velocity=(getattr(self, 'target_velocity', (0.0, 0.0))
                              if getattr(self, 'odom_time', None) is not None and 0 <= now-self.odom_time <= 0.15
                              else (0.0, 0.0)))
