@@ -92,8 +92,72 @@ def test_launch_defaults_and_manager_inclusion(name, initial):
         assert dict(manager.launch_arguments)['initial_mode'].name == 'initial_mode'
     else:
         nodes = [a for a in actions if a.kind == 'Node']
-        assert {n.executable for n in nodes} == {'cmd_vel_mux', 'cmd_vel_watchdog'}
+        assert {n.executable for n in nodes} == {
+            'cmd_vel_mux', 'cmd_vel_watchdog', 'obstacle_guard',
+            'collision_monitor', 'lifecycle_manager'}
+        nodes = [n for n in nodes if n.executable.startswith('cmd_vel_')]
         for node in nodes:
             assert node.condition.kind == 'IfCondition'
             assert node.condition.args[0].name == 'use_mux'
             assert node.parameters[0]['use_sim_time'].name == 'use_sim_time'
+
+
+@pytest.mark.parametrize('guard', ['true', 'false'])
+@pytest.mark.parametrize('collision', ['true', 'false'])
+def test_safety_chain_has_no_final_velocity_bypass(guard, collision):
+    actions = load('shopping_robot_bringup/launch/mode_mux.launch.py')['generate_launch_description']()
+    context = {'use_mux': 'true', 'obstacle_guard': guard, 'collision_monitor': collision}
+    nodes = {a.executable: a for a in actions if a.kind == 'Node'}
+    watchdog = nodes['cmd_vel_watchdog']
+    assert resolve(watchdog.remappings[0][1], context) == (
+        '/cmd_vel_collision/output' if collision == 'true' else
+        '/cmd_vel_guard/output' if guard == 'true' else '/cmd_vel_mux/output')
+    monitor = nodes['collision_monitor']
+    assert resolve(monitor.parameters[-1]['cmd_vel_in_topic'].args[0], context) == (
+        '/cmd_vel_guard/output' if guard == 'true' else '/cmd_vel_mux/output')
+    assert resolve(nodes['obstacle_guard'].condition.args[0], context) == (guard == 'true')
+    assert resolve(monitor.condition.args[0], context) == (collision == 'true')
+    assert resolve(nodes['lifecycle_manager'].condition.args[0], context) == (collision == 'true')
+    declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
+    assert declarations['obstacle_guard'].default_value == 'true'
+    assert declarations['collision_monitor'].default_value == 'false'
+    assert declarations['use_mux'].choices == ['true']
+    # Launch arguments must exist before nodes evaluate their substitutions.
+    first_node = next(i for i, a in enumerate(actions) if a.kind == 'Node')
+    assert all(a.kind == 'DeclareLaunchArgument' for a in actions[:first_node])
+
+
+@pytest.mark.parametrize('name', ['guide', 'follow'])
+@pytest.mark.parametrize('stack', ['apt', 'fork', 'auto'])
+@pytest.mark.parametrize('guard,collision', [
+    ('true', 'false'), ('true', 'true'), ('false', 'false'), ('false', 'true')])
+def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack, guard, collision):
+    actions = load(f'shopping_robot_bringup/launch/{name}.launch.py')['generate_launch_description']()
+    declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
+    expected = {'mcu_comm', 'fault_injection', 'fault_schedule', 'use_sim_time',
+                'obstacle_guard', 'collision_monitor', 'use_mux', 'initial_mode',
+                'odom_source', 'headless', 'nav2_stack', 'slam_mode', 'map',
+                'route_around' if name == 'follow' else 'person'}
+    assert set(declarations) == expected
+    assert declarations['nav2_stack'].default_value == 'apt'
+    assert set(declarations['nav2_stack'].choices) == {'apt', 'fork', 'auto'}
+    assert declarations['use_mux'].choices == ['true']
+    assert declarations['obstacle_guard'].default_value == 'true'
+    assert declarations['collision_monitor'].default_value == 'false'
+    assert declarations['mcu_comm'].default_value == 'false'
+    context = {key: a.default_value for key, a in declarations.items()}
+    context.update(nav2_stack=stack, obstacle_guard=guard, collision_monitor=collision,
+                   slam_mode='map_server', map='/maps/shop.yaml', use_sim_time='false')
+    includes = {Path(a.args[0]).name: dict(a.launch_arguments)
+                for a in actions if a.kind == 'IncludeLaunchDescription'}
+    for key in ('nav2_stack', 'use_mux', 'slam_mode', 'map', 'use_sim_time'):
+        assert resolve(includes['navigation.launch.py'][key], context) == context[key]
+    for key in ('obstacle_guard', 'collision_monitor', 'use_mux', 'initial_mode', 'use_sim_time'):
+        assert resolve(includes['mode_mux.launch.py'][key], context) == context[key]
+    for key in ('odom_source', 'headless', 'fault_injection', 'fault_schedule', 'use_sim_time'):
+        assert resolve(includes['sim.launch.py'][key], context) == context[key]
+    assert resolve(includes['comm.launch.py']['use_sim_time'], context) == 'false'
+    if name == 'follow':
+        assert includes['mode_mux.launch.py']['manage_follow'] == 'true'
+    else:
+        assert resolve(includes['sim.launch.py']['person'], context) == context['person']

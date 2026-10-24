@@ -7,13 +7,14 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool, String
 
-from .mode_control import OutputWatchdog, ZERO
+from .mode_control import OutputWatchdog, SafetyVelocityLimiter, ZERO
 
 
 class WatchdogNode(Node):
     def __init__(self):
         super().__init__('cmd_vel_watchdog')
         self.watchdog = OutputWatchdog(self.declare_parameter('timeout', 0.25).value)
+        self.limiter = SafetyVelocityLimiter()
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 1)
         self.create_subscription(Twist, '/cmd_vel_mux/output', self.receive, 1)
         self.create_subscription(Bool, '/safety/stop', self.safety, 10)
@@ -26,6 +27,7 @@ class WatchdogNode(Node):
             self.latched = True
             # Stop independently of manager scheduling.
             self.watchdog.receive(ZERO, time.monotonic())
+            self.limiter.step(ZERO, time.monotonic())
             self.publisher.publish(Twist())
 
     def request(self, msg):
@@ -41,6 +43,7 @@ class WatchdogNode(Node):
     def tick(self):
         cmd = Twist()
         cmd.linear.x, cmd.angular.z = ZERO if self.latched else self.watchdog.output(time.monotonic())
+        cmd.linear.x, cmd.angular.z = self.limiter.step((cmd.linear.x, cmd.angular.z), time.monotonic())
         self.publisher.publish(cmd)
 
 

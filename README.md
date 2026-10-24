@@ -178,11 +178,11 @@ ros2 topic echo /imu/with_covariance --once
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/cmd_vel/teleop
 ```
 
-Nav2 平滑器輸出 `/cmd_vel/nav`、直接跟隨輸出 `/cmd_vel/follow`；只有獨立程序 `cmd_vel_watchdog` 發布底盤 `/cmd_vel`。仲裁器以 20 Hz 發布內部 `/cmd_vel_mux/output`；nav／follow／teleop 的接收逾時分別為 0.5／0.3／0.5 秒，資料過期後下一次更新歸零。看門狗以單調時鐘檢查仲裁輸出，超過 0.25 秒未收到命令，於下一個 50 毫秒更新發布零速，模擬暫停不會停止其計時。限速為 0.6 m/s、1.2 rad/s，一般加速度為 0.6 m/s²、1.2 rad/s²，零速安全命令立即生效，預設不倒車。
+Nav2 平滑器輸出 `/cmd_vel/nav`、直接跟隨輸出 `/cmd_vel/follow`；只有獨立程序 `cmd_vel_watchdog` 發布底盤 `/cmd_vel`。仲裁器以 20 Hz 發布內部 `/cmd_vel_mux/output`；nav／follow／teleop 的接收逾時分別為 0.5／0.3／0.5 秒，資料過期後下一次更新歸零。預設由 obstacle_guard 檢查完整雷射、速度相關掃掠足跡及過期資料，再將安全速度交給看門狗；選用 collision_monitor 也接在看門狗之前。看門狗以單調時鐘檢查安全鏈路輸出，超過 0.25 秒未收到命令，於下一個 50 毫秒更新發布零速，模擬暫停不會停止其計時。限速為 0.6 m/s、1.2 rad/s，一般加速度為 0.6 m/s²、1.2 rad/s²，零速安全命令立即生效，預設不倒車。
 
 純邏輯與單獨執行 `cmd_vel_mux` 都預設 `IDLE`，程序重啟不自行恢復先前模式。launch 的 `initial_mode` 是明確的便利性例外：重新執行整個 guide／follow launch（或以相同參數重啟節點）會重新請求該模式；有重啟風險的驗收請使用 `initial_mode:=idle`。launch 未設定自動 respawn。若獨立看門狗已鎖定急停，重啟仲裁器不會解除，仍須 `reset`。
 
-`use_mux:=false` 恢復 Nav2／跟隨直接發布 `/cmd_vel`，不啟動模式管理與看門狗，必須維持舊有流程互斥。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/ARCHITECTURE.md)。
+`guide`／`follow`／`mode_mux` 已停用 `use_mux:=false` 旁路。障礙防護預設 `obstacle_guard:=true`，Nav2 collision_monitor 預設 `collision_monitor:=false`；幾何、故障注入與無視窗驗收命令見 [障礙安全鏈路](docs/OBSTACLE_SAFETY.md)。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/ARCHITECTURE.md)。
 
 ## 受限網路的 ROS 套件鏡像
 
@@ -242,7 +242,7 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 
 ## 安全與驗證狀態
 
-所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用（`use_mux:=false` 時維持 launch 直接啟用）；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
