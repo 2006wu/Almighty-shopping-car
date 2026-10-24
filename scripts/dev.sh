@@ -39,8 +39,10 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   follow-eval [ARGS...]     Measure latency, turns, near stops and reacquisition
   yaw-check [ARGS...]      Measure yaw/speed against a running plain sim
   fault-check [ARGS...]    Verify faults against a running opt-in follow sim
-  record NAME [--duration S] [TOPICS...]  Record evaluation bag (wall seconds)
+  record NAME [--duration S] [--meta KEY=VALUE] [TOPICS...]  Record evaluation bag (wall seconds)
   eval-bag NAME [ARGS...]  Convert bag and write report.json/report.md
+  eval-verify NAME        Reconvert and compare stored evaluation
+  eval-summary NAME... [--output DIR]  Aggregate evaluation reports
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
@@ -120,6 +122,27 @@ EOF
       --zones /ws/src/shopping_zone_manager/config/zones.yaml --map-world-transform 0 0 0
     run ros2 run shopping_zone_manager eval_report "/repo/bags/$name/observations.jsonl" "$@" \
       --world /ws/src/shopping_robot_gazebo/worlds/supermarket.sdf --output "/repo/bags/$name/report"
+    ;;
+  eval-verify)
+    [[ $# == 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple bag name' >&2; exit 2; }
+    run ros2 run shopping_zone_manager eval_verify "$1"
+    ;;
+  eval-summary)
+    [[ $# -ge 1 ]] || { echo 'Provide bag names' >&2; exit 2; }
+    summary_names=()
+    summary_output=()
+    while [[ $# -gt 0 ]]; do
+      if [[ "$1" == --output ]]; then
+        [[ $# == 2 && -n "$2" ]] || { echo 'Use --output DIR after bag names' >&2; exit 2; }
+        summary_output=(--output "$2")
+        break
+      fi
+      [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple bag name' >&2; exit 2; }
+      summary_names+=("$1")
+      shift
+    done
+    [[ ${#summary_names[@]} -gt 0 ]] || { echo 'Provide bag names' >&2; exit 2; }
+    run ros2 run shopping_zone_manager eval_summary "${summary_names[@]}" "${summary_output[@]}"
     ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
   map-tour)

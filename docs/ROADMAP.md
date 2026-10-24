@@ -62,7 +62,7 @@
 
 - [x] 定義導航成功率、耗時、最小間距、跟隨誤差與停止延遲（2026-10-23，見 METRICS.md；尚未接上模擬記錄）。
 - [ ] 建立多種人物路徑、初始姿態及動態障礙情境。
-- [ ] 使用 rosbag 記錄與回放，建立可重現的評估報告。
+- [x] 使用 rosbag 記錄與回放，建立可重現的評估報告。（2026-10-24：manifest、eval-verify、eval-summary；模擬 bag 驗證通過，容器內 Git 來源記為 unknown）
 - [ ] 2027 年 1 月在 Mac、fish 與 Docker Desktop 逐條演練 README。
 
 ## 階段 6：硬體準備（2027 年 1 月）

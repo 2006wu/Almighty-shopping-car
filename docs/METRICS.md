@@ -216,3 +216,37 @@ Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非�
 狀態事件的延遲起點是 guard 偵測並發布狀態的模擬時間，不包含故障命令傳送到偵測的延遲。`scripts/fault_check.py --suite obstacle` 則以送出故障命令前的模擬時間開始計算，且要求移動基線、持續停止與恢復；與本文件「首次停止」統計不可混稱同一判準。減速列檢查 guard SLOW 比例與命令仍在移動，沒有自動辨識真值減速度。
 
 `/safety/obstacle_state.swept_clearance` 是雷射回波到要求速度掃掠範圍的保守距離，用於診斷；不取代本文件的真值矩形最小間距。既有 `clearance_metrics` 仍以世界 collision 與真值位姿計算，沿用原有錄製／轉換鏈路。`lidar_front` 假障礙沒有新增 Gazebo collision，因此真值最小間距不會包含它；不能用假障礙試驗宣稱通過實際障礙距離驗收。完整啟動、故障與 headless 程序見 [OBSTACLE_SAFETY.md](OBSTACLE_SAFETY.md)。
+
+## 可重現評估（manifest、驗證、彙整）
+
+在已啟動的 compute 容器中依序執行（此處未代為啟動容器）：
+
+```bash
+./scripts/dev.sh record guide1 --duration 120 \
+  --meta scenario=guide --meta nav2_stack=stock \
+  --meta 'launch_args=odom_source:=ekf use_mux:=true'
+./scripts/dev.sh eval-bag guide1 --target 1.0
+./scripts/dev.sh eval-verify guide1
+./scripts/dev.sh record guide2 --duration 120 \
+  --meta scenario=guide --meta nav2_stack=stock \
+  --meta 'launch_args=odom_source:=ekf use_mux:=true'
+./scripts/dev.sh eval-bag guide2 --target 1.0
+./scripts/dev.sh eval-summary guide1 guide2 --output /repo/bags/guide-summary
+```
+
+錄製結束（含 Ctrl-C／到期正常收尾）後，`bags/NAME/manifest.json` 保存 UTC 開始時間 `start_time_utc`、`git.commit`、`git.dirty`、Nav2 子模組的 `git.submodule_commit`、去重後的 `topics`、指定的牆鐘錄製上限 `duration`（未指定為 null，並非實際經過秒數），以及 `metadata`。Git 使用 `git -C /repo` 盡力查詢，未安裝、查詢失敗或子模組未初始化時對應欄位為 `unknown`，不阻止錄製。`--meta` 可重複，鍵限英文字母或底線開頭、後續為英數或底線；同鍵最後一個值優先，值可含空白與等號。情境、launch 參數與 Nav2 stack 是使用者提供的描述，不會自動驗證是否與執行環境相符；仍須另保存設定與地圖，dirty 旗標不包含修改內容。
+
+`eval_report` 的 JSON 鍵固定排序、浮點數四捨五入至小數點後九位，CLI 評估參數也先套用相同精度再計算，沒有牆鐘產生時間。驗證採相同正規化，排除 `source`（來源路徑）與預留的 `generated_at_utc` 欄位，其他參數、指標、逐回合及逐事件資料均參與比較；陣列順序保留。這也是對正規內容計算雜湊時的規則。JSON 仍保留來源路徑供追溯；不以原始 JSON 位元組直接比較。
+
+`eval-verify NAME` 從原 bag 重新轉換並評估，使用 `observations.jsonl.meta.json` 中的 zones 路徑、座標轉換與同步上限，以及 `report.json` 中的世界檔路徑和評估參數。暫存產物會清除，既有報告不覆寫；相同回傳 0，不同回傳 1 並列出至多 20 個差異欄位路徑，輸入錯誤回傳 2。原始 bag、世界檔、zones 與這兩份報告必須仍可讀，來源路徑須在目前容器有效。它驗證目前程式能否重現既有指標，不保證重新執行 Gazebo 會得到相同 bag，也不驗證未納入指標的原始資料是否改變。
+
+`eval-summary NAME... [--output DIR]` 讀取各 bag 的 `report.json` 與可選的 `manifest.json`；名稱沿用 `eval-bag` 的英數、底線與連字號限制，重複名稱拒絕。預設輸出 `/repo/bags/summary/summary.json` 與 `summary.md`，指定的 DIR 是容器內路徑，既有同名彙整檔會覆寫。以欄位路徑（陣列含索引）彙整每個數值的 count／mean／min／max／stdev；stdev 為樣本標準差，僅一筆時為 0，null 與布林不當作數值，parameters 與 source 不混入指標。不同回合索引的統計僅適用相同順序的情境，不能視為同一區域的自動配對。
+
+報告若有 `verdict` 或 `verdicts.*` 的 pass／fail 字串（不分大小寫）或布林，另列 pass_count／fail_count；現有評估器沒有自動判定，因此通常沒有判定計數，不會由數值猜測通過。缺少 manifest、commit／scenario／nav2_stack 資訊，或這三者跨次不同時會列出警告；警告不會阻止彙整，也不代表資料可直接比較，仍須核對評估參數、缺樣及失敗回合。
+
+安裝套件後，在 compute 也可直接使用以下等價命令；轉換與驗證只讀 bag，不發布或回放速度：
+
+```bash
+ros2 run shopping_zone_manager eval_verify guide1
+ros2 run shopping_zone_manager eval_summary guide1 guide2 --output /repo/bags/guide-summary
+```
