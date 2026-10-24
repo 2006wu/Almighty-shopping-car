@@ -96,10 +96,28 @@ def test_simulator_truth_cannot_replace_real_source_odometry(kind):
         env['validate_sources'](context)
 
 
-def test_missing_explicit_driver_package_logs_error():
-    env = load('shopping_robot_bringup/launch/lidar_driver_placeholder.launch.py')
+@pytest.mark.parametrize('kind', ['lidar', 'imu', 'uwb', 'base'])
+def test_missing_explicit_driver_package_logs_error(kind):
+    env = load(f'shopping_robot_bringup/launch/{kind}_driver_placeholder.launch.py')
     def missing(package):
         raise LookupError(package)
     env.update(Path=Path, LogError=action('LogError'), get_package_share_directory=missing)
     actions = env['start']({'driver_package': 'missing', 'driver_launch': 'driver.launch.py'})
     assert [a.kind for a in actions] == ['LogError']
+
+
+@pytest.mark.parametrize('kind', ['lidar', 'imu', 'uwb', 'base'])
+def test_placeholder_defaults_do_not_resolve_or_start_a_driver(kind):
+    env = load(f'shopping_robot_bringup/launch/{kind}_driver_placeholder.launch.py')
+
+    def forbidden_lookup(package):
+        pytest.fail('Default placeholder must not look up a driver package')
+
+    env.update(Path=Path, LogError=action('LogError'),
+               get_package_share_directory=forbidden_lookup)
+    actions = env['generate_launch_description']()
+    defaults = {a.args[0]: a.default_value for a in actions
+                if a.kind == 'DeclareLaunchArgument'}
+    assert defaults == {'driver_package': '', 'driver_launch': '', 'use_sim_time': 'true'}
+    callback = next(a.function for a in actions if a.kind == 'OpaqueFunction')
+    assert [a.kind for a in callback(defaults)] == ['LogError']
