@@ -825,3 +825,43 @@
 | serial_loopback `comm-sim` + `comm-check` | 10/10 PASS |
 | `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
 | 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
+
+## 2026-10-24：硬體介面設計、預設關閉入口與 UWB 訊息
+
+### 修改內容
+
+- 新增 [HARDWARE_INTERFACES.md](HARDWARE_INTERFACES.md)，整理雷射、IMU、UWB、MCU 輪狀態／encoder、輪式里程計、命令、急停、心跳的 topic、型別、frame、頻率、QoS、單位與模擬／實車責任；說明安裝位置、covariance、TF 唯一來源、時鐘同步、高度校正、有效性及維護者驗證指令。ARCHITECTURE 加入入口連結，ROADMAP 未修改或勾選。
+- 新增 `hardware.launch.py`，四個 `use_real_lidar/imu/uwb/base` 選項皆預設 false。每項 true 只引入對應 placeholder，未明確給定 driver package 與 launch 時記錄錯誤，不啟動裝置、不探測、不自動回退。未來 launch 檔只接受指定套件 launch 目錄的單一檔名，並傳遞 use_sim_time。
+- 將原模擬 bridge 契約分為 common／lidar／imu／base 四檔，選用真實來源時不建立對應 bridge；輪速噪聲節點分別關閉 wheel／IMU 的 publisher 與 subscription。選用真實 UWB 時不建立舊模擬及估測節點。硬體入口固定 EKF、關閉模擬故障、啟動待機 mux 與唯一 watchdog，沒有導航、跟隨或 teleop 移動來源；真實來源不得搭配 ground_truth 或故障發布者。
+- 新增獨立 `shopping_interfaces` ament_cmake 套件，提供 UwbRange、UwbRangeArray、UwbAnchor、UwbAnchorArray；含量測 stamp、錨點／標籤 ID、距離、不確定度、品質、有效性原因、NLOS 與未知狀態、三維位置及校正高度。bringup 宣告介面套件依賴，compute Dockerfile 明列 rosidl 產生器供維護者重建；本次沒有安裝套件。
+- 保留原 UWB ROS 訊息與估測流程，新增無 ROS 匯入的 dict adapter 與 pytest，檢查 ID 對應、NaN／Infinity／非正距離、stamp、未知 metadata、不確定度與 msg 契約一致性。adapter 僅轉接既有平面距離，不能宣稱是實體斜距或已完成時鐘同步。
+- 擴充 `check_static.py`，驗證 msg 語法子集、欄位重複、型別引用、CMake／package.xml／rosidl 相依、映像建置依賴與 bridge 分檔完整性。launch AST 測試涵蓋四項選項的全部 16 組組合、預設值、轉送、placeholder 缺設定／不存在套件與檔案、明確 include、EKF／故障互斥及模擬處理的 channel guard。
+
+### 本次自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：794 passed，保留既有 xacro 棄用警告 1 項。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；4 個 msg、21 個 YAML／RViz、12 個 XML／SDF／xacro、110 個 Python、4 個 Bash，含兩／三錨點與 ekf／ground_truth 的 xacro 展開及錨點位置一致性。
+- `git diff --check`：通過。未執行 Docker、colcon、ROS 或裝置連線，未安裝套件、建立虛擬環境、提交或推送。新增套件測試若讀取 repo 契約，依 docs 存在與否選擇原始碼根目錄、再退回 `/repo`，都不存在才 skip。
+
+### 限制與下一步
+
+- 沙盒沒有 ROS；以上為純 Python 與靜態檢查，不能代替 Humble rosidl／colcon 建置、DDS QoS、Gazebo 執行、TF 發布者數量或硬體驗收。維護者須依 HARDWARE_INTERFACES 的指令重建 compute 映像、colcon build／test，再驗證預設與缺驅動入口，以及 guide／follow 的模擬回歸。
+- 入口仍是含 Gazebo 的介面測試，不是完整無模擬實車 bringup；未提供雷射、IMU、UWB、底盤驅動、輪式里程計轉接或電氣急停。混合測試的 Gazebo 車體與實車不會同步，模擬真值不得作為實車 EKF 漂移基準。
+- guide／follow 暫不轉送硬體選項；待新 UWB 時間／高度感知估測器與實車輪速轉接完成後，再整合移動流程。新 UWB topic 本次僅定義，未有 ROS 發布者，原流程仍使用 Float32MultiArray。
+- 後續須實作並測試模組時鐘 rollover／重啟與 offset／drift、量測同步不確定度、標籤與錨點高度校正、斜距轉平面距離及 covariance 傳播，再驗證兩錨點歧義、貨架 NLOS、掉訊恢復與保護停止。未來硬體選用仍須明確設定，不能靠裝置偵測自動啟用。
+
+### 審查驗證
+
+以下由審查者執行與填寫，自行檢查不代填審查結果。
+
+| 項目 | 結果 |
+| --- | --- |
+| 硬體介面、MCU 契約、QoS、單位與 TF 所有權 | 待驗證 |
+| 四項預設關閉選項、16 組切換與模擬來源互斥 | 待驗證 |
+| placeholder 明確配對、無裝置探測與缺驅動缺資料行為 | 待驗證 |
+| UWB msg／純 adapter、有效性、時鐘與高度遷移設計 | 待驗證 |
+| check_static、xacro、YAML／XML／launch 與相依檢查 | 待驗證 |
+| Humble 原生 amd64／arm64 映像及 colcon build／test | 待驗證 |
+| Fortress 預設／缺驅動入口、publisher 數與唯一 cmd_vel watchdog | 待驗證 |
+| guide／follow 純模擬回歸與 use_sim_time 一致性 | 待驗證 |
+| 未來實車驅動、輪速轉接、時間同步、安裝校正與電氣急停 | 待驗證 |
