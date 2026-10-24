@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>shopping_microros_client</name><version>0.1.0</version>
+  <description>Linux XRCE-DDS simulation client without hardware access</description>
+  <maintainer email="2006wu@users.noreply.github.com">2006wu</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rcl</depend><depend>rclc</depend><depend>rmw_microxrcedds</depend>
+  <depend>geometry_msgs</depend><depend>sensor_msgs</depend><depend>std_msgs</depend>
+  <depend>rosidl_runtime_c</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

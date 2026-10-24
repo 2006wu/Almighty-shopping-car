@@ -1,12 +1,12 @@
 # 從 rosserial 到 micro-ROS：模擬優先入門
 
-本文件對象是曾用 rosserial 連接 STM32 的使用者。目前只驗證純 Python 邏輯與靜態配置；沒有執行容器、MCU 韌體、燒錄或實車測試。ROS 2 固定 Humble、Ubuntu 22.04，模擬固定 Gazebo Fortress／ros_gz。
+本文件對象是曾用 rosserial 連接 STM32 的使用者。目前已有純 Python 通訊模擬及 Linux C／rclc XRCE 客戶端；本機檢查涵蓋純邏輯與靜態配置，尚未執行容器、ROS 通訊、板端韌體、燒錄或實車測試。ROS 2 固定 Humble、Ubuntu 22.04，模擬固定 Gazebo Fortress／ros_gz。
 
 ## 1. 先對照熟悉的元件
 
 | 以前的經驗 | micro-ROS 對應 | 本專案的位置 |
 | --- | --- | --- |
-| MCU 的 rosserial client | rcl／rclc 與 Micro XRCE-DDS client | 未實作板端韌體 |
+| MCU 的 rosserial client | rcl／rclc 與 Micro XRCE-DDS client | `firmware/sim_client`（Linux 模擬，尚無板端韌體） |
 | PC `serial_node.py`／rosserial_server | micro-ROS agent，代理 MCU 加入 DDS | compose 的 `microros_agent` |
 | ROS 1 master 與 topic | ROS 2 DDS discovery、domain、QoS | 既有 compute 容器 |
 | 自訂 UART 字串 bridge | 可另用固定二進位備援協定 | `serial_bridge`，與 agent 無關 |
@@ -65,15 +65,77 @@ PTY 用 `pty.openpty()` 動態建立，兩端都在程序內，不指定或掃�
 # docker compose -f docker/docker-compose.yaml --profile comm up -d microros_agent
 # 查看日誌
 docker compose -f docker/docker-compose.yaml --profile comm logs -f microros_agent
-# 停止 agent，不停止 compute/display
+# 停止 client 與 agent，不停止 compute/display
 ./scripts/dev.sh comm-down
 ```
 
 預設 `dev.sh up` 仍只啟動 compute/display。agent 使用官方映像 `microros/micro-ros-agent:humble`、`udp4 -p 8888`，同一 compose `ros` 網路與 ROS_DOMAIN_ID（預設 28），無 host port、裝置掛載或固定 `--platform`。[官方 PlatformIO agent 指令](https://github.com/micro-ROS/micro_ros_platformio#using-the-micro-ros-agent) 使用相同 image 命名與 ROS 發行版 tag；本次沒有 pull 映像或驗證 registry manifest／amd64、arm64 實際啟動，須於兩種原生主機確認，不能把設定無 `--platform` 說成已通過雙架構驗收。
 
-目前的 sim_ros 與 serial_loopback **都沒有經過 agent**。前者是一般 rclpy／DDS 節點，後者是自訂 serial codec；即使 agent 已啟動，也不代表 XRCE-DDS 已驗證。ROADMAP 的「模擬韌體透過 agent」項目仍待後續真正 client 驗證，這次不勾選。
+`sim_ros` 與 `serial_loopback` 都沒有經過 agent。以下另有真正的 XRCE-DDS Linux client；新增實作與離線檢查不代表容器驗收已通過，ROADMAP 仍由審查者驗證後處理，本次不勾選。
 
-要驗證 agent，下一步可依 [官方 Linux host client 教學原始文件](https://github.com/micro-ROS/micro-ROS.github.io/blob/master/_docs/tutorials/core/first_application_linux/index.md)，在另一個測試環境以 `micro_ros_setup` 建立 host／Linux client，或使用已確認的 MCU 板；這次不下載或實作該 client。client 須連到 agent 可達 IP:8888；同一 compose 網路的 Linux client 可解析 `microros_agent`，板子通常無法解析容器 DNS。外部 UDP client 需要另行明確 opt-in 的 UDP port mapping、主機 IP 與防火牆配置，目前預設沒有對外入口。
+### 3.1 不用板子的 XRCE-DDS 端到端驗收
+
+先停止 Gazebo、follow、guide、`comm-sim` 與其他通訊 launch；同一 ROS domain 只執行這一組流程。於 repo 根目錄執行：
+
+```bash
+./scripts/dev.sh up
+./scripts/dev.sh colcon-build
+./scripts/dev.sh colcon-test
+./scripts/dev.sh comm-e2e-up
+```
+
+`comm-e2e-up` 會建置並背景啟動 `microros_agent`、`microros_client`，接著於前景執行 `comm.launch.py standalone:=true transport:=agent use_sim_time:=false`，提供既有 mux、watchdog 與 PC monitor；此 transport 不啟動 Python 韌體。保留此終端，另開第二個終端：
+
+```bash
+./scripts/dev.sh comm-e2e-check
+```
+
+資料路徑如下：
+
+```text
+檢查器 → /cmd_vel/teleop → mux → watchdog（唯一 /cmd_vel 發布者）
+                                       ↓ DDS
+                              micro-ROS agent
+                                       ↓ UDP XRCE-DDS
+                         Linux C／rclc 模擬 client
+                         ↓ wheel／heartbeat／status
+                              agent → DDS → 檢查器
+```
+
+客戶端使用 `rmw_microxrcedds`，先由 Docker DNS 將 `microros_agent` 解析成 IPv4，再連 UDP 8888；沒有 host port、devices、主機網路或固定架構。`ROS_DOMAIN_ID` 會明確設入 rcl 初始化選項，預設與 compute／agent 同為 28。Linux client 只支援此獨立壁鐘流程，不能混入 Gazebo 的模擬時間。
+
+檢查器最多等 10 秒探索 DDS；要求 XRCE 模擬標記、唯一 C 客戶端、唯一 mux／watchdog／monitor、相符的遙測發布者與唯一 `/cmd_vel` 接收者。若有 `/clock` 發布者、Gazebo、`sim_mcu_firmware` 或 `serial_bridge`，即 FAIL 並拒絕注入。注入期間也會重查 graph；請勿在檢查途中啟動其他流程。它不是實體裝置辨識或操作工具。
+
+驗收列出七項 PASS／FAIL：
+
+1. 獨立 graph 與 watchdog 唯一發布權。
+2. 兩向 heartbeat counter 前進、約 10 Hz，wheel 約 50 Hz（容許 35–65 Hz）。
+3. teleop 命令經 mux／watchdog 後輪子移動。
+4. 模擬丟棄客戶端命令，超過 0.3 秒後 `CMD_TIMEOUT` 且持續零速。
+5. 新鮮命令恢復後輪子移動。
+6. 暫停 **PC monitor 的實際心跳發布**，超過 0.5 秒後 `LINK_LOST` 且持續零速。
+7. 恢復 PC heartbeat 後仍為 ESTOP／零輪速，需要明確 reset 才能再移動。
+
+心跳故障使用 monitor 的 `simulate_pc_heartbeat_loss` 參數；只有 standalone agent launch 明確啟用 `allow_simulation_faults` 才會生效，一般模式預設 false。結束或失敗時檢查器請求 ESTOP 並嘗試恢復心跳；任一項失敗 exit code 1。若檢查器被強制 kill，須停止並重啟前景 launch，以清除故障參數，不能直接沿用殘留狀態。
+
+這個 client 是契約子集：沒有 encoder、IMU、MCU 按鈕／急停 latch／reset；這些仍由 Python 模擬流程驗證。此處驗證 PC 失聯、命令逾時與 PC ESTOP，不宣稱完整 MCU 急停韌體已完成。模型只回報輪速，不驅動 Gazebo 或真實車體。
+
+停止時先 Ctrl-C 結束 `comm-e2e-up` 的前景 launch，再執行：
+
+```bash
+./scripts/dev.sh comm-down
+docker compose -f docker/docker-compose.yaml --profile comm logs --tail=100 microros_agent microros_client
+```
+
+`comm-down` 會同時停止 client 與 agent。agent 重啟或尚未就緒時，client 可能先退出；Compose 會重試，每次重建 session 都從零命令、三筆新心跳開始。映像建置、agent session、實際 DDS rate、重連與 amd64／arm64 原生執行仍待維護者於 Docker 驗收。
+
+### 3.2 和 rosserial、未來 STM32 的關係
+
+rosserial client 透過專用協定由 PC bridge 轉入 ROS；micro-ROS 讓 MCU 使用精簡的 ROS 2 C API，再由 XRCE agent 代理 DDS entities。agent 負責通訊，逾時停止仍是 client 的責任。本次 Linux client 與 STM32 韌體會使用同類的 rclc 初始化、publisher／subscription、executor 與標準訊息配置，但 Linux 程式不是可直接燒錄的 STM32 binary。
+
+[客戶端原始碼說明](../firmware/sim_client/README.md) 記錄官方 host 工具工作區、外部 app 複製位置及契約 header 產生方式。流程依 [官方 Linux 教學](https://micro.ros.org/docs/tutorials/core/first_application_linux/) 與 [Humble host 建置腳本](https://github.com/micro-ROS/micro_ros_setup/blob/humble/config/host/generic/build.sh)，使用 `micro_ros_setup` humble 分支、`create_firmware_ws.sh host`／`build_firmware.sh`，沒有板卡 SDK 或交叉編譯。
+
+未來 STM32 需將 Linux DNS／UDP、POSIX clock 與容器重啟換成已確認的 transport、RTOS 時鐘及重連狀態機，將輪模型替換成獨立的控制與安全迴圈。板上必須自行在失聯時關閉馬達輸出，不能靠 agent 或 Docker 幫忙停車。外部 MCU 通常無法解析容器 DNS，還需另外明確 opt-in 的 port mapping、IP、防火牆及單一裝置配置；目前沒有對外入口或預設硬體連線。
 
 ## 4. 之後才選 STM32 開發路徑
 
