@@ -16,6 +16,9 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   build [SERVICE...]       Build native-architecture images
   up | down | status       Manage compute and display containers
   shell [compute|display]  Open a ROS-sourced shell
+  nav2-build              Build the initialized private Nav2 underlay
+  nav2-status             Show fork checkout and build commit
+  nav-compare [ARGS...]    Record one stack or compare two JSON reports
   colcon-build             Build ROS packages
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
@@ -53,6 +56,26 @@ EOF
     [[ "$service" == compute || "$service" == display ]] || { echo 'Invalid service' >&2; exit 2; }
     "${compose[@]}" exec "$service" /usr/local/bin/compute-entrypoint bash
     ;;
+  nav2-build)
+    [[ -f "$repo_dir/third_party/eurobot_nav2/src/custom_controller/package.xml" ]] || {
+      echo 'Nav2 fork 未初始化 / not initialized: git submodule update --init third_party/eurobot_nav2' >&2
+      exit 2
+    }
+    "${compose[@]}" run --rm --no-deps --entrypoint /bin/bash \
+      -e "NAV2_FORK_COMMIT=$(git -C "$repo_dir/third_party/eurobot_nav2" rev-parse HEAD)" \
+      -e "NAV2_PARALLEL_WORKERS=${NAV2_PARALLEL_WORKERS:-2}" -e "MAKEFLAGS=${MAKEFLAGS:--j3}" \
+      compute /repo/scripts/nav2_build.sh "$@"
+    ;;
+  nav2-status)
+    if [[ -f "$repo_dir/third_party/eurobot_nav2/src/custom_controller/package.xml" ]]; then
+      echo "Fork initialized: $(git -C "$repo_dir/third_party/eurobot_nav2" rev-parse HEAD)"
+    else
+      echo 'Fork not initialized / 尚未初始化 (auto uses apt)'
+    fi
+    "${compose[@]}" run --rm --no-deps --entrypoint /bin/bash compute -c \
+      'if [[ -f /nav2_ws/install/setup.bash && -f /nav2_ws/install/fork_commit ]]; then echo "Built fork: $(cat /nav2_ws/install/fork_commit)"; else echo "Fork not built / 尚未建置"; fi'
+    ;;
+  nav-compare) run ros2 run shopping_zone_manager nav_compare "$@" --ros-args -p use_sim_time:=true ;;
   colcon-build) workspace_task colcon build --symlink-install "$@" ;;
   colcon-test)
     workspace_task colcon test "$@"
