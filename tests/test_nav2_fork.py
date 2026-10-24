@@ -105,7 +105,11 @@ def test_fork_params_and_tree():
                  'min_inflation_radius', 'inscribed_radius_floor'}
     for name in ('local_costmap', 'global_costmap'):
         layer = params[name][name]['ros__parameters']['inflation_layer']
-        assert layer['min_inflation_radius'] >= 0.4 and layer['inscribed_radius_floor'] >= 0.4
+        # The fork uses the floor verbatim as the inscribed radius: it must cover the
+        # footprint half-width (0.25 m) but stay below the circumscribed radius so
+        # NavFn can still plan through aisles the robot fits through (sim t33s).
+        assert layer['min_inflation_radius'] >= 0.4
+        assert 0.25 <= layer['inscribed_radius_floor'] < 0.39
         assert layer['radius_service_name'] == shrink[name.split('_')[0]+'_inflation_radius_service']
         assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
         for key in fork_only:

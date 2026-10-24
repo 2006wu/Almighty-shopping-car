@@ -326,7 +326,7 @@ local_costmap:
         radius_service_name: /local_costmap/inflation_layer/set_radius
         shrink_to: 0.45
         min_inflation_radius: 0.40
-        inscribed_radius_floor: 0.40
+        inscribed_radius_floor: 0.25  # footprint half-width; the fork uses this as the inscribed radius
       always_send_full_costmap: true
 global_costmap:
   global_costmap:
@@ -353,5 +353,5 @@ global_costmap:
         radius_service_name: /global_costmap/inflation_layer/set_radius
         shrink_to: 0.45
         min_inflation_radius: 0.40
-        inscribed_radius_floor: 0.40
+        inscribed_radius_floor: 0.25  # footprint half-width; the fork uses this as the inscribed radius
       always_send_full_costmap: true
