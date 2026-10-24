@@ -356,3 +356,31 @@ ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eva
 延遲以整段紀錄為搜尋窗，在 ±0.5 s 內每 0.01 s 搜尋向量均方差；正值代表觀察訊號落後真值。每個候選使用相同樣本集合，至多跨 0.25 s 缺口插值，不外插；至少需要 10 筆與 0.02 m 的運動激發，邊界最佳值視為無法辨識。空間偏差、取樣與服務呼叫排程可能混入延遲，故不是純濾波器內部耗時，也不能把 0.01 s 搜尋格距當成實際精度。統計依樣本加權；轉彎分類依預期人物路徑，因此應先通過同步檢查。
 
 缺資料、框架不符、時間倒退、時鐘逾時或不符合門檻會 FAIL；沒有轉彎／近停／恢復事件，或近停區間碰到紀錄邊界、太短或有資料缺口，顯示 `NOT_COVERED`。恢復期間狀態缺資料或尚未觀察到恢復也會標記未涵蓋；新鮮估測已恢復但在充分觀察後仍未回到 FOLLOWING 則 FAIL。結束碼為 0（全部 PASS）、1（有 FAIL）、2（僅有未涵蓋）。一般路徑不保證出現近距停止，工具也不會為此改動控制器；應由維護者安排可重現的模擬情境，重新量測未涵蓋項目。以上純 Python 測試不代表 ROS／Gazebo 驗收，兩錨點歧義與 NLOS 限制仍適用。
+### 偏航率校正與格網幾何檢查
+
+`yaw-check` 用於**全新、單獨執行的純 sim**。純 sim 沒有 mux／watchdog，命令由 `/cmd_vel` 經 `ros_gz` 直接送至 Fortress DiffDrive；不要同時執行 guide、follow、mapping、鍵盤或其他速度發布器。兩個終端機分別執行：
+
+```bash
+./scripts/dev.sh sim headless:=true odom_source:=ekf person:=false
+./scripts/dev.sh yaw-check --settle 2 --sample 3 --old-factor 2.0
+```
+
+工具以 20 Hz 持續送命令，依序測試 `(linear.x, angular.z)`：`(0, 0.2/0.4/0.6/0.8)` 與 `(0.2/0.4, 0.3)`；每列前零速 1 秒、排除 2 秒暫態，再採樣 3 秒（可調）。由 `/sim/ground_truth_odom` 與 EKF `/odom` 的來源時間戳、位置及解纏偏航估計角速度與平面路徑速率，列出實測／命令比值；原地線速比值不適用。速率來自 pose 差分，不依賴兩種 odometry 的 twist 框架慣例。平面速率含側滑，EKF 位置雜訊也會使路徑長稍增。來源時間須覆蓋採樣窗至少 80%，間隔不得大於 0.3 秒。
+
+完成、Ctrl-C 或錯誤時重複發布零 Twist；資料過期 0.5 秒、時鐘倒退／停止、每列超過 `--wall-timeout 45` 秒或雷射距離低於 `--clearance 0.6` 公尺均中止。弧線可能接近貨架而提前停止，這是失敗的量測，不能作為完整六列驗收；需在模擬中重新選擇空曠起點與朝向後再量測。`--in-place-only` 可先單獨完成四列原地測試；若弧線中止，仍保留四列原地擬合結果。此工具沒有底盤程序失效保護，不能用於硬體；停止工具後也應確認車體停止。
+
+擬合只採四列原地真值比值的算術平均。固定輪速時，里程計輪距校正為 `factor_old × ratio`；但 Fortress **命令轉輪速**使用 `wheel_speed = (v ± w × separation / 2) / radius`，本專案 xacro 的試調方向是 `factor_old / ratio`。工具分別列出 `fixed_wheel_rate_separation` 與 `fortress_command_factor`，不可混用。此公式已核對 [Fortress DiffDrive 原始碼](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/diff_drive/DiffDrive.cc)。例如單點 0.855/0.6 推得候選約 1.404，並非 2.85；摩擦起轉門檻與有線速時的側向滑移不保證符合單一倍率，目前仍保留 2.0。若日後校正，必須重驗低速起轉、Nav2 與跟隨調校。
+
+離線幾何工具不需 ROS，僅需既有 Python 與 PyYAML：
+
+```bash
+python3 scripts/map_geometry_check.py
+python3 scripts/map_geometry_check.py --map ros2_ws/src/shopping_robot_navigation/maps/supermarket.yaml --json /tmp/map_geometry.json
+# Or, inside the existing compute container:
+./scripts/dev.sh shell compute
+python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
+```
+
+工具讀取 P2／P5（含 16 位元）PGM、YAML 的解析度／原點／旋轉／占用門檻，直接使用淨空測試所依據的 world SDF 碰撞盒。每個面在預測邊緣附近 `--search 0.3` 公尺內，以切向格子各取最近占用格中心、排除角落並擬合直線；搜尋距離另限制小於物件半厚度，避免把內牆面誤當外牆面。輸出四面偏移中位數、覆蓋率、物件中心平移、旋轉與尺寸倍率，JSON 另有每面旋轉及擬合 RMS。平移／尺寸要求兩面覆蓋至少 50%，缺面標為 `missing`，不補零。這是有對應搜尋範圍限制的估計，單面、厚邊／重影、遮蔽與未知格都限制推論；格中心約有半格量化誤差，不等同量到實際物體表面。
+
+另依 `zones.yaml` 與貨架幾何，輸出區域附近一公尺長走道邊緣的橫向平移／旋轉／寬度倍率。snacks 本次為 +0.005 m／0°／1.000，兩側覆蓋皆 100%；平行貨架無法單獨約束沿走道的定位誤差。詳細全店量測與 AMCL 調整理由見 [進度紀錄](docs/PROGRESS.md)。AMCL 此次為待模擬確認的試調，須先用同一提交格網重新啟動 `guide slam_mode:=map_server` 並跑 `loc-check`；尚無證據需要重建地圖。若仍失敗，保留 JSON 並比較誤差方向、AMCL 更新與 EKF 殘差，再考慮重新 map-tour，勿手改格網或移動區域目標來通過門檻。
