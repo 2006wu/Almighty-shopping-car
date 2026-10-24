@@ -227,6 +227,8 @@ planner_server:
       # Follow goals coincide with the person obstacle; permit a nearby free endpoint.
       # Shared with guide mode: blocked zone goals may also end up to 0.8 m away.
       tolerance: 0.8
+      # Opt in to a map-sized Dijkstra budget for the fork cost model.
+      dijkstra_full_expansion: true
       use_astar: false
       allow_unknown: true
 smoother_server:
@@ -249,7 +251,8 @@ behavior_server:
     behavior_plugins: [shrink, wait]
     shrink:
       plugin: nav2_behaviors/Shrink
-      costmap_tolerance: 50
+      # OccupancyGrid: 99 is inscribed, 100 lethal; inflated traversable cells are <= 98.
+      costmap_tolerance: 98
       timer_duration: 20
       # Fork opt-in safe mode (shopping-car only): numeric radius, restore on exit, 0.40 m floor.
       safe_recovery: true
@@ -262,6 +265,9 @@ behavior_server:
       # Eurobot-only layers absent here; listed so Shrink skips them quickly.
       optional_services: ["/rival_layer/set_mode", "/object_layer/set_mode"]
       optional_service_timeout: 0.05
+      # Wall-clock waits tolerate simulation CPU contention; bounded restore retries.
+      service_timeout: 3.0
+      restore_attempts: 2
     wait: {plugin: nav2_behaviors/Wait}
     global_frame: odom
     robot_base_frame: base_footprint

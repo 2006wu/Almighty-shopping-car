@@ -110,6 +110,10 @@ def test_fork_params_and_tree():
         assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
         for key in fork_only:
             layer.pop(key)
+    planner = params['planner_server']['ros__parameters']['GridBased']
+    assert planner.pop('dijkstra_full_expansion') is True
+    assert shrink['costmap_tolerance'] == 98
+    assert shrink['service_timeout'] == 3.0 and shrink['restore_attempts'] == 2
     for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator'}:
         assert apt[key] == params[key]
     assert 'behavior_trees' in (NAV/'CMakeLists.txt').read_text()
@@ -203,3 +207,14 @@ def test_available_fork_libraries_and_nonrecovery_structure():
     def structure(node):
         return node.tag, node.attrib, [structure(child) for child in node]
     assert structure(original) == structure(shopping)
+
+
+def test_gentle_slow_and_fast_enable_the_same_safety_options():
+    params = yaml.safe_load((NAV/'config/nav2_params_fork.yaml').read_text())
+    controller = params['controller_server']['ros__parameters']
+    for name in ('Slow', 'Fast'):
+        profile = controller[name]
+        for option in ('gentle_footprint_clearance', 'gentle_transform_pose_to_plan',
+                       'gentle_bounded_local_checks', 'gentle_ignore_local_map_boundary'):
+            assert profile[option] is True
+        assert profile['gentle_resume_margin'] == 0.05

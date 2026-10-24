@@ -877,3 +877,60 @@
 - 以 `nav2_stack:=fork` 加上兩個參數重跑：nav-check 基本五項 PASS；loc-check 機器人停在 (0.11, 4.28) **完全不動**，drinks／snacks／produce 皆失敗（約 6 分鐘 151 次 `path blocked`）。footprint 淨空不是主因，已交給 fork 任務 t25 做根因分析（地圖邊界項、低速前向模擬時間、遲滯鎖死等假說）並加入阻擋原因診斷 log。
 - 因此本 PR 只合併 fork 整合層，submodule 仍固定 `bf60ee0`，**預設 `nav2_stack:=apt` 不變**；TEB 修正驗證通過後另開 PR 更新固定版本與參數。
 - 修正分支上 PROGRESS.md 誤刪 develop 既有段落（偏航率／AMCL 調查、micro-ROS 通訊層）的合併錯誤，已還原。
+
+
+## 2026-10-24：t33 Shrink 退出還原與 fork 規劃診斷
+
+### 修改與調查
+
+- 已讀取兩個工作樹與 t25s 四份指定日誌。`(50,50)` 超出成本圖，安全 Shrink 的
+  目標 cost 為無限大，判定失敗是預期結果；日誌沒有必要服務逾時或還原失敗訊息。
+  optional rival／object 的兩輪訊息符合縮小與還原皆有呼叫，不能由 `shrink failed`
+  推論全域成本圖未還原。有效 household 與 drinks 的失敗在全域規劃階段，未進入 TEB。
+- 更正紀錄：提供的 `t25s-check2.txt` 中 household **成功**，map 目標誤差約 0.128 m；
+  drinks 約 7 秒失敗，snacks／produce／checkout／entrance 皆成功。
+- fork 程式僅修改 `/workspace/wt/navfork-t23`：新增 action 退出保護，安全 Shrink 在
+  action 結果送出前還原，初始失敗、例外、shutdown 亦走還原；新增有限服務等待與
+  還原重試、各服務 ACK、robot／goal cost 與還原結果診斷。相容模式不啟用退出 hook。
+  新增無 ROS 的退出保護／dirty state 重試 gtest；實際 action 與服務仍需整合測試。
+- 購物車 `nav2_params_fork.yaml`：必要服務探索及回覆等待各 3 秒、每次還原最多 2 輪；
+  optional 仍為 0.05 秒。`costmap_tolerance` 從 50 改為 98，符合 OccupancyGrid 的
+  可通行成本範圍，仍拒絕內切障礙 99、致命障礙 100、未知與超界格。
+- apt／fork 的 NavFn YAML、footprint、正常 inflation radius／scaling 原本相同，但
+  fork 額外指定 `inscribed_radius_floor=0.40`，成本圖不等同 apt 依 footprint 計算的
+  約 0.26 m。本次保留保守下限。BT 的 Shrink／Wait 與 apt recovery 亦不同。
+- fork NavFn 成本轉換與 Dijkstra 優先門檻不同於 apt；原搜尋預算可能提前耗盡。
+  新增預設關閉的 `GridBased.dijkstra_full_expansion`，購物車明確啟用，將預算從
+  `max(nx*ny/20,nx+ny)` 改為 `nx*ny`，到達端點／佇列清空仍提前結束。
+  新增高成本蛇形走廊與致命牆 gtest，以及搜尋耗盡、goal cost／potential 診斷。
+  **舊日誌沒有當時成本圖與搜尋統計，尚未證實搜尋預算就是本次規劃失敗根因。**
+- Slow／Fast 的 `name_ + ".gentle_*"` 讀取路徑正確。原阻擋診斷是 WARN，沒有被
+  INFO 靜音巨集移除，但必須進入控制器且判定阻擋才會出現；現在改為實際啟用的
+  1 Hz INFO，並在 gentle configure 列出兩個 plugin 的安全參數。新增 pytest 防止
+  Slow／Fast 的 t25 選項遺漏。
+- fork 已更新 `docs/shopping_car_teb.md` 與 Shrink 說明。未修改 submodule 內容或
+  固定版本，未變更 `/cmd_vel` 發布鏈、硬體選項或 ROADMAP 勾選。
+
+### 自行檢查、限制與下一步
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：776 passed，1 個既有
+  xacro DeprecationWarning。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，包含
+  YAML、XML／SDF／xacro、Python／Bash、兩／三錨點與兩種里程計模式的 xacro 展開。
+- 兩個工作樹執行 `git diff --check`。沒有 ROS，因此未編譯 C++、執行 gtest、
+  colcon、容器或 Gazebo；未安裝套件、建立 venv、提交、推送或操作真實硬體。
+- 維護者需將 fork 變更形成版本並同步 submodule、完整重建 NavFn／behavior／TEB，
+  跑 `test_shrink_utils`、`test_dijkstra_budget` 與既有 TEB gtests，再以單一 Gazebo
+  重跑不可達目標 → household → drinks、nav-check 與六區 loc-check。
+  優先收集兩個 plugin 的 configure INFO、Shrink 還原至 0.8 m 的 ACK、NavFn
+  耗盡／goal cost 診斷；若非耗盡，需比對失敗當下 global costmap 與內切下限。
+- 服務斷線或 ROS shutdown 時只能保證嘗試還原，不能保證遠端已套用；同步服務等待
+  中收到取消需等待本次有限等待返回，多個服務及重試的總時間可能大於 3 秒。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| Humble C++ 編譯、新舊 gtest 與 lint | 待驗證 |
+| Shrink 部分失敗／逾時／取消／清理的雙成本圖還原 | 待驗證 |
+| Slow／Fast configure 與 1 Hz INFO | 待驗證 |
+| 單一 Gazebo nav-check 與六區 loc-check | 待驗證 |
+| 全域規劃根因與 apt／fork 成本圖比對 | 待驗證 |
