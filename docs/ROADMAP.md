@@ -31,9 +31,9 @@
 - [x] 驗證六個區域與中文別名（即時建圖下連續 10 個目標成功）。
 - [x] 驗證動作拒絕／失敗／取消（2026-10-23，`dev.sh nav-check --tolerance-check` 6/6 通過）。
 - [ ] 驗證窄走道、結帳區、人員穿越與 AMCL 替代定位（2026-10-24：AMCL likelihood_field 參數六區 PASS，snacks 0.096 m；情境部分待驗證）。
-- [ ] Nav2 改用使用者私有 fork（`2006wu/Eurobot-2027-Navigation2`，Humble、Nav2 1.1.16）原始碼建置，取代 apt Nav2，以便修改 Nav2 內部；說明引入方式及私有來源對公開 repo 建置的影響（2026-10-23 決定）。
-- [ ] 沿用 fork 的 to_pose 行為樹（`navigate_to_pose_w_selector.xml`），只調整恢復：保留 NonStop、保留 Shrink＋Wait、移除 Escape。
-- [ ] 控制器改用 fork 的 TEB（比 MPPI 好調），完成四輪差速車參數，並與 apt Nav2 的 guided shopping 結果比較。
+- [ ] Nav2 改用使用者私有 fork（`2006wu/Eurobot-2027-Navigation2`，Humble、Nav2 1.1.16）原始碼建置，取代 apt Nav2，以便修改 Nav2 內部；說明引入方式及私有來源對公開 repo 建置的影響（2026-10-23 決定；2026-10-24 接上 fork `shopping-car` bf60ee0，建置／連結／lifecycle 驗證通過，launch 預設仍為 apt，需 `nav2_stack:=fork`）。
+- [x] 沿用 fork 的 to_pose 行為樹（`navigate_to_pose_w_selector.xml`），只調整恢復：保留 NonStop、保留 Shrink＋Wait、移除 Escape（2026-10-24：to_pose 與 through_poses 樹皆僅 Shrink＋Wait，Shrink safe 模式於模擬中執行並還原）。
+- [ ] 控制器改用 fork 的 TEB（比 MPPI 好調），完成四輪差速車參數，並與 apt Nav2 的 guided shopping 結果比較。（2026-10-24：fork nav-check 5/6，終點誤差 0.604 m、loc-check 走道卡住，待 t23 footprint clearance 後再比較）
 - [ ] 改寫 TEB 避障：Eurobot 針對單一對手（rival pose topic）的激進閃避，改為較溫和、較慢的繞行，處理窄走道與行人。
 
 ## 平行項目：MCU 通訊與容器拆分（2026 年 10–12 月，2026-10-23 新增）
@@ -55,7 +55,7 @@
 
 - [x] 實作引導／跟隨／待機管理器及唯一的速度命令仲裁（2026-10-23，`use_mux:=true` 預設）。
 - [x] 加入獨立命令逾時看門狗、停用流程與重啟安全（2026-10-23）。
-- [ ] 整合障礙停止、可選 collision_monitor 與恢復行為。
+- [ ] 整合障礙停止、可選 collision_monitor 與恢復行為。（2026-10-24：obstacle_guard 已合併，obstacle 故障 4/4、follow 故障 7/7 PASS；collision_monitor 與繞行恢復尚未模擬）
 - [x] 設計跟隨繞障策略，驗證各狀態切換及故障注入（2026-10-23；fault-check 6/6。NAV2_HANDOFF 中注入、`route_around:=false` 尚未專門驗證）。
 
 ## 階段 5：穩健性與量測（2026 年 12 月–2027 年 1 月）

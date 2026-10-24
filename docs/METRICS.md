@@ -221,3 +221,10 @@ JSON 的 `all` 保留所有同步樣本；`eligible` 僅保留控制器為 FOLLO
 此次單圈 94.857 s（20 Hz 取樣 1898 筆），無障礙修正版距離誤差平均 0.053 m／RMSE 0.109 m；SDF 情境有效區間為 0.171 m／0.198 m（1316 筆，69.3%），但全程平均距離仍為 1.807 m。目標是有效區間平均誤差 <0.5 m、RMSE <1.0 m；全程追蹤與貨架末端繞行仍需容器驗證。
 
 人物補償測試用相同解析路徑建立「服務延遲＋位置保持」合成訊號，使用原 `sync_report` 的誤差與延遲搜尋，沒有把補償加到參考真值或模型觀測時間。服務延遲 0.20／0.25／0.30 s、命令週期 0.05 s、補償 0.30 s 的合成案例均須通過平均誤差 <0.05 m、延遲絕對值 <0.1 s；這只驗證補償邏輯，不能證明 Fortress 執行時延遲固定或已通過同步檢查。
+## 障礙防護觀測（階段 4）
+
+預設錄製清單新增 `/safety/obstacle_state` 與 mux／guard／collision_monitor 的中間速度。bag_converter 取 guard JSON 內的模擬時間 `t`，在進入 STOP／STALE 時產生 `obstacle_guard_stop`／`obstacle_guard_stale` trigger，重複狀態不重開事件，沿用本文件 `stop_metrics` 的首次零命令／真值停止定義。同時出現的其他保護事件沿用既有合併規則。啟動即 STALE 也會產生事件；須保留它並另判讀是否有移動基線，不能拿啟動零速作為障礙停止驗收。
+
+狀態事件的延遲起點是 guard 偵測並發布狀態的模擬時間，不包含故障命令傳送到偵測的延遲。`scripts/fault_check.py --suite obstacle` 則以送出故障命令前的模擬時間開始計算，且要求移動基線、持續停止與恢復；與本文件「首次停止」統計不可混稱同一判準。減速列檢查 guard SLOW 比例與命令仍在移動，沒有自動辨識真值減速度。
+
+`/safety/obstacle_state.swept_clearance` 是雷射回波到要求速度掃掠範圍的保守距離，用於診斷；不取代本文件的真值矩形最小間距。既有 `clearance_metrics` 仍以世界 collision 與真值位姿計算，沿用原有錄製／轉換鏈路。`lidar_front` 假障礙沒有新增 Gazebo collision，因此真值最小間距不會包含它；不能用假障礙試驗宣稱通過實際障礙距離驗收。完整啟動、故障與 headless 程序見 [OBSTACLE_SAFETY.md](OBSTACLE_SAFETY.md)。

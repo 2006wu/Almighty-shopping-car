@@ -1005,3 +1005,131 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 | 過近／遺失／過期／雷射失效／前方障礙／停用／關閉安全 | 待驗證 |
 | 看門狗唯一發布 `/cmd_vel`、Humble colcon 建置與測試 | 待驗證 |
 | Fortress 直線／轉彎跟隨距離、延遲與過近停止重測 | 待驗證 |
+## 2026-10-24：Nav2 fork 與 TEB 整合
+
+### 本次完成
+
+- 沿用已加入的私人 `third_party/eurobot_nav2` submodule，沒有修改其原始碼、gitlink 或 `.gitmodules`。公開主專案只新增整合層、參數及指定的 BT 複本；Docker context 排除 third_party，映像不 clone、不需要 GitHub token。
+- compute 新增唯讀 `/nav2_ws/src` 與 build／install／log 具名 volumes，入口 source apt → fork → 應用 workspace。新增唯一套件清單、`dev.sh nav2-build`／`nav2-status`、Release／關閉 fork 測試／可調低平行度，以及所選套件需要的原生 apt 編譯相依。顯示容器維持 apt RViz。
+- guide／follow／navigation 接上 `nav2_stack:=auto|fork|apt` 與 ROS-free 選擇 helper，明確 fork 缺套件會報錯。apt 使用原本 RPP／YAML；已有 fork 時透過清理環境的子程序執行 apt 導航，避免只換參數卻仍用 fork binaries。
+- 新增 fork YAML：Slow／Fast 的非全向 gentle TEB、預設 Loose 及 Precise／NonStopGoalChecker profiles；未變更原 apt YAML。BT 保留 selector／StopController／ResetRecovery／RecoveryNode，僅將 recovery 設為 GoalUpdated 或 Shrink→Wait，無 Escape。controller／behavior／velocity smoother 與內部 BT client 的速度路由維持模式仲裁／看門狗出口。
+- 比較工具重用區域清單與 nav-check 的 ZoneNavigator，分別記錄 apt／fork 全部六區的 action 結果、模擬秒數、真值軌跡長度及終點平面誤差，保存 JSON 並列印並列表。拒絕缺失／倒退／有大缺口的真值，逾時等待取消確認；README 提供每輪重啟同一格網與起點的操作順序。
+- 新增選擇、apt 環境隔離與重啟參數、BT／TEB／goal checker／速度出口、掛載／source 順序／套件範圍、合約前檢與比較量測測試。既有 AST launch 測試更新注入的 helper；主專案的測試與靜態掃描排除 third_party 自己維護的 ROS 整合測試與舊工具。ROADMAP 未勾選。
+
+### 本輪執行紀錄（非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：630 項通過，既有 xacro Python 棄用警告 1 項。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；14 個 YAML／RViz、11 個 XML／SDF／xacro、85 個 Python、5 個 Bash，兩／三錨點及 ekf／ground_truth xacro 展開通過。
+- `git diff --check`：通過。未執行 Docker、colcon、ROS／Gazebo、網路存取、安裝套件、建立虛擬環境、提交或推送。
+
+### 限制與下一步
+
+- **固定的 `31c3ef1` 尚缺平行工作中的 TEB 合約。** 新增建置前檢會拒絕缺少八個新參數名稱的版本，避免 `holonomic: false` 被忽略。維護者須先完成／審查 fork 的非全向與 gentle 實作，再更新主機 checkout／主專案固定版本並建置；本輪沒有自行變更 pin。名稱前檢不等於 C++ 行為驗收。
+- **Shrink 尚有上游差異。** XML 提案 0.40 m 大於車體半對角線約 0.391 m，但 fork 忽略 shrink_to，inflation service 寫死 0.15 m 且 inscribed radius 為 0；同一絕對 service 名稱用於兩個 costmap。缺 rival／object layer services 會增加延遲；action goals 沒有同步到其 `/move_base_simple/goal`，costmap 索引缺範圍保護。這些必須由 fork 維護者修正／驗證，不能宣稱 recovery 已符合購物車的碰撞安全需求。
+- apt AMCL／RPP／collision_monitor 等會與 overlaid util／msgs／costmap 混用。建置後執行 `ldd -r` 攔截缺 library／symbol，通過才記錄 build commit；仍須驗證 ABI layout、DDS 型別、lifecycle、action 與取消行為。失敗建置可能留下部分 install 檔，不能以 setup 存在當作驗收；再次建置會先移除成功 marker。
+- 維護者下一步依 README 重建 compute、nav2-build、重建／測試應用 workspace，確認 `ros2 pkg prefix nav2_controller` 在 fork 場次解析至 `/nav2_ws/install/nav2_controller`，並執行兩種 stack 的 guide／AMCL、nav-check、比較、mapping／map-tour、loc-check、follow NAV2_HANDOFF 與故障注入。比較須獨占導航並從相同出生點重新開始，真值為平面位置，不含 yaw 誤差；action 成功不能取代終點誤差判斷。
+- 本輪只完成 Python／配置與語法驗證；容器映像與原生 amd64／arm64 建置、Gazebo recovery、行人 gentle 避障及停止行為全部待維護者驗證，沒有加入任何硬體連線。
+
+
+### 審查驗證結果（2026-10-24 15:10 臺北時間，盒內 Linux amd64 Docker）
+
+| 項目 | 結果 |
+| --- | --- |
+| fork 固定版本 | submodule 改指 fork `shopping-car` 分支 `bf60ee0`（含 opt-in `shrink.safe_recovery`：數值半徑、0.40 m 下限、local／global 分開 service、optional layer 逾時、結束時還原）；`31c3ef1` 缺少的 TEB 合約已在此分支 |
+| `nav2-build`（18 套件） | 約 145 s 完成；`check_nav2_linkage.py` 110 個目標 PASS（修正：被 fork 遮蔽的 apt 函式庫與未使用的 Route BT 節點不再誤報）；舊 colcon 不支援 `--allow-overriding` 時自動略過該旗標 |
+| fork gtest | custom_controller（TEB）與 nav2_behaviors（含 test_shrink_utils）13/13 PASS |
+| 盒內 pytest／`check_static.py` | 775 passed／PASS |
+| 容器 colcon build + test（fork underlay） | 8 套件；624 tests，0 errors，0 failures，5 skipped |
+| 審查修正 | (1) fork YAML 的 AMCL 段同步 develop 新的 likelihood_field 參數；(2) bt_navigator 預設 through-poses 樹引用 Spin 而 behavior_server 只有 Shrink／Wait，導致 lifecycle 啟動失敗 → 新增 `navigate_through_poses_shopping.xml`（僅 Shrink＋Wait）並設為預設；(3) 開啟 Shrink safe 模式並給兩個 costmap 各自的 inflation service 與 0.40 m 下限，BT `shrink_to` 改 0.45；(4) gentle TEB 的 `min_obstacle_dist`／`gentle_stop_dist` 0.45 → 0.15／0.12：clearance 已扣除外接圓半徑 0.391 m，原值要求 0.84 m 淨空，出生點即被判阻擋、1.6 m 走道無法通行；(5) launch 預設 `nav2_stack` 由 `auto` 改為 `apt`，避免 fork 建置後預設導航改用尚未調好的 TEB |
+| fork guide（map_server，headless） | 兩個 lifecycle manager 全部 active；Shrink 實際執行並成功還原（optional rival／object layer 0.05 s 略過） |
+| fork `nav-check --tolerance-check --max-final-error 0.35` | 5/6：未知區域、不可達目標、取消並停止、有效目標、BUSY 皆 PASS；**最終誤差 FAIL 0.604 m**（apt 為 0.108 m） |
+| fork `loc-check` | AMCL 定位誤差 1–2 cm、航向 <3.6°（定位正常），但 snacks／produce／household 導航皆未抵達（`TEB: path blocked` 約 260 次）；超過 740 s 逾時中止 |
+| 未驗證 | apt／fork 六區 `nav-compare`、mapping／map-tour、follow NAV2_HANDOFF 於 fork、Mac arm64、Gazebo GUI、實車（只做模擬） |
+
+### 結論與下一步
+
+- fork 整合（建置、連結、lifecycle、BT、Shrink safe 模式）可用，但 **gentle TEB 在 1.6 m 走道與貨架轉角仍常判定阻擋**：clearance 以外接圓（0.391 m）計算，0.60×0.50 m 矩形車體在走道中央只剩約 0.37 m。已交給 fork 任務 t23（opt-in 依朝向的矩形 footprint clearance＋恢復遲滯，Eurobot 預設不變）。完成後以 `nav2_stack:=fork` 重跑 nav-check、loc-check 與 nav-compare，通過再考慮把預設改回 `auto`。
+
+### 審查追加（2026-10-24 15:50 臺北時間）
+
+- t23（fork 分支 `codex/teb-footprint-clearance` `80ef04f`）：opt-in `gentle_footprint_clearance`（依朝向矩形 footprint 計算淨空）與 `gentle_resume_margin`；容器 `nav2-build` 與 linkage PASS，custom_controller gtest 18/18 PASS。
+- 以 `nav2_stack:=fork` 加上兩個參數重跑：nav-check 基本五項 PASS；loc-check 機器人停在 (0.11, 4.28) **完全不動**，drinks／snacks／produce 皆失敗（約 6 分鐘 151 次 `path blocked`）。footprint 淨空不是主因，已交給 fork 任務 t25 做根因分析（地圖邊界項、低速前向模擬時間、遲滯鎖死等假說）並加入阻擋原因診斷 log。
+- 因此本 PR 只合併 fork 整合層，submodule 仍固定 `bf60ee0`，**預設 `nav2_stack:=apt` 不變**；TEB 修正驗證通過後另開 PR 更新固定版本與參數。
+- 修正分支上 PROGRESS.md 誤刪 develop 既有段落（偏航率／AMCL 調查、micro-ROS 通訊層）的合併錯誤，已還原。
+
+## 2026-10-24：獨立障礙安全層、選用 collision_monitor 與故障觀測
+
+### 修改內容
+
+- 新增不匯入 ROS 的 obstacle_guard 幾何／判定模組與 ROS 節點：依要求速度檢查正向／反向矩形掃掠、曲線及原地旋轉外接圓，具速度相關停止／減速區、立即收緊及加寬／時間遲滯。整合啟動直接讀取已安裝 Nav2 的 local／global 足跡，拒絕不一致或不支援的形狀；pytest 與 description xacro 比對尺寸。
+- 接線為 mux → guard → 選用 collision_monitor → watchdog → `/cmd_vel`；watchdog 仍為唯一最終速度發布者。guard 自行檢查 mux 逾時，雙重檢查 scan header／單調壁鐘、TF、完整掃描與無效讀值，20 Hz 壁鐘定時器使模擬暫停也會停車。最終 watchdog 的恢復加速度限制採共同比例保留曲率，安全減速／零速立即套用，不能超出上游限制。
+- guide／follow／mode_mux 新增 obstacle_guard 預設 true、collision_monitor 預設 false。停用整合 launch 的 use_mux:=false 旁路，保留 Nav2 controller／BT 與 navigation.launch.py 原樣。collision_monitor 使用 Humble 的 points／max_points 參數、獨立 lifecycle manager；compute Dockerfile 宣告 apt 套件，未實際安裝或建置映像。
+- `/safety/obstacle_state` 提供 CLEAR／SLOW／STOP／STALE、倍率、模擬時間及掃掠間距。follow_handoff 沿用既有交接監督器：STOP 可進入持續障礙判定，STALE 禁止繞行並歸零。加入 lidar_front 距離故障，沿用 lidar_drop／lidar_freeze；fault-check 增加 obstacle suite、移動基線／恢復要求與唯一 cmd_vel publisher 檢查。
+- 錄製清單及 bag_converter 接上 guard STOP／STALE trigger，沿用 METRICS 的停止延遲與既有世界真值間距流程。新增 OBSTACLE_SAFETY，更新 README／ARCHITECTURE／METRICS。ROADMAP 未修改、未勾選。
+
+### 本機自行檢查
+
+使用指定既有環境執行 `/workspace/scratch/venv-shop/bin/python -m pytest -q`：781 項通過，既有 xacro 棄用警告 1 項。`/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，涵蓋 18 個 YAML／RViz、11 個 XML／SDF／xacro、106 個 Python、4 個 Bash，以及兩／三錨點、ekf／ground_truth xacro 展開。`git diff --check` 通過。未安裝套件、建立 venv、執行 Docker、提交或推送。
+
+### 限制與下一步
+
+- 本次只有純 Python、回呼替身與靜態驗證，ROS／DDS／colcon／Gazebo／amd64／arm64 實際整合均未驗收。維護者須依 OBSTACLE_SAFETY 的命令重建容器並逐次執行 headless follow／guide／teleop，以及 collision_monitor 開／關。
+- 等速掃掠與旋轉外接圓屬保守模型，尚未用真值辨識煞車能力或驗證停止距離；雷射平面外物體、漏測及真實滑移不在模型內。預設仍禁止倒車，倒車僅有純邏輯驗證。
+- 減速試驗目前要求 SLOW 倍率與仍有移動命令，不等於真值減速度驗收。假障礙只有感測器回波，沒有 Gazebo collision；swept_clearance 不能冒充 METRICS 的真值最小足跡間距。時間以 guard 狀態與故障命令起點分別解讀，不能混合門檻。
+- route_around=true 時的 STOP 可能隨上游停車要求重新評估，持續交接仍搭配原有 LOS 遲滯。維護者需在實際貨架情境驗證 NAV2_HANDOFF、繞行與返回 DIRECT；平行 Nav2 fork 的 TEB／Shrink+Wait recovery 尚未整合驗證，未新增另一套導航恢復策略。
+- watchdog 程序、橋接或 Gazebo 本身故障的停止保證維持既有限制；本次沒有新增硬體控制或 Fortress 底盤命令逾時外掛。
+
+### 審查驗證
+
+以下由審查者執行與填寫，本次自行檢查不代填。
+
+| 項目 | 結果 |
+| --- | --- |
+| 區域、速度、方向、曲線、旋轉、遲滯與過期 pytest | 待驗證 |
+| 缺 TF、mux 失聯、雷射舊 header、時間倒退與恢復加速度 | 待驗證 |
+| launch 四種 guard／collision_monitor 組合與唯一 cmd_vel 發布者 | 待驗證 |
+| Humble colcon build／test 與 apt collision_monitor lifecycle／QoS | 待驗證 |
+| headless follow 減速／停止／掉訊／凍結與解除恢復 | 待驗證 |
+| guide／TELEOP 共用安全鏈路、急停／reset 與程序失聯 | 待驗證 |
+| 原地旋轉淨空、側邊障礙與真值最小間距／停止距離 | 待驗證 |
+| NAV2_HANDOFF 繞行、恢復 DIRECT 與平行 Nav2 fork 整合 | 待驗證 |
+| bag 停止 trigger／真值延遲與 METRICS 報表 | 待驗證 |
+| amd64／arm64 原生模擬回歸 | amd64 Gazebo 無頭模擬如上；arm64 未驗證 |
+
+## 2026-10-24：t30 障礙安全層與 develop 合併衝突解決
+
+### 修改內容
+
+- 解決進行中 `git merge origin/develop` 的四個工作樹衝突：本文件、guide／follow launch 與 shopping_zone_manager/setup.py。guide／follow 同時保留並轉送 `nav2_stack:=apt|fork|auto`、obstacle_guard、collision_monitor 及雙方原有參數；預設 apt、guard 開啟、collision_monitor 關閉、mcu_comm 關閉，use_mux 仍只接受 true。
+- setup 保留 obstacle_guard 與 nav_compare 及其餘命令入口；速度鏈路維持 mux → guard → 選用 collision_monitor → watchdog，watchdog 仍為整合流程唯一 `/cmd_vel` 發布者。跟隨對 `/safety/obstacle_state` 的訂閱及既有交接／失效保護均保留。
+- PROGRESS 保留雙方完整紀錄，依同日 Nav2 整合／審查、障礙安全層、本次解衝順序排列。比對 HEAD 與 origin/develop，README／ARCHITECTURE／PROGRESS 的所有章節標題均保留；未刪除歷史或新增 ROADMAP 勾選。
+- 逐一檢視 `git diff origin/develop` 的非衝突差異，均為障礙安全層及其文件／測試擴充；Nav2 navigation、參數、BT、stack helper、submodule 固定版本、micro-ROS 入口與容器設定保留 develop 內容，Dockerfile 僅額外宣告 collision_monitor 相依。
+- 新增 24 組無 ROS 的 launch 回歸案例，涵蓋 guide／follow、apt／fork／auto、guard／collision_monitor 四種組合；檢查雙方參數宣告、預設值、安全旁路限制與 navigation／mode_mux／sim／comm 的轉送。
+
+### 本機自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：824 passed、1 skipped、1 warning。略過私人 submodule 未掛載時的來源驗證；警告為既有 xacro Python 棄用警告。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，19 個 YAML／RViz、13 個 XML／SDF／xacro、113 個 Python、5 個 Bash；包含兩／三錨點、ekf／ground_truth xacro 展開與錨點一致性。
+- 工作樹衝突標記掃描及 `git diff --check` 通過。未執行 git add、提交、推送、Docker、套件安裝或建立 venv；index 仍保留未合併狀態，由維護者檢視後標記已解決。
+
+### 限制與下一步
+
+- 本次只驗證純 Python、launch 替身與靜態配置；未執行 Humble、colcon、DDS、容器或 Gazebo，不能將上述檢查視為模擬驗收。
+- 維護者須建置／測試應用 workspace，逐次驗證 apt／fork 的 guide／follow、guard／collision_monitor 四種組合、lifecycle／QoS／TF、唯一 `/cmd_vel` 發布者，以及急停、雷射掉訊／舊 header、程序失聯與恢復行為；fork 須依既有流程完成建置與連結檢查。
+- follow 的 NAV2_HANDOFF、STOP 持續障礙繞行、STALE 取消與返回 DIRECT，以及 fork 的 Shrink＋Wait 和既有 TEB 阻擋問題仍待模擬驗證；保留前述審查限制，未新增硬體連線或更改預設 stack。
+
+### 審查驗證
+
+以下全部由審查者執行與填寫，本次自行檢查不代填。
+
+| 項目 | 結果 |
+| --- | --- |
+| 雙方文件歷史與非衝突差異保留 | PASS（審查者 diff 檢視） |
+| launch 參數宣告／轉送與純 Python 回歸 | PASS：pytest 824 passed、1 skipped |
+| Humble colcon build／test 與靜態檢查 | PASS：Docker 映像建置、colcon test 640 tests、0 failures；check_static PASS |
+| apt／fork guide／follow 與安全層四種組合 | 部分：apt guide＋guard nav-check 5/5 PASS；apt follow＋guard（fault_injection、route_around:=false）通過；fork 與 collision_monitor 組合未模擬 |
+| 唯一 cmd_vel 發布者、急停／失聯／雷射過期停止 | PASS：fault-check --suite obstacle 4/4（lidar_front 0.2 m 停止 0.09 s、lidar_drop 0.37 s、lidar_freeze 0.71 s，門檻 cmd≤0.8 s／真值≤1.5 s）；--suite follow 7/7 |
+| NAV2_HANDOFF、恢復 DIRECT 與 Shrink＋Wait 模擬整合 | 未驗證（route_around:=false；Shrink＋Wait 屬 fork） |
+| amd64／arm64 原生模擬回歸 | amd64 Gazebo 無頭模擬如上；arm64 未驗證 |
+
+審查時間：2026-10-24 16:30（台北時間）；結果紀錄於 Docker 專案 shopobs（t30s）。

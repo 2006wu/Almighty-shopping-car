@@ -141,3 +141,24 @@ class VelocityLimiter:
             self.velocity = tuple(0.0 if new == 0.0 else old+max(-limit*dt, min(limit*dt, new-old))
                                   for old, new, limit in zip(self.velocity, velocity, self.limits))
         return self.velocity
+
+
+class SafetyVelocityLimiter(VelocityLimiter):
+    """Ramp recovery with one scale; never exceed a safety-filtered command.
+
+    Reductions apply immediately. A common factor preserves the guard's tested
+    curvature, including when either component changes sign.
+    """
+    def step(self, velocity, now):
+        dt = 0.0 if self.stamp is None else now-self.stamp
+        self.stamp = now
+        if velocity == ZERO or not math.isfinite(dt) or dt <= 0 or dt > 0.2:
+            self.velocity = ZERO
+        else:
+            scale = 1.0
+            for old, new, limit in zip(self.velocity, velocity, self.limits):
+                if new:
+                    previous = abs(old) if old*new > 0 else 0.0
+                    scale = min(scale, (previous+limit*dt)/abs(new))
+            self.velocity = tuple(v*scale for v in velocity)
+        return self.velocity

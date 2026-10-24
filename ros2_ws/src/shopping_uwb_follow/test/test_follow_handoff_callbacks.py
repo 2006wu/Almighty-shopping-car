@@ -4,6 +4,7 @@ These checks cover ownership races, not ROS transport or Humble integration.
 """
 import ast
 import math
+import json
 from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -29,7 +30,8 @@ def node_class():
     tree = ast.parse(source.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FollowNode')
     cls.bases = []
-    namespace = dict(math=math, rotation_scan_clear=rotation_scan_clear, side_clearance=side_clearance,
+    namespace = dict(math=math, json=json, rotation_scan_clear=rotation_scan_clear,
+                     side_clearance=side_clearance,
                      side_speed_factor=side_speed_factor, seconds=lambda node: node.now,
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
                      String=lambda **kwargs: NS(**kwargs),
@@ -649,3 +651,15 @@ def test_close_clear_return_cancels_once_and_first_direct_command_is_zero():
     node.tick()
     assert node.publisher.publish.call_args.args[0].linear.x > 0
     handle.cancel_goal_async.assert_called_once()
+def test_guard_stop_requests_existing_handoff_and_stale_cancels_it():
+    node = make_node()
+    node.obstacle = 2.0
+    node.on_guard(NS(data=json.dumps(dict(state='STOP', t=node.now))))
+    node.tick()
+    assert node.supervisor.blocked_since is not None
+    node.on_guard(NS(data=json.dumps(dict(state='STALE', t=node.now))))
+    node.tick()
+    assert node.supervisor.mode == 'DIRECT'
+    assert node.supervisor.blocked_since is None
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
