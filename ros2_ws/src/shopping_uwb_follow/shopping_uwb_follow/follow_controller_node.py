@@ -194,13 +194,14 @@ class FollowNode(Node):
 
     def send_goal(self, pose):
         if not self.client.server_is_ready():
-            self.nav_status = 'failed'
+            self.nav_status = 'unavailable'
             return
         generation = self.goals.begin()
         self.goal_handle = None
         self.cancel_pending = self.cancel_requested = False
         self.goal_pending = True
         self.nav_status = 'active'
+        self.last_nav_command = None
         goal = NavigateToPose.Goal()
         goal.pose = pose
         self.goal_publisher.publish(pose)
@@ -279,7 +280,8 @@ class FollowNode(Node):
         self.goal_handle = None
         self.cancel_pending = False
         self.nav_status = {GoalStatus.STATUS_SUCCEEDED: 'succeeded',
-                           GoalStatus.STATUS_CANCELED: 'canceled'}.get(status, 'failed')
+                           GoalStatus.STATUS_CANCELED: 'canceled',
+                           GoalStatus.STATUS_ABORTED: 'aborted'}.get(status, 'failed')
         self.drain.terminal(seconds(self))
 
     def tick(self):
@@ -347,7 +349,8 @@ class FollowNode(Node):
             self.drain.reset()
             # Use the newest target, rather than the position at cancel time.
             self.replacement = None
-            self.send_goal(pose)
+            if pose is not None:
+                self.send_goal(pose)
         if self.cancel_requested and self.busy():
             self.cancel_goal()
         waiting = self.busy() or not self.drain.ready(now)
@@ -382,9 +385,13 @@ class FollowNode(Node):
             self.last_own_publish = seconds(self)
         if decision.mode == 'NAV2' and valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE'):
             state = 'NAV2_HANDOFF'
-            reason = (decision.reason if obstacle > p.obstacle_stop_distance else
-                      'Forward blocked; rotation allowed' if self.rotation_clear else
-                      'Forward blocked; rotation clearance unavailable')
+            if self.nav_status == 'unavailable':
+                reason = 'Nav2 unavailable; holding for rate-limited retry'
+            elif pose is None or obstacle > p.obstacle_stop_distance:
+                reason = decision.reason
+            else:
+                reason = ('Forward blocked; rotation allowed' if self.rotation_clear else
+                          'Forward blocked; rotation clearance unavailable')
         elif waiting:
             reason += '; waiting for navigation stop'
         self.diagnose(now, state, commanded_v, commanded_w, reason, factor, obstacle, age)

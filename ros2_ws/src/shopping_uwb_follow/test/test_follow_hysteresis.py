@@ -110,8 +110,8 @@ def step(s, t, **kwargs):
 def nav():
     s = HandoffSupervisor(HandoffParams(handoff_delay=0.5))
     step(s, 0)
-    step(s, 0.3)
-    assert step(s, 0.8).action == 'send_goal'
+    assert step(s, 0.3).action == 'send_goal'
+    assert step(s, 0.8).mode == 'NAV2'
     return s
 
 
@@ -120,7 +120,7 @@ def test_nav_hold_and_debounced_close_return():
     clear = dict(los_clear=True, los_clear_wide=True, target=(1.3, 0))
     assert step(s, 0.9, **clear).mode == 'NAV2'
     assert step(s, 1.51, **clear).mode == 'NAV2'  # Clear, minimum hold still active.
-    assert step(s, 2.29, **clear).mode == 'NAV2'
+    assert step(s, 1.79, **clear).mode == 'NAV2'
     assert step(s, 2.31, **clear).action == 'cancel_goal'
     s = nav()
     step(s, 3, **clear)
@@ -140,16 +140,14 @@ def test_direct_hold_and_continuously_blocked_exception():
     step(s, 1.61, **clear)
     assert step(s, 2.31, **clear).action == 'cancel_goal'
     step(s, 2.32)
-    step(s, 2.63)  # Newly debounced blockage.
-    assert step(s, 3.14).mode == 'DIRECT'  # handoff_delay passed, hold has not.
-    assert step(s, 3.32).action == 'send_goal'
+    assert step(s, 2.63).action == 'send_goal'  # Debounced blockage overrides direct hold.
+    assert step(s, 3.14).mode == 'NAV2'
 
 
 @pytest.mark.parametrize('override', [dict(state='LOST'), dict(state='TOO_CLOSE'),
     dict(state='IDLE'), dict(enabled=False), dict(scan_valid=False),
-    dict(front_clearance=math.nan), dict(nav_status='failed'),
-    dict(nav_status='canceled')])
-def test_safety_and_terminal_events_bypass_minimum_nav_hold(override):
+    dict(front_clearance=math.nan), dict(state='STALE')])
+def test_safety_events_bypass_minimum_nav_hold(override):
     s = nav()
     assert step(s, 0.81, **override).action == 'cancel_goal'
 

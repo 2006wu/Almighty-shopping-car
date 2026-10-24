@@ -116,9 +116,10 @@ def test_success_keeps_navigation_and_refreshes_without_cancel_churn():
     for t in range(2, 120):
         result = supervisor.step(t, nav_status='succeeded', **args)
         assert result.mode == 'NAV2' and result.action == 'update_goal'
-    # An already-close person does not trigger a success resend loop either.
+    # A close hidden person still needs a fresh, rate-limited standoff goal.
     args['target'] = (1.1, 0)
-    assert supervisor.step(120, nav_status='succeeded', **args).action == 'none'
+    assert supervisor.step(120, nav_status='succeeded', **args).action == 'update_goal'
+    assert supervisor.step(120.1, nav_status='succeeded', **args).action == 'none'
 
 
 def test_synthetic_costmap_turn_escapes_a_fixed_shelf_in_closed_loop():

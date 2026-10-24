@@ -62,12 +62,12 @@ def navigating():
 
 def test_continuous_blocking_delay_and_ownership():
     s = HandoffSupervisor(HandoffParams(los_block_time=0, los_clear_time=0))
-    assert tick(s, 0).mode == 'DIRECT'
-    assert tick(s, 0.9).action == 'none'
+    assert tick(s, 0, los_clear=True).mode == 'DIRECT'
+    assert tick(s, 0.9, los_clear=True).action == 'none'
     tick(s, 0.95, state='FOLLOWING', los_clear=True, front_clearance=2)
-    assert tick(s, 1).mode == 'DIRECT'
-    assert tick(s, 1.99).mode == 'DIRECT'
-    d = tick(s, 2)
+    assert tick(s, 1, los_clear=True).mode == 'DIRECT'
+    assert tick(s, 1.99, los_clear=True).mode == 'DIRECT'
+    d = tick(s, 2, los_clear=True)
     assert d.mode == 'NAV2' and d.action == 'send_goal' and not d.direct_publish
     assert tick(s, 2.1, nav_status='active').action == 'none'
 
@@ -79,10 +79,10 @@ def test_blocked_los_alone_triggers_navigation():
     assert tick(s, 1.3, state='FOLLOWING', front_clearance=2).mode == 'NAV2'
 
 
-@pytest.mark.parametrize('kwargs', [dict(target=(1.3, 0)), dict(state='LOST'),
+@pytest.mark.parametrize('kwargs', [dict(state='LOST'), dict(state='STALE'),
     dict(state='TOO_CLOSE'), dict(state='IDLE'), dict(enabled=False),
     dict(scan_valid=False), dict(target=None), dict(target=(math.nan, 0)),
-    dict(map_target=None), dict(front_clearance=math.nan)])
+    dict(front_clearance=math.nan)])
 def test_no_unsafe_handoff(kwargs):
     s = HandoffSupervisor()
     tick(s, 0, **kwargs)
@@ -91,7 +91,7 @@ def test_no_unsafe_handoff(kwargs):
 
 @pytest.mark.parametrize('kwargs', [dict(state='LOST'), dict(state='TOO_CLOSE'),
     dict(enabled=False), dict(scan_valid=False), dict(target=None),
-    dict(front_clearance=math.nan), dict(map_target=None)])
+    dict(front_clearance=math.nan)])
 def test_immediate_cancel(kwargs):
     d = tick(navigating(), 1.01, **kwargs)
     assert d.mode == 'DIRECT' and d.action == 'cancel_goal' and d.direct_publish
@@ -128,13 +128,13 @@ def test_goal_updates_use_map_displacement_and_rate_limit():
     assert tick(s, 3.1, map_target=(6, 5)).action == 'update_goal'
 
 
-@pytest.mark.parametrize('status', ['failed', 'canceled'])
-def test_failure_cooldown(status):
+@pytest.mark.parametrize('status', ['succeeded', 'aborted', 'failed', 'canceled', 'unavailable'])
+def test_terminal_retry_retains_ownership_and_is_rate_limited(status):
     s = navigating()
-    assert tick(s, 2, nav_status=status).action == 'cancel_goal'
-    assert tick(s, 4.99).mode == 'DIRECT'
-    assert tick(s, 5).mode == 'DIRECT'
-    assert tick(s, 6).action == 'send_goal'
+    assert tick(s, 2, nav_status=status).action == 'update_goal'
+    assert tick(s, 2.49, nav_status=status).action == 'none'
+    d = tick(s, 2.5, nav_status=status)
+    assert d.mode == 'NAV2' and d.action == 'update_goal'
 
 
 @pytest.mark.parametrize('key', vars(HandoffParams()))
@@ -328,3 +328,52 @@ def test_configured_safety_envelope_and_speed_budget():
     assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
     assert smoother['max_velocity'][0] == follow['max_linear']
     assert smoother['max_accel'][0] == follow['max_linear_accel']
+
+
+@pytest.mark.parametrize('terminal', ['succeeded', 'aborted'])
+def test_replay_twenty_second_hidden_person_episode(terminal):
+    s = HandoffSupervisor()
+    status = 'none'
+    goals, cancels, blocked_wait = [], 0, 0.0
+    next_terminal = math.inf
+    for index in range(401):
+        now = index*0.05
+        if now >= next_terminal:
+            status = terminal
+            next_terminal = math.inf
+        # Include a close hidden person: terminal success must still refresh.
+        distance = 1.2 if 8 <= now < 12 else 3+0.35*now
+        d = tick(s, now, state='FOLLOWING', front_clearance=3,
+                 target=(distance, 0), map_target=(distance-1, 5), nav_status=status)
+        if s.los.blocked:
+            assert d.mode == 'NAV2' and not d.direct_publish
+            blocked_wait += 0.05 if d.mode == 'DIRECT' else 0
+        cancels += d.action == 'cancel_goal'
+        if d.action in ('send_goal', 'update_goal'):
+            goals.append(now)
+            status = 'active'
+            if next_terminal == math.inf:
+                next_terminal = now+2.0
+    assert len(goals) > 5
+    assert all(b-a >= s.p.goal_update_period-1e-9 for a, b in zip(goals, goals[1:]))
+    assert cancels <= 1 and blocked_wait <= 1.0
+    # Visibility at a distance cannot return ownership; close sustained LOS can.
+    for now in (20.1, 20.8, 21.4):
+        assert tick(s, now, los_clear=True, los_clear_wide=True,
+                    front_clearance=3).mode == 'NAV2'
+    for now in (21.5, 22.01, 22.1):
+        d = tick(s, now, target=(1.2, 0), state='FOLLOWING',
+                 los_clear=True, los_clear_wide=True, front_clearance=3)
+        cancels += d.action == 'cancel_goal'
+    assert d.mode == 'DIRECT' and cancels == 1
+
+
+def test_hidden_target_reserves_navigation_even_without_map_transform():
+    s = HandoffSupervisor()
+    tick(s, 0, map_target=None)
+    d = tick(s, 0.3, map_target=None)
+    assert d.mode == 'NAV2' and d.action == 'none' and not d.direct_publish
+    assert 'transform unavailable' in d.reason
+    assert tick(s, 0.4).action == 'update_goal'
+    d = tick(s, 0.5, map_target=None)
+    assert d.mode == 'NAV2' and d.action == 'none'
