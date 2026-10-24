@@ -3,6 +3,7 @@
 from pathlib import Path
 import py_compile
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 import yaml
@@ -41,11 +42,21 @@ def main():
             publishers = [p for p in robot.findall('.//plugin')
                           if p.get('name').endswith('::OdometryPublisher')]
             assert len(publishers) == (2 if mode == 'ground_truth' else 1)
+    sys.path.insert(0, str(SRC/'shopping_robot_gazebo'))
+    from shopping_robot_sim.scenarios import load_scenario, generate_world
+    config = SRC/'shopping_robot_gazebo/config'
+    scenarios = sorted((config/'scenarios').glob('*.yaml'))
+    for path in scenarios:
+        scenario = load_scenario(config, path.stem)
+        generated = ET.fromstring(generate_world(SRC/'shopping_robot_gazebo/worlds/supermarket.sdf', scenario))
+        for plugin in generated.findall('.//plugin'):
+            assert plugin.get('filename').startswith('ignition-gazebo-')
+            assert plugin.get('name').startswith('ignition::gazebo::systems::')
     shell_files = sorted([*ROOT.glob('scripts/*.sh'), *ROOT.glob('docker/*-entrypoint')])
     for path in shell_files:
         subprocess.run(['bash', '-n', str(path)], check=True)
     print(f'PASS: {len(yaml_files)} YAML/RViz, {len(xml_files)} XML/SDF/xacro, '
-          f'{len(python_files)} Python, {len(shell_files)} Bash files; '
+          f'{len(python_files)} Python, {len(shell_files)} Bash, {len(scenarios)} scenarios; '
           '2/3-anchor xacro expansion in ekf/ground_truth modes and anchor configuration consistency')
 
 

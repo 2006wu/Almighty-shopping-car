@@ -39,6 +39,7 @@ def load(relative):
     env = {name: action(name) for name in (
         'DeclareLaunchArgument', 'IncludeLaunchDescription', 'Node', 'GroupAction',
         'SetRemap', 'OpaqueFunction', 'ParameterValue', 'IfCondition')}
+    env['prepare_scenario'] = lambda context: []
     env.update(LaunchDescription=lambda values: values, LaunchConfiguration=Configuration,
                PythonExpression=Expression, PythonLaunchDescriptionSource=lambda path: path,
                get_package_share_directory=lambda package: '/share/'+package)

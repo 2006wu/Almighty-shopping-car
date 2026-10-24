@@ -46,7 +46,7 @@ def main():
         del odometry[:-100]
 
     node.create_subscription(Odometry, '/odom', odom, 10)
-    # Simulation truth (sim_world shares the map origin at spawn); /odom drifts under the EKF,
+    # Simulation truth (sim_world shares the standard map world origin); /odom drifts under the EKF,
     # so the final-position check prefers truth and only falls back to /odom without it.
     truth = []
 

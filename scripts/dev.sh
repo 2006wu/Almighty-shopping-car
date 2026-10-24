@@ -19,6 +19,7 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   colcon-build             Build ROS packages
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
+  scenario-list            List validated simulation scenarios (no Docker)
   sim [LAUNCH_ARGS...]     Headless simulation
   mapping | slam [LAUNCH_ARGS...]    Simulation and online mapping
   guide | nav [LAUNCH_ARGS...]     Simulation, localization/mapping, Nav2, zones
@@ -37,6 +38,14 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   novnc                    Print browser URL
 Environment: DOCKER="sudo docker", VNC_PASSWORD, ROS_DOMAIN_ID
 EOF
+    ;;
+  scenario-list)
+    [[ $# == 0 ]] || { echo 'No arguments expected' >&2; exit 2; }
+    scenario_python="${PYTHON:-python3}"
+    if [[ -z "${PYTHON:-}" && -x /workspace/scratch/venv-shop/bin/python ]]; then
+      scenario_python=/workspace/scratch/venv-shop/bin/python
+    fi
+    PYTHONPATH="$repo_dir/ros2_ws/src/shopping_robot_gazebo${PYTHONPATH:+:$PYTHONPATH}" "$scenario_python" "$repo_dir/scripts/scenario_list.py"
     ;;
   build) "${compose[@]}" build "$@" ;;
   up) "${compose[@]}" up -d compute display ;;

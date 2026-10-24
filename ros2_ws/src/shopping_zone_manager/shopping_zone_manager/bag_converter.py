@@ -6,6 +6,7 @@ from .eval_metrics import finite
 
 TRUTH = '/sim/ground_truth_odom'
 PERSON = '/uwb/person_ground_truth'
+PEDESTRIANS = '/sim/pedestrians'
 FOLLOW = '/follow/state'
 ZONE = '/shopping/zone_status'
 
@@ -17,7 +18,7 @@ def yaw(q):
     return math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))
 
 
-def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15):
+def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15, pedestrian_radius=0.25):
     """Sort header-time records, validate duplicate truth times, interpolate bounded truth.
 
     zones are dictionaries from zones.yaml. The explicit (x,y,yaw) transform maps
@@ -26,6 +27,9 @@ def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15):
     max_skew = finite(max_skew)
     if max_skew <= 0:
         raise ValueError('max_skew must be positive')
+    pedestrian_radius = finite(pedestrian_radius)
+    if pedestrian_radius <= 0:
+        raise ValueError('pedestrian_radius must be positive')
     streams = {}
     for topic, t, message in records:
         streams.setdefault(topic, []).append((finite(t), message))
@@ -37,15 +41,15 @@ def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15):
             continue  # Lifecycle transitions may share one recorder clock tick.
         unique = dict(samples)
         count = len(samples)-len(unique)
-        if count and topic in (TRUTH, PERSON):
+        if count and topic in (TRUTH, PERSON, PEDESTRIANS):
             raise ValueError(f'Duplicate truth timestamp on {topic}; split resets into separate bags')
         if count:
             duplicates[topic] = count
         streams[topic] = sorted(unique.items())
     rows = []
     info = dict(input_counts=input_counts, coalesced_topic_samples=duplicates,
-                missing_person_samples=0, cutoff_episodes=[], ignored_zone_statuses=0,
-                map_world_transform=map_world_transform, max_skew=max_skew)
+                missing_person_samples=0, missing_pedestrian_samples=0, cutoff_episodes=[], ignored_zone_statuses=0,
+                map_world_transform=map_world_transform, max_skew=max_skew, pedestrian_radius=pedestrian_radius)
 
     def emit(kind, t, **fields):
         rows.append(dict(type=kind, t=t, **fields))
@@ -86,6 +90,18 @@ def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15):
             return tuple(values)
         return at
 
+    pedestrian_streams = []
+    for t, msg in streams.get(PEDESTRIANS, []):
+        if msg['header']['frame_id'] != 'sim_world':
+            raise ValueError('Pedestrian truth must be in sim_world')
+        poses = msg['poses']
+        if not pedestrian_streams:
+            pedestrian_streams = [[] for _ in poses]
+        if not poses or len(poses) != len(pedestrian_streams):
+            raise ValueError('Expected a fixed nonempty pedestrian order per bag')
+        for samples, pose in zip(pedestrian_streams, poses):
+            samples.append((t, (finite(pose['position']['x']), finite(pose['position']['y']))))
+    pedestrians_at = [interpolator(samples) for samples in pedestrian_streams]
     robot_at, person_at = interpolator(truth), interpolator(people)
     info['max_truth_gap'] = max((b[0]-a[0] for a, b in zip(truth, truth[1:])), default=None)
     previous_distance_time = None
@@ -93,6 +109,12 @@ def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15):
     distance_gap = False
     for t, (x, y, heading) in truth:
         fields = dict(x=x, y=y, yaw=heading)
+        if pedestrians_at:
+            positions = [at(t) for at in pedestrians_at]
+            if all(position is not None for position in positions):
+                fields['pedestrians'] = [dict(x=p[0], y=p[1], radius=pedestrian_radius) for p in positions]
+            else:
+                info['missing_pedestrian_samples'] += 1
         person = person_at(t)
         if person is not None:
             fields.update(person_x=person[0], person_y=person[1])

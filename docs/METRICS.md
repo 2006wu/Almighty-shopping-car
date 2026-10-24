@@ -38,7 +38,7 @@
 - `minimum`：以上兩者可用資料的最小值。所有接觸與重疊均為 0，不以負值表達穿透深度。
 - `pose_count`、`static_sample_count`、`person_sample_count` 揭露覆蓋程度；缺人物資料時只計靜態障礙，不能宣稱已驗證人物安全間距。
 
-以上均為公尺及離散樣本最小值；未檢查相鄰位姿間的掃掠碰撞，也未計入雷射誤差、定位誤差、車體高度或其他動態障礙。後續情境測試須提高取樣率並另做連續碰撞檢查。
+以上均為公尺及離散樣本最小值；未檢查相鄰位姿間的掃掠碰撞，也未計入雷射誤差、定位誤差、車體高度或未提供真值的動態障礙。後續情境測試須提高取樣率並另做連續碰撞檢查。
 
 ## 跟隨距離與狀態
 
@@ -149,7 +149,7 @@ PYTHONPATH=ros2_ws/src/shopping_zone_manager \
 | 故障注入器、急停、看門狗及狀態轉換 | `trigger` 的 event | 需獨立標記實際觸發時刻；若從狀態字串產生，延遲只代表狀態公布之後的反應，不包含狀態偵測之前的延遲 |
 | `/clock`、訊息 header、`/tf` | t 及離線框架對齊 | 無 header 的狀態／命令使用模擬接收時間並記錄其限制；重啟與倒退時間必須分檔 |
 
-UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` 與 `/uwb/estimate_error`；本指標的跟隨距離誤差評估控制結果，兩者應分開呈現。後續情境變化須由 Gazebo 套件的 `config/person_path.yaml` 產生，不另建執行期人物路徑來源。
+UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` 與 `/uwb/estimate_error`；本指標的跟隨距離誤差評估控制結果，兩者應分開呈現。後續情境變化須由 Gazebo 套件的情境載入器解析，本次執行人物模型與 UWB 共用一份路徑檔（default 仍為 `config/person_path.yaml`）。
 
 ## rosbag 記錄、轉換與可重現流程
 
@@ -208,3 +208,15 @@ UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` �
 6. 以相同程序產生 guide2／follow2，先比對 `.meta.json` 的涵蓋程度、缺樣、截止回合及報告 parameters，再按相同區域順序比較 success_rate、逐回合 duration／path_length／final_position_error，以及跟隨 RMSE、帶內時間比例與停止 pending／每事件延遲。可用 `diff -u bags/guide1/report.json bags/guide2/report.json` 檢視完整差異（source 路徑必然不同）。不同資料覆蓋率不可只比平均數。
 
 Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非決定性；固定種子不保證逐位元相同。應重複多次並保留失敗，這份程序不是自動通過判準，也不代表容器或硬體已驗收。
+
+## 模擬情境與動態行人
+
+七種情境與逐步操作見 [模擬情境驗收程序](SCENARIOS.md)。每個情境獨立錄製，保存名稱、YAML、人物路徑、程式版本、啟動參數、目標及送出時的 `/clock`。行人延遲與主要人物軌跡採世界模擬秒；DDS 啟動或人工送目標時機仍可能影響相遇，沒有相遇的紀錄不能算穿越／讓行驗收通過。
+
+固定錄製清單新增 `/sim/pedestrians`（`geometry_msgs/PoseArray`）。轉換器要求 `sim_world` 與固定非空人數／順序，拒絕重複真值時間；各行人以最多每側 0.15 秒的有界內插配對車體真值，不外推。JSONL `pose` 新增 `pedestrians: [{x,y,radius}, ...]`，同時計算主要人物及所有行人的邊界間距，`person_min` 取其中最小值；`person_sample_count` 計算具有至少一個人物的車體樣本數。主要人物跟隨距離與停止事件維持原定義，動態行人不成為跟隨目標。PoseArray 不帶半徑，提供的七種情境皆為 0.25 公尺；自訂尺寸要以 `bag_to_eval --pedestrian-radius R` 指定保守的最大半徑，不可直接沿用固定包裝指令。
+
+轉換器 `.meta.json` 的 `missing_pedestrian_samples` 記錄有行人 topic 但無法完整同步的車體樣本。需確認 `input_counts` 有該 topic、人數符合情境，且驗收區間沒有缺樣；完全缺 topic 時數字仍可能是 0，不能當作有覆蓋。首尾缺樣應明確裁切與註記，內部缺樣不得宣告安全通過。仍採離散幾何間距，未增加接觸感測器或連續掃掠碰撞偵測；PASS 至少要求靜態及人物最小間距皆 > 0，建議沿用 > 0.10 公尺的較嚴門檻。
+
+`eval-bag` 的固定 `--map-world-transform 0 0 0` 與 `loc-check` 直接比較真值，都假設標準地圖的 map 與 Gazebo `sim_world` 原點、朝向一致。出生姿態不是 map→world 轉換：`alt_start` 仍使用同一標準地圖，EKF 初始化在世界中的 `(-2.4,0,π/2)`，AMCL 及定位工具也使用此 map 姿態。新建圖或自訂地圖須先核對座標；不一致時手動呼叫 `bag_to_eval --map-world-transform X Y YAW`，`loc-check` 目前沒有自訂轉換功能，不可直接用於該地圖。
+
+導航案例每目標須在 90 秒內 SUCCEEDED，且有真值核對最終位置；遭行人擋住時需觀察減速、等待或安全繞行與行人離開後恢復。`follow_stop_go` 起始人物中心距離 0.58 公尺，低於既有 0.60 公尺過近門檻且高於矩形前緣加人物半徑的 0.55 公尺接觸距離；應記錄 TOO_CLOSE 與零 Twist，再觀察人物離開後恢復。初始已停不能代替行進中的煞停驗收，須另執行既有 `fault-check`；障礙、過近及急停驗收均須檢查 linear 與 angular。未調整控制器，既有行為若未達門檻應記為失敗。

@@ -53,12 +53,13 @@ def main(argv=None):
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--zones', type=Path)
     parser.add_argument('--map-world-transform', nargs=3, type=float, metavar=('X', 'Y', 'YAW'))
+    parser.add_argument('--pedestrian-radius', type=float, default=0.25)
     parser.add_argument('--max-skew', type=float, default=0.15)
     args = parser.parse_args(argv)
     try:
         zones = yaml.safe_load(args.zones.read_text())['zones'] if args.zones else []
         rows, info = convert_records(read_records(args.bag), zones,
-                                     args.map_world_transform, args.max_skew)
+                                     args.map_world_transform, args.max_skew, args.pedestrian_radius)
         info.update(bag=str(args.bag), zones=str(args.zones) if args.zones else None,
                     timestamp_policy='header stamp when present; otherwise bag receive time')
         payload = ''.join(json.dumps(row, allow_nan=False)+'\n' for row in rows)

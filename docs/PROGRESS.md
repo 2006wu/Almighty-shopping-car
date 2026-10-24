@@ -624,3 +624,46 @@
 | guide 短錄製（70 秒，`goto snacks`→`goto entrance`） | 錄到 /clock、/odom、真值、/cmd_vel、模式與區域狀態；`eval-bag` 產生 report.json／md：2/2 成功，耗時 7.2／16.3 s，最終誤差 0.143／0.127 m，最小靜態間距 0.41 m |
 | follow 短錄製（60 秒） | 跟隨 1916 筆樣本、38.3 s；平均絕對誤差 1.46 m（目標 1.0±0.2 m 帶內 5.7%）；擷取到 obstacle_stop／too_close 停止事件，命令延遲 0.005–0.056 s |
 | 未驗證 | 隔離 bag 回放（`ros2 bag play`）、失敗／取消回合的實際錄製、Mac arm64 |
+
+## 2026-10-24：模擬情境與動態行人
+
+### 修改
+
+- 新增純 Python 情境載入器與七種 YAML：default、aisle_crossing、narrow_pass、checkout_queue、follow_turns、follow_stop_go、alt_start，驗證出生姿態、路徑、逐點停留與行人欄位。default 保留原 `config/person_path.yaml`，未複製或更動其內容。
+- sim／mapping／guide／follow 新增 `scenario:=default`；每次 launch 只解析一份人物路徑，Gazebo 主要人物與 UWB 共用相同檔案，暫存世界與解析設定於關閉後清除。出生位置／朝向同步至 EKF 初始狀態、AMCL `/initialpose`、slam_toolbox 定位起點及 loc-check 的 scenario 參數。
+- 新增 Fortress 原生 VelocityControl 圓柱行人、ROS `pedestrian_mover`、延遲／循環／速度上限純軌跡邏輯及真值過期停止。選用 Humble 已有的 Twist topic 橋接，避免依賴 set_pose 服務橋接修訂版差異；人物有 collision 與 visual，未使用 Classic 外掛或硬體。
+- `/sim/pedestrians` 以 `sim_world` PoseArray 發布 Gazebo 回報姿態，納入錄製清單、有界內插及最小人物間距；缺樣數與半徑設定列於轉換中繼資料。既有跟隨目標與停止事件定義保留。
+- 新增本機 `dev.sh scenario-list`、逐情境驗收程序與 README／ARCHITECTURE／METRICS 說明。擴充 schema 錯誤、原始路徑一致性、所有航點連線與出生點淨空／地圖邊界、軌跡停走／循環／延遲、launch 單次解析／參數、行人 watchdog、程式入口、SDF／Fortress 外掛及 bag 動態間距測試。check_static 納入情境 schema 與生成 SDF XML 檢查。
+- 未修改 ROADMAP 勾選、Nav2 launch／參數或跟隨調校；未提交、推送、執行 Docker、安裝套件或建立虛擬環境。
+
+### 本次執行驗證
+
+| 指令／方法 | 執行觀察 |
+| --- | --- |
+| `/workspace/scratch/venv-shop/bin/python -m pytest -q` | 684 項通過；既有 xacro 棄用警告 1 項 |
+| `/workspace/scratch/venv-shop/bin/python scripts/check_static.py` | PASS：21 YAML／RViz、10 XML／SDF／xacro、89 Python、4 Bash、7 情境，兩／三錨點及兩種里程計模式展開 |
+| `./scripts/dev.sh scenario-list` | 列出七種情境與出生姿態、行人數，不啟動 Docker |
+| `git diff --check` | 通過 |
+
+### 限制與下一步
+
+- 本環境未安裝 ROS，僅執行純邏輯、假 launch API 與靜態檢查。維護者依 `docs/SCENARIOS.md` 執行 colcon 與七種 headless 情境，核對外掛載入、橋接、AMCL 啟動時序、雷射／成本地圖可見性、實際相遇、讓行與恢復；本表不冒充容器、跨架構或硬體驗收。
+- 行人依世界模擬秒開始移動，目標送出與啟動耗時會影響相遇；需記錄時刻及重複試驗。圓柱無避讓決策，物理接觸後可能偏離名義軌跡；強制終止 mover 時外掛無內建命令逾時，須結束整個模擬。主要人物仍用既有原生 set_pose 程序，解析人物真值與模型實際到位可能不同步。
+- PoseArray 順序依 YAML，不包含半徑；內附情境皆為 0.25 公尺。自訂尺寸需用 bag_to_eval 的 `--pedestrian-radius` 指定保守最大值。缺 topic／缺樣不得判定動態安全通過；仍未實作連續碰撞監測、自動 scenario_check 執行器或純 Nav2 讓行事件偵測。
+- eval-bag 與 loc-check 假設標準 map→world 為單位轉換，替代出生不是改變世界原點。自訂地圖需先核對座標，非單位轉換須手動轉換評估，loc-check 不支援自訂轉換。初始就停的 stop-go 不能代替行進煞停驗收，須另做既有 fault-check。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 測試與情境 schema／原始人物路徑一致性 | 待驗證 |
+| 全情境路徑／行人／出生點淨空與地圖邊界 | 待驗證 |
+| YAML／SDF／xacro／launch／Bash 靜態檢查 | 待驗證 |
+| Humble colcon build／test 與執行期依賴 | 待驗證 |
+| 七種情境 headless 啟動及 default 舊路徑重現 | 待驗證 |
+| alt_start 的 EKF／AMCL／slam_toolbox／loc-check 初始姿態 | 待驗證 |
+| Fortress 行人碰撞幾何、雷射與 Nav2 成本地圖可見性 | 待驗證 |
+| 窄走道／結帳／穿越的實際相遇、讓行與恢復 | 待驗證 |
+| 急轉／迴轉／停走／過近完整零 Twist 與故障回歸 | 待驗證 |
+| PoseArray 真值、錄製完整性、間距與 report 中繼資料 | 待驗證 |
+| amd64／arm64 原生容器驗收 | 待驗證 |

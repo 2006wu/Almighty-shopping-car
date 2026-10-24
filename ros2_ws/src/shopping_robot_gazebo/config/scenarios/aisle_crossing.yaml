@@ -1,0 +1,15 @@
+robot_pose:
+  x: 0
+  y: 0
+  yaw: 1.5707963267948966
+person_path: person_path.yaml
+pedestrians:
+- name: ped_crossing
+  waypoints:
+  - - -0.45
+    - 3
+  - - 0.45
+    - 3
+  speed: 0.3
+  radius: 0.25
+  start_delay: 8
