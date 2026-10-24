@@ -389,3 +389,52 @@ python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
 新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/MICROROS_GUIDE.md)。
 
 `dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+## Nav2 fork、TEB 與 apt 對照
+
+`third_party/eurobot_nav2` 是私人儲存庫 `2006wu/Eurobot-2027-Navigation2` 的 git submodule（Humble／Nav2 1.1.16，目前固定於 fork 的 `shopping-car` 分支 `bf60ee0`）。有權限的使用者在**主機**用自己的 Git 憑證初始化；沒有權限的人直接略過，選 `nav2_stack:=auto` 時若找不到 `custom_controller` 與 `custom_nav_to_pose` 會自動使用 apt Nav2。
+
+```bash
+git submodule update --init third_party/eurobot_nav2
+./scripts/dev.sh build compute
+./scripts/dev.sh nav2-build
+./scripts/dev.sh nav2-status
+./scripts/dev.sh colcon-build
+./scripts/dev.sh colcon-test
+./scripts/dev.sh test
+./scripts/dev.sh up
+```
+
+私人原始碼以唯讀掛載進 compute 的 `/nav2_ws/src`，產物留在具名 volume；Dockerfile 不 clone、不接收 GitHub token，`.dockerignore` 排除整個 `third_party`。這能讓公開主專案保留整合設定與固定版本指標，而不複製私人實作。顯示容器維持 apt RViz plugins。`nav2-build` 預設 `--parallel-workers 2` 與 `MAKEFLAGS=-j3`；記憶體較少時可用 `env NAV2_PARALLEL_WORKERS=1 MAKEFLAGS=-j1 ./scripts/dev.sh nav2-build`，不指定架構。
+
+**目前固定版本：** fork `shopping-car` 分支 `bf60ee0` 已含非全向／gentle TEB 參數合約與 opt-in 的 Shrink `safe_recovery`（遵守 `shrink_to`、0.40 m 下限、local／global 各自的 inflation service、optional rival／object layer 逾時、結束或取消時還原）。建置前檢查仍會拒絕缺少合約的版本。2026-10-24 模擬中 fork 建置、連結、lifecycle、BT 與 Shrink 均正常，但 gentle TEB 在店內走道仍常判定阻擋、未能抵達區域目標，因此 launch 預設維持 `apt`（見 PROGRESS）。
+
+`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `apt`（fork TEB 尚在調參，2026-10-24 起需明確指定 `fork` 或 `auto`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
+
+```bash
+./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# After stopping the previous bringup with Ctrl-C:
+./scripts/dev.sh guide nav2_stack:=apt slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+```
+
+fork 使用 `Slow`（0.30 m/s）／`Fast`（0.40 m/s）TEB、`holonomic: false`、`avoidance_mode: gentle` 與 `use_rival_topic: false`，預設 selector 選 `Slow`／`Loose`，不需額外發布者。`Loose` 維持區域目標 0.15 m／0.25 rad 容差；`NonStopGoalChecker` 沿用 fork 中以 `SimpleGoalChecker` 定義、忽略朝向的 profile 名稱，不是獨立 plugin class。NavFn 的既有 0.8 m 可接受終點容差維持不變，仍須量測原始目標誤差。跟隨交接、區域引導、nav-check 與 map-tour 都使用 `NavigateToPose`，空白 `behavior_tree` 會選新的預設樹。
+
+to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。Shrink 使用 fork 的 `safe_recovery: true`：BT `shrink_to=0.45 m`，下限 0.40 m（大於 0.60 × 0.50 m 車體半對角線約 0.391 m），兩個 costmap 各用自己的 inflation service，結束或取消時還原；缺少的 rival／object layer service 只等待 0.05 s 即略過。詳見 [架構文件](docs/ARCHITECTURE.md)。
+
+### 記錄兩種導航的同一路線
+
+每輪從全新 guide 模擬、相同出生點、同一張已儲存格網與 `slam_mode:=map_server` 開始，人物預設關閉，保持 GUIDE 模式；比較期間不送其他 goto、map-tour、nav-check、跟隨或鍵盤命令。以下步驟分別在兩個終端機執行；每輪檢查結束後先停止 guide，再重新開始，不能在執行途中切換 stack。
+
+```bash
+# Terminal 1: first run
+./scripts/dev.sh guide nav2_stack:=apt slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# Terminal 2: record drinks, snacks, produce, household, checkout, entrance
+./scripts/dev.sh nav-compare --stack apt --output /repo/output/nav-apt.json
+# Stop Terminal 1, restart from spawn with fork, then record again:
+./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+./scripts/dev.sh nav-compare --stack fork --output /repo/output/nav-fork.json
+./scripts/dev.sh nav-compare --reports /repo/output/nav-apt.json /repo/output/nav-fork.json
+```
+
+工具重用 nav-check 的 `ZoneNavigator(enable_interfaces=False)` 與區域清單，先確認執行中的 controller profile 符合 `--stack`，逐一記錄 action 結果、模擬時間、真值軌跡折線長度及終點平面距離誤差，輸出並列表。真值只接受 `/sim/ground_truth_odom` 的 `sim_world`，不退回 EKF odom；缺值、倒退或超過 0.5 模擬秒的取樣缺口會報錯。時間涵蓋送目標前最近一筆至結果後第一筆真值；失敗／逾時也保留結果，逾時會等待取消確認，無法確認則停止後續目標。`SUCCEEDED` 表示 action 成功，未額外保證終點誤差門檻；需一起檢視 error 欄。不同電腦負載、定位漂移與規劃隨機性仍會影響結果，建議重複多輪。JSON 預設例子存入忽略版控的 `output/`。
+
+完整回歸請在各自獨立的模擬場次執行 `dev.sh nav-check --tolerance-check`、`dev.sh loc-check`、mapping 加 map-tour，以及 `dev.sh follow nav2_stack:=fork fault_injection:=true` 加 `dev.sh fault-check`。Nav2 underlay 的 ABI 檢查與限制見架構文件；本機 Python／靜態 PASS 不代表容器或 Gazebo 通過。

@@ -1,0 +1,31 @@
+<root main_tree_to_execute="MainTree">
+  <!-- Through-poses variant of navigate_to_pose_shopping.xml: same Shrink + Wait recovery only. -->
+  <BehaviorTree ID="MainTree">
+    <StopController>
+      <ResetRecovery current_child_idx="{current_child_idx}">
+        <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+          <PipelineSequence name="NavigateWithReplanning">
+            <RateController hz="1.0">
+              <ReactiveSequence>
+                <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.3" robot_base_frame="base_footprint"/>
+                <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+              </ReactiveSequence>
+            </RateController>
+            <Sequence>
+              <ControllerSelector topic_name="/controller_type_thru" default_controller="Slow" selected_controller="{controller}"/>
+              <GoalCheckerSelector topic_name="/goal_checker_type_thru" default_goal_checker="Loose" selected_goal_checker="{goal_checker}"/>
+              <FollowPath path="{path}" controller_id="{controller}" goal_checker_id="{goal_checker}"/>
+            </Sequence>
+          </PipelineSequence>
+          <ReactiveFallback name="RecoveryFallback">
+            <GoalUpdated/>
+            <Sequence>
+              <Shrink shrink_to="0.45"/>
+              <Wait wait_duration="0.5"/>
+            </Sequence>
+          </ReactiveFallback>
+        </RecoveryNode>
+      </ResetRecovery>
+    </StopController>
+  </BehaviorTree>
+</root>

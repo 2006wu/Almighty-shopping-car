@@ -18,6 +18,10 @@ services:
     environment: *ros-env
     volumes:
       - ../ros2_ws/src:/ws/src
+      - ../third_party/eurobot_nav2/src:/nav2_ws/src:ro
+      - nav2_build:/nav2_ws/build
+      - nav2_install:/nav2_ws/install
+      - nav2_log:/nav2_ws/log
       - ..:/repo
       - build:/ws/build
       - install:/ws/install
@@ -77,3 +81,6 @@ volumes:
   build:
   install:
   log:
+  nav2_build:
+  nav2_install:
+  nav2_log:

@@ -1,0 +1,4 @@
+[submodule "third_party/eurobot_nav2"]
+	path = third_party/eurobot_nav2
+	url = https://github.com/2006wu/Eurobot-2027-Navigation2.git
+	branch = shopping-car
