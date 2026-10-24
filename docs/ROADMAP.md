@@ -38,10 +38,10 @@
 
 ## 平行項目：MCU 通訊與容器拆分（2026 年 10–12 月，2026-10-23 新增）
 
-- [ ] 定義與 MCU 型號無關的 micro-ROS 介面：`/cmd_vel`、輪速／encoder、IMU、急停、heartbeat 的 topic、型別、頻率與 QoS，並寫成介面文件。
-- [ ] 建立模擬韌體節點（命令逾時、斷線與 heartbeat 遺失時輸出零速），透過 Docker 內的 micro-ROS agent 連線。
-- [ ] 保留純 serial 備援選項（參考 `tdk_peace_and_joy`、`tdk_communication`、`tdk_machine_v1` 的 PC 端 bridge）。
-- [ ] 撰寫給新手的中文 micro-ROS 設定教學，從 rosserial 經驗銜接（過去用過 STM32 H7、F446RE；「451d」型號待確認）。
+- [x] 定義與 MCU 型號無關的 micro-ROS 介面：`/cmd_vel`、輪速／encoder、IMU、急停、heartbeat 的 topic、型別、頻率與 QoS，並寫成介面文件。
+- [ ] 建立模擬韌體節點（命令逾時、斷線與 heartbeat 遺失時輸出零速），透過 Docker 內的 micro-ROS agent 連線。（2026-10-24：模擬韌體與 comm-check 10/10 完成；agent 可啟動，但尚無經 agent 的 XRCE client）
+- [x] 保留純 serial 備援選項（參考 `tdk_peace_and_joy`、`tdk_communication`、`tdk_machine_v1` 的 PC 端 bridge）。
+- [x] 撰寫給新手的中文 micro-ROS 設定教學，從 rosserial 經驗銜接（過去用過 STM32 H7、F446RE；「451d」型號待確認）。
 - [ ] 依功能拆分多容器（暫定：main program、localization、navigation、display，另加 simulation、communication、可選 logging／evaluation；以 compose profiles 降低 Mac arm64 負載），並保留現有雙容器啟動方式；最終方案待使用者確認。
 
 ## 階段 3：UWB 模擬跟隨（2026 年 11–12 月）

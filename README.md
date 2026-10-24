@@ -384,3 +384,8 @@ python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
 工具讀取 P2／P5（含 16 位元）PGM、YAML 的解析度／原點／旋轉／占用門檻，直接使用淨空測試所依據的 world SDF 碰撞盒。每個面在預測邊緣附近 `--search 0.3` 公尺內，以切向格子各取最近占用格中心、排除角落並擬合直線；搜尋距離另限制小於物件半厚度，避免把內牆面誤當外牆面。輸出四面偏移中位數、覆蓋率、物件中心平移、旋轉與尺寸倍率，JSON 另有每面旋轉及擬合 RMS。平移／尺寸要求兩面覆蓋至少 50%，缺面標為 `missing`，不補零。這是有對應搜尋範圍限制的估計，單面、厚邊／重影、遮蔽與未知格都限制推論；格中心約有半格量化誤差，不等同量到實際物體表面。
 
 另依 `zones.yaml` 與貨架幾何，輸出區域附近一公尺長走道邊緣的橫向平移／旋轉／寬度倍率。snacks 本次為 +0.005 m／0°／1.000，兩側覆蓋皆 100%；平行貨架無法單獨約束沿走道的定位誤差。詳細全店量測與 AMCL 調整理由見 [進度紀錄](docs/PROGRESS.md)。AMCL 此次為待模擬確認的試調，須先用同一提交格網重新啟動 `guide slam_mode:=map_server` 並跑 `loc-check`；尚無證據需要重建地圖。若仍失敗，保留 JSON 並比較誤差方向、AMCL 更新與 EKF 殘差，再考慮重新 map-tour，勿手改格網或移動區域目標來通過門檻。
+## MCU 通訊（預設模擬，選用啟動）
+
+新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/MICROROS_GUIDE.md)。
+
+`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。

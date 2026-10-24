@@ -1,4 +1,5 @@
 from launch import LaunchDescription
+from launch.conditions import IfCondition
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -26,9 +27,14 @@ def generate_launch_description():
                   remappings=([('/cmd_vel', follow_topic)] if name == 'follow_controller_node' else [('/uwb/ranges', raw('/uwb/ranges'))] if name == 'uwb_sim_node' else [('/uwb/target', raw('/uwb/target'))] if name == 'uwb_estimator_node' else []), output='screen')
              for name in ['uwb_sim_node', 'uwb_estimator_node', 'uwb_eval_node', 'follow_controller_node']]
     return LaunchDescription([
+        DeclareLaunchArgument('mcu_comm', default_value='false', choices=['true', 'false']),
         DeclareLaunchArgument('fault_injection', default_value='false'),
         DeclareLaunchArgument('fault_schedule', default_value='[]'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            get_package_share_directory('shopping_mcu_bridge')+'/launch/comm.launch.py'),
+            condition=IfCondition(LaunchConfiguration('mcu_comm')),
+            launch_arguments={'use_sim_time': time}.items()),
         DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
         DeclareLaunchArgument('initial_mode', default_value='follow'),
         DeclareLaunchArgument('odom_source', default_value='ekf', choices=['ekf', 'ground_truth']),
