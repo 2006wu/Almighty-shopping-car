@@ -9,7 +9,8 @@ from shopping_mcu_bridge.contract import load_contract
 from shopping_mcu_bridge.logic import Firmware, LinkMonitor
 
 PKG = Path(__file__).resolve().parents[1]
-ROOT = PKG.parents[2]
+# In colcon (/ws/src) the repo root is not a parent; the container mounts it at /repo.
+ROOT = PKG.parents[2] if (PKG.parents[2]/'docs').is_dir() else Path('/repo')
 SPEC = load_contract(PKG/'config/interface.yaml')
 
 

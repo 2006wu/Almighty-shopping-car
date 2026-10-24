@@ -59,15 +59,25 @@ class Check(Node):
         self.wait(1.2, motion=True)
 
     def checks(self):
-        self.wait(2.0)
-        owners = self.get_publishers_info_by_topic('/cmd_vel')
-        readers = self.get_subscriptions_info_by_topic('/cmd_vel')
-        marker = self.values.get('sim_active')
-        isolated = (marker is not None and marker.data and len(owners) == 1
-                    and owners[0].node_name == 'cmd_vel_watchdog'
-                    and len(readers) == 1
-                    and readers[0].node_name in ('sim_mcu_firmware', 'serial_bridge'))
+        # DDS discovery of a fresh checker can take a few seconds; poll before deciding.
+        deadline = time.monotonic()+10.0
+        while True:
+            self.wait(1.0)
+            owners = self.get_publishers_info_by_topic('/cmd_vel')
+            readers = self.get_subscriptions_info_by_topic('/cmd_vel')
+            marker = self.values.get('sim_active')
+            isolated = (marker is not None and marker.data and len(owners) == 1
+                        and owners[0].node_name == 'cmd_vel_watchdog'
+                        and len(readers) == 1
+                        and readers[0].node_name in ('sim_mcu_firmware', 'serial_bridge'))
+            if isolated or time.monotonic() > deadline:
+                break
         self.isolated = isolated
+        if not isolated:
+            self.get_logger().error(
+                f'Not isolated: sim_active={None if marker is None else marker.data}, '
+                f'/cmd_vel publishers={[o.node_name for o in owners]}, '
+                f'subscribers={[r.node_name for r in readers]}')
         yield 'isolated simulation + watchdog owner', isolated
         if not isolated:
             return  # Never inject motion into Gazebo or a real transport.
