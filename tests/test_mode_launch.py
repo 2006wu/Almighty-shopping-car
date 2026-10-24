@@ -11,11 +11,12 @@ SRC = Path(__file__).resolve().parents[1]/'ros2_ws/src'
 
 
 class Configuration:
-    def __init__(self, name):
+    def __init__(self, name, default=None):
         self.name = name
+        self.default = default
 
     def perform(self, context):
-        return context[self.name]
+        return context.get(self.name, self.default)
 
 
 class Expression:
@@ -41,6 +42,8 @@ def load(relative):
     env = {name: action(name) for name in (
         'DeclareLaunchArgument', 'IncludeLaunchDescription', 'Node', 'GroupAction',
         'SetRemap', 'OpaqueFunction', 'ParameterValue', 'IfCondition', 'LogInfo', 'ExecuteProcess')}
+    env['prepare_scenario'] = lambda context: []
+    env['pedestrian_actions'] = lambda context: []
     env.update(LaunchDescription=lambda values: values, LaunchConfiguration=Configuration,
                PythonExpression=Expression, PythonLaunchDescriptionSource=lambda path: path,
                get_package_share_directory=lambda package: '/share/'+package,
@@ -66,6 +69,36 @@ def test_follow_wiring_for_both_mux_modes(enabled):
     assert resolve(dict(navigation.launch_arguments)['use_mux'], context) == enabled
 
 
+@pytest.mark.parametrize('name', ['guide', 'follow'])
+@pytest.mark.parametrize('stack', ['apt', 'fork', 'auto'])
+def test_scenarios_preserve_nav2_and_optional_mcu_wiring(name, stack):
+    actions = load(f'shopping_robot_bringup/launch/{name}.launch.py')['generate_launch_description']()
+    declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
+    assert declarations['scenario'].default_value == 'default'
+    assert declarations['nav2_stack'].default_value == 'apt'
+    assert declarations['nav2_stack'].choices == ['auto', 'fork', 'apt']
+    assert declarations['mcu_comm'].default_value == 'false'
+    assert declarations['use_mux'].default_value == 'true'
+    includes = {a.args[0].split('/')[-1]: a for a in actions
+                if a.kind == 'IncludeLaunchDescription'}
+    context = {'scenario': 'alt_start', 'nav2_stack': stack, 'use_sim_time': 'true'}
+    for filename, argument in [('sim.launch.py', 'scenario'),
+                               ('navigation.launch.py', 'nav2_stack')]:
+        arguments = dict(includes[filename].launch_arguments)
+        assert resolve(arguments[argument], context) == context[argument]
+        assert resolve(arguments['use_sim_time'], context) == 'true'
+    comm = includes['comm.launch.py']
+    assert comm.condition.kind == 'IfCondition'
+    assert comm.condition.args[0].name == 'mcu_comm'
+    assert resolve(dict(comm.launch_arguments)['use_sim_time'], context) == 'true'
+    if name == 'follow':
+        bridge = next(a for a in actions if a.kind == 'Node' and
+                      getattr(a, 'name', '') == 'person_pose_bridge')
+        assert bridge.parameters[0]['config_file'].endswith('/config/bridge_person.yaml')
+        uwb = next(a for a in actions if a.kind == 'Node' and a.executable == 'uwb_sim_node')
+        assert uwb.parameters[1]['person_path'].name == 'scenario_person_path'
+
+
 @pytest.mark.parametrize('enabled', ['true', 'false'])
 def test_nav2_velocity_outputs_are_remapped(enabled):
     env = load('shopping_robot_navigation/launch/navigation.launch.py')
@@ -78,6 +111,25 @@ def test_nav2_velocity_outputs_are_remapped(enabled):
     include = group.actions[-1]
     assert include.args[0].endswith('/nav2_bringup/launch/navigation_launch.py')
     assert dict(include.launch_arguments)['use_composition'] == 'False'
+
+
+@pytest.mark.parametrize('spawn', [{}, dict(spawn_x='', spawn_y='', spawn_yaw=''),
+                                  dict(spawn_x='-2.4', spawn_y='0', spawn_yaw='1.5707963267948966')])
+def test_slam_localization_uses_scenario_pose_only_when_supplied(spawn):
+    class Context(dict):
+        @property
+        def launch_configurations(self):
+            return self
+
+    env = load('shopping_robot_slam/launch/slam.launch.py')
+    actions = env['start'](Context(mode='localization', map='/ws/map', use_sim_time='true', **spawn))
+    parameters = actions[0].parameters[-1]
+    if spawn.get('spawn_x'):
+        assert parameters['map_start_at_dock'] is False
+        assert parameters['map_start_pose'] == [-2.4, 0.0, 1.5707963267948966]
+    else:
+        assert 'map_start_pose' not in parameters
+        assert 'map_start_at_dock' not in parameters
 
 
 @pytest.mark.parametrize('name, initial', [('guide', 'guide'), ('follow', 'follow'), ('mode_mux', 'idle')])
@@ -136,7 +188,7 @@ def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack
     declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
     expected = {'mcu_comm', 'fault_injection', 'fault_schedule', 'use_sim_time',
                 'obstacle_guard', 'collision_monitor', 'use_mux', 'initial_mode',
-                'odom_source', 'headless', 'nav2_stack', 'slam_mode', 'map',
+                'odom_source', 'headless', 'nav2_stack', 'slam_mode', 'map', 'scenario',
                 'route_around' if name == 'follow' else 'person'}
     assert set(declarations) == expected
     assert declarations['nav2_stack'].default_value == 'apt'

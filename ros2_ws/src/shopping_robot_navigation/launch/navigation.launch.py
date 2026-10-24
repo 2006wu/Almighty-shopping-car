@@ -23,6 +23,11 @@ def start(context):
         # Re-exec so both Python ament lookup and spawned binaries use apt.
         args = [f'{name}:={LaunchConfiguration(name).perform(context)}'
                 for name in ('slam_mode', 'map', 'use_sim_time', 'use_mux')]
+        # The child process cannot inherit launch configurations from bringup.
+        for name in ('spawn_x', 'spawn_y', 'spawn_yaw'):
+            value = LaunchConfiguration(name, default='').perform(context)
+            if value != '':
+                args.append(f'{name}:={value}')
         return [LogInfo(msg='Nav2 stack: apt (isolated from fork underlay)'), ExecuteProcess(
             cmd=['bash', '-c', 'source /opt/ros/humble/setup.bash; '
                  'if [[ -f /ws/install/local_setup.bash ]]; then source /ws/install/local_setup.bash; fi; '
@@ -59,4 +64,7 @@ def generate_launch_description():
                               DeclareLaunchArgument('use_sim_time', default_value='true'),
                               DeclareLaunchArgument('nav2_stack', default_value='apt', choices=['auto', 'fork', 'apt']),
                               DeclareLaunchArgument('map', default_value=''),
+                              DeclareLaunchArgument('spawn_x', default_value=''),
+                              DeclareLaunchArgument('spawn_y', default_value=''),
+                              DeclareLaunchArgument('spawn_yaw', default_value=''),
                               DeclareLaunchArgument('slam_mode', default_value='mapping'), OpaqueFunction(function=start)])

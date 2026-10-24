@@ -83,7 +83,7 @@ RViz 設定只顯示 `base_link` 下的 UWB 估測標記，沒有依賴 `sim_wor
 
 `follow` 現在同時啟動 SLAM 與 Nav2，預設使用線上建圖，亦可透過 `slam_mode`／`map` 選擇定位。RViz 預設仍為 `odom`；需要顯示地圖與交接目標時改為 `map`。模擬原點為機器人初始平面位置 `(0, 0)`，朝向正 x。展示場景為 12 × 10 公尺的小型模擬商店，四排貨架中心 x = −3.6、−1.2、1.2、3.6，皆涵蓋 y = 1 至 5，寬 0.8 公尺。三條貨架間走道中心為 x = −2.4、0、2.4，淨寬皆為 1.6 公尺，大於 1.2 公尺需求；車寬 0.50 公尺與 0.55 公尺膨脹半徑可容納於走道。前後橫向通道位於 y = 0 與 5.9。南側 y = −3 留寬 2 公尺入口，結帳櫃臺位於 `(4.5, −1)`，導航目標在櫃臺西側 `(3, −1)`。
 
-機器人明確以世界姿態 `(0, 0, 0.02)`、roll／pitch／yaw 皆為 0 出生；0.02 公尺為落地餘量。`odom` 初始平面原點與世界一致，`map` 使用此起點建圖；定位時也須載入相同座標的地圖與初始姿態。六個 `map` 區域目標位於三條走道與入口／結帳前的自由空間。純 Python 測試直接解析 SDF 的實際碰撞盒，檢查四排／三走道數量、寬度、出生點的 0.7 公尺淨空、雷射前方 ±30 度至 0.7 公尺的自由空間與每個目標的 0.55 公尺淨空，以及人物每個航點和整段循環路徑的 0.30 公尺淨空，避免另外維護一份失同步的配置。
+預設情境的機器人明確以世界姿態 `(0, 0, 0.02)`、roll／pitch／yaw 皆為 0 出生；0.02 公尺為落地餘量。`odom` 初始平面原點與世界一致，`map` 使用此起點建圖；定位時也須載入相同座標的地圖與初始姿態。六個 `map` 區域目標位於三條走道與入口／結帳前的自由空間。純 Python 測試直接解析 SDF 的實際碰撞盒，檢查四排／三走道數量、寬度、出生點的 0.7 公尺淨空、雷射前方 ±30 度至 0.7 公尺的自由空間與每個目標的 0.55 公尺淨空，以及人物每個航點和整段循環路徑的 0.30 公尺淨空，避免另外維護一份失同步的配置。
 
 ## 套件與介面
 
@@ -329,3 +329,17 @@ XML 的 `shrink_to=0.40 m` 提案高於車體半對角線 `sqrt(0.30²+0.25²) �
 上述差異位於禁止修改的 fork，保留實作並記錄，下一步由 fork 維護者處理半徑、目標來源與 service／索引問題，再以窄走道、受阻目標、取消／更新目標與跟隨交接驗證。不能以本專案的 XML／YAML 靜態測試宣稱 recovery 已安全可用。
 
 比較工具的資料流為同一份 zones 清單 → nav-check 共用的 ZoneNavigator → NavigateToPose → 模擬真值取樣 → 每目標 JSON → ROS-free 並列表。需以相同格網、起點與 AMCL 設定分開重啟 apt／fork，記錄 action 結果、模擬時間、真值路徑長度及原始目標平面誤差；真值不完整時不產生誤導性的成功量測。具體指令見 README。純 Python 測試涵蓋選擇、apt 環境隔離、資料量測與並列表；配置測試覆蓋 BT／TEB 名稱、速度路由、容器掛載與建置範圍，靜態檢查排除由私人儲存庫自行維護的 third_party 檔案。
+
+## 情境與動態行人
+
+`shopping_robot_gazebo/config/scenarios/*.yaml` 經純 Python `scenarios.py` 驗證，選定世界座標的出生姿態、人物路徑與行人。`default` 直接參照既有 `config/person_path.yaml`，內容不變；其他情境可參照同檔或提供相同的 `speed`／`waypoints`，另支援逐航點的 `pauses` 秒數。launch 只解析一次，在暫存目錄產生本次 SDF 與解析後設定；人物模型的 `person_path_node` 和 UWB 的 `uwb_sim_node` 繼承同一個 `scenario_person_path` 檔案名稱，關閉 launch 後清除暫存檔。停留、循環與移動速度共用不匯入 ROS 的軌跡函式，時間皆來自 `/clock`。
+
+動態行人是具 visual、collision、慣性且停用重力的 1.7 公尺圓柱，隨情境寫入世界 SDF。`pedestrian_mover` 由 `/simulation/poses` 取得實際位置，使用有速度上限的追蹤命令，透過 ROS Twist → Ignition Twist 橋接驅動 `ignition-gazebo-velocity-control-system`。碰撞模型供物理引擎使用，visual 供 gpu_lidar 渲染；需在容器核對 `/scan` 與成本地圖確實出現行人。延遲前人物停留在首航點，延遲是開始走動的時間，不是出現時間；速度為 0 則全程靜止。
+
+選用此方式是為避免依賴不同 Humble `ros_gz` 修訂版的 set_pose 服務橋接差異，也避免 actor 視覺動畫缺少碰撞幾何。依據 [Humble bridge 介面](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/README.md) 的 Twist topic 轉換及 [Fortress VelocityControl 實作](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/velocity_control/VelocityControl.cc)；目前 humble 分支已列出 SetEntityPose，不能推定所有既有安裝版本都有它。本實作完全不需要該服務型別。原本主要人物保留既有 `ign service /world/supermarket/set_pose` 原生程序。
+
+`/sim/pedestrians` 是量測自 Gazebo 的 `geometry_msgs/PoseArray`，frame 為 `sim_world`，與 `/sim/ground_truth_odom` 相同；順序固定為 YAML 的 pedestrians 順序，不含主要跟隨人物，也不發布估算路徑位置冒充真值。無行人情境不啟動 mover，也沒有此 topic。資料過期時停止行人命令；Fortress 外掛本身沒有命令逾時，節點遭強制終止的故障仍須結束整個模擬。
+
+出生姿態寫入 Gazebo spawn 與 EKF 的 15 維 `initial_state`。獨立 `scenario_initial_pose` 節點等待 `/initialpose` 訂閱者及模擬時鐘後發布一次 AMCL 起點；需等定位就緒才移動。slam_toolbox 定位使用明確 `map_start_pose` 覆寫，不修改 Nav2 launch／參數。預設出生仍為 `(0,0,0)`；替代起點改變機器人在世界中的位置，並未重定義世界原點。標準地圖、zones 與離線檢查假設 map→world 為單位轉換，不得用待評估的 map→odom 校正真值；自訂地圖需另外驗證座標關係。
+
+情境與 Nav2 stack 選擇共存：guide／follow 保留 `scenario`、`nav2_stack`、預設關閉的 `mcu_comm` 與人物唯讀位姿橋接。導航 launch 宣告選用的 `spawn_x`／`spawn_y`／`spawn_yaw`，隔離 apt 子程序時明確轉送；三者皆有值才覆寫 slam_toolbox 定位起點，未提供時保留原 dock 設定。預設模式沿用 Nav2／follow → mux → watchdog → `/cmd_vel`，本次合併未新增底盤速度發布者。

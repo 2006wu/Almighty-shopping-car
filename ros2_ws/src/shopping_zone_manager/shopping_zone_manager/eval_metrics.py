@@ -164,15 +164,22 @@ def clearance_metrics(records, boxes, length=0.6, width=0.5, person_radius=0.25)
         robot = _rectangle(row['x'], row['y'], row['yaw'], length, width)
         if obstacles:
             static.append(min(_polygon_distance(robot, obstacle) for obstacle in obstacles))
+        people = list(row.get('pedestrians', []))
         if 'person_x' in row or 'person_y' in row:
             try:
-                dx, dy = finite(row['person_x'])-row['x'], finite(row['person_y'])-row['y']
+                people.append(dict(x=row['person_x'], y=row['person_y'], radius=radius))
             except KeyError as exc:
                 raise ValueError('Person coordinates must be a pair') from exc
+        distances = []
+        for pedestrian in people:
+            dx, dy = finite(pedestrian['x'])-row['x'], finite(pedestrian['y'])-row['y']
+            r = positive(pedestrian['radius'])
             c, s = math.cos(row['yaw']), math.sin(row['yaw'])
             px, py = c*dx+s*dy, -s*dx+c*dy
-            person.append(max(0, math.hypot(max(abs(px)-length/2, 0),
-                                          max(abs(py)-width/2, 0))-radius))
+            distances.append(max(0, math.hypot(max(abs(px)-length/2, 0),
+                                              max(abs(py)-width/2, 0))-r))
+        if distances:
+            person.append(min(distances))
     return dict(pose_count=len(rows), static_sample_count=len(static),
                 person_sample_count=len(person), static_min=min(static, default=None),
                 person_min=min(person, default=None), minimum=min(static+person, default=None))

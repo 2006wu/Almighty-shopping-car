@@ -1,0 +1,6 @@
+robot_pose:
+  x: -2.4
+  y: 0
+  yaw: 1.5707963267948966
+person_path: person_path.yaml
+pedestrians: []

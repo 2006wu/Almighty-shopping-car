@@ -1,4 +1,4 @@
-# Map and world share the initial robot origin (0, 0), yaw 0.
+# Standard map and world share fixed origin (0, 0), yaw 0, regardless of spawn.
 zones:
   - {name: drinks, aliases: [飲料區, beverages], x: -2.4, y: 2.0, yaw: 1.5708, frame_id: map}
   - {name: snacks, aliases: [零食區], x: 0.0, y: 2.0, yaw: 1.5708, frame_id: map}

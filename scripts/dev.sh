@@ -22,6 +22,7 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   colcon-build             Build ROS packages
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
+  scenario-list            List validated simulation scenarios (no Docker)
   comm-up | comm-down     Manage the opt-in UDP micro-ROS agent
   comm-sim [LAUNCH_ARGS...]  Standalone simulated MCU, monitor, mux and watchdog
   comm-check              Check an isolated running comm-sim (injects motion/faults)
@@ -39,13 +40,23 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   follow-eval [ARGS...]     Measure latency, turns, near stops and reacquisition
   yaw-check [ARGS...]      Measure yaw/speed against a running plain sim
   fault-check [ARGS...]    Verify faults against a running opt-in follow sim
-  record NAME [--duration S] [TOPICS...]  Record evaluation bag (wall seconds)
+  record NAME [--duration S] [--meta KEY=VALUE] [TOPICS...]  Record evaluation bag (wall seconds)
   eval-bag NAME [ARGS...]  Convert bag and write report.json/report.md
+  eval-verify NAME        Reconvert and compare stored evaluation
+  eval-summary NAME... [--output DIR]  Aggregate evaluation reports
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
 Environment: DOCKER="sudo docker", VNC_PASSWORD, ROS_DOMAIN_ID
 EOF
+    ;;
+  scenario-list)
+    [[ $# == 0 ]] || { echo 'No arguments expected' >&2; exit 2; }
+    scenario_python="${PYTHON:-python3}"
+    if [[ -z "${PYTHON:-}" && -x /workspace/scratch/venv-shop/bin/python ]]; then
+      scenario_python=/workspace/scratch/venv-shop/bin/python
+    fi
+    PYTHONPATH="$repo_dir/ros2_ws/src/shopping_robot_gazebo${PYTHONPATH:+:$PYTHONPATH}" "$scenario_python" "$repo_dir/scripts/scenario_list.py"
     ;;
   build) "${compose[@]}" build "$@" ;;
   up) "${compose[@]}" up -d compute display ;;
@@ -120,6 +131,27 @@ EOF
       --zones /ws/src/shopping_zone_manager/config/zones.yaml --map-world-transform 0 0 0
     run ros2 run shopping_zone_manager eval_report "/repo/bags/$name/observations.jsonl" "$@" \
       --world /ws/src/shopping_robot_gazebo/worlds/supermarket.sdf --output "/repo/bags/$name/report"
+    ;;
+  eval-verify)
+    [[ $# == 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple bag name' >&2; exit 2; }
+    run ros2 run shopping_zone_manager eval_verify "$1"
+    ;;
+  eval-summary)
+    [[ $# -ge 1 ]] || { echo 'Provide bag names' >&2; exit 2; }
+    summary_names=()
+    summary_output=()
+    while [[ $# -gt 0 ]]; do
+      if [[ "$1" == --output ]]; then
+        [[ $# == 2 && -n "$2" ]] || { echo 'Use --output DIR after bag names' >&2; exit 2; }
+        summary_output=(--output "$2")
+        break
+      fi
+      [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple bag name' >&2; exit 2; }
+      summary_names+=("$1")
+      shift
+    done
+    [[ ${#summary_names[@]} -gt 0 ]] || { echo 'Provide bag names' >&2; exit 2; }
+    run ros2 run shopping_zone_manager eval_summary "${summary_names[@]}" "${summary_output[@]}"
     ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
   map-tour)
