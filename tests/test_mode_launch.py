@@ -43,6 +43,7 @@ def load(relative):
         'DeclareLaunchArgument', 'IncludeLaunchDescription', 'Node', 'GroupAction',
         'SetRemap', 'OpaqueFunction', 'ParameterValue', 'IfCondition', 'LogInfo', 'ExecuteProcess')}
     env['prepare_scenario'] = lambda context: []
+    env['pedestrian_actions'] = lambda context: []
     env.update(LaunchDescription=lambda values: values, LaunchConfiguration=Configuration,
                PythonExpression=Expression, PythonLaunchDescriptionSource=lambda path: path,
                get_package_share_directory=lambda package: '/share/'+package,

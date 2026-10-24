@@ -2,6 +2,7 @@
 """Check repository syntax and model/config consistency without ROS or Docker."""
 from pathlib import Path
 import py_compile
+import re
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,68 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT/'ros2_ws/src'
 
 
+def check_interfaces():
+    """Validate the supported message grammar and the rosidl dependency graph."""
+    package = SRC/'shopping_interfaces'
+    manifest = ET.parse(package/'package.xml').getroot()
+    cmake = (package/'CMakeLists.txt').read_text()
+    assert manifest.findtext('name') == 'shopping_interfaces'
+    assert 'project(shopping_interfaces)' in cmake
+    assert 'find_package(ament_cmake REQUIRED)' in cmake
+    assert 'ros-humble-rosidl-default-generators' in (ROOT/'docker/Dockerfile.compute').read_text()
+    bringup = ET.parse(SRC/'shopping_robot_bringup/package.xml').getroot()
+    assert 'shopping_interfaces' in [e.text for e in bringup.findall('exec_depend')]
+    assert manifest.findtext('export/build_type') == 'ament_cmake'
+    assert manifest.findtext('member_of_group') == 'rosidl_interface_packages'
+    assert 'rosidl_default_generators' in [e.text for e in manifest.findall('buildtool_depend')]
+    assert 'rosidl_default_runtime' in [e.text for e in manifest.findall('exec_depend')]
+    assert 'find_package(rosidl_default_generators REQUIRED)' in cmake
+    assert 'ament_export_dependencies(rosidl_default_runtime)' in cmake
+    assert 'rosidl_generate_interfaces(${PROJECT_NAME}' in cmake
+    messages = sorted((package/'msg').glob('*.msg'))
+    assert {str(p.relative_to(package)) for p in messages} == set(re.findall(r'"(msg/[^" ]+\.msg)"', cmake))
+    primitives = {'bool', 'uint8', 'float32', 'float64', 'string'}
+    external = set()
+    for path in messages:
+        names = set()
+        for raw in path.read_text().splitlines():
+            line = raw.split('#', 1)[0].strip()
+            if not line:
+                continue
+            match = re.fullmatch(r'([A-Za-z][A-Za-z0-9_/]*)(\[\])? ([A-Za-z][A-Za-z0-9_]*)(?:=([0-9]+))?', line)
+            assert match, (path, line)
+            kind, array, name, constant = match.groups()
+            assert name not in names, (path, name)
+            names.add(name)
+            if constant is not None:
+                assert kind == 'uint8' and not array and name.isupper() and int(constant) <= 255
+            if '/' in kind:
+                owner, message = kind.split('/')
+                if owner == 'shopping_interfaces':
+                    assert (package/'msg'/f'{message}.msg').is_file()
+                else:
+                    assert (owner, message) in {('std_msgs', 'Header'), ('geometry_msgs', 'Point')}
+                    external.add(owner)
+            else:
+                assert kind in primitives, (path, kind)
+    assert external == {'std_msgs', 'geometry_msgs'}
+    for dependency in external:
+        assert dependency in [e.text for e in manifest.findall('depend')]
+        assert f'find_package({dependency} REQUIRED)' in cmake
+    assert 'DEPENDENCIES std_msgs geometry_msgs' in cmake
+    # Split bridge entries must exactly preserve the canonical simulation contract.
+    canonical = yaml.safe_load((SRC/'shopping_robot_gazebo/config/bridge.yaml').read_text())
+    split = []
+    for name in ('common', 'lidar', 'imu', 'base'):
+        split.extend(yaml.safe_load((SRC/f'shopping_robot_gazebo/config/bridge_{name}.yaml').read_text()))
+    assert sorted(canonical, key=lambda e: e['ros_topic_name']) == sorted(split, key=lambda e: e['ros_topic_name'])
+    assert len({e['ros_topic_name'] for e in split}) == len(split)
+    return len(messages)
+
+
 def main():
+    message_count = check_interfaces()
+
     def owned(paths):
         return sorted(p for p in paths if 'third_party' not in p.relative_to(ROOT).parts)
 
@@ -58,7 +120,7 @@ def main():
     shell_files = sorted([*ROOT.glob('scripts/*.sh'), *ROOT.glob('docker/*-entrypoint')])
     for path in shell_files:
         subprocess.run(['bash', '-n', str(path)], check=True)
-    print(f'PASS: {len(yaml_files)} YAML/RViz, {len(xml_files)} XML/SDF/xacro, '
+    print(f'PASS: {message_count} rosidl messages and dependency contracts; {len(yaml_files)} YAML/RViz, {len(xml_files)} XML/SDF/xacro, '
           f'{len(python_files)} Python, {len(shell_files)} Bash, {len(scenarios)} scenarios; '
           '2/3-anchor xacro expansion in ekf/ground_truth modes and anchor configuration consistency')
 

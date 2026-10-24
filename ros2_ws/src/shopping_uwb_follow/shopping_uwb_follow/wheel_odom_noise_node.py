@@ -15,10 +15,12 @@ class WheelOdomNoise(Node):
                         linear_stddev=0.01, yaw_stddev=0.02)
         self.noise = WheelNoise(**{key: self.declare_parameter(key, value).value
                                   for key, value in defaults.items()})
-        self.wheel_pub = self.create_publisher(Odometry, '/wheel_odom_noisy', 10)
-        self.imu_pub = self.create_publisher(Imu, '/imu/with_covariance', 10)
-        self.create_subscription(Odometry, '/wheel_odom', self.on_wheel, qos_profile_sensor_data)
-        self.create_subscription(Imu, '/imu', self.on_imu, qos_profile_sensor_data)
+        if self.declare_parameter('simulate_wheel', True).value:
+            self.wheel_pub = self.create_publisher(Odometry, '/wheel_odom_noisy', 10)
+            self.create_subscription(Odometry, '/wheel_odom', self.on_wheel, qos_profile_sensor_data)
+        if self.declare_parameter('simulate_imu', True).value:
+            self.imu_pub = self.create_publisher(Imu, '/imu/with_covariance', 10)
+            self.create_subscription(Imu, '/imu', self.on_imu, qos_profile_sensor_data)
 
     def on_wheel(self, msg):
         result = deepcopy(msg)

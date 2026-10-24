@@ -285,6 +285,11 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 `mcu_link_monitor` 發布 `/pc/heartbeat`，檢查 MCU heartbeat／status／急停；選用 `estop_on_link_loss` 時向既有 `/mode_manager/request` 請求 estop。安全期限使用單調壁鐘，訊息 stamp 使用 ROS 時鐘。失聯恢復需要三筆新 heartbeat，MCU latch 與 PC 模式急停均須明確重設。純邏輯、codec、transport 與 ROS 節點分開測試。
 
 `comm.launch.py` 選 `sim_ros` 或 `serial_loopback`；follow／guide 以預設 false 的 `mcu_comm` 引入並沿用 `use_sim_time`。獨立 `dev.sh comm-sim` 才啟動額外 mux／watchdog。compose `comm` profile 的 agent 預設 UDP4:8888、無裝置映射，僅供未來真正 XRCE client；目前兩種模擬均不經 agent。未來硬體 EKF 接法、serial 的雙重啟用條件與驗收限制見 [MCU_INTERFACE.md](MCU_INTERFACE.md) 與 [MICROROS_GUIDE.md](MICROROS_GUIDE.md)。
+
+## 未來硬體介面
+
+雷射、IMU、UWB、輪式里程計、底盤命令與急停的準備規格見 [HARDWARE_INTERFACES](HARDWARE_INTERFACES.md)。`hardware.launch.py` 為預設全部模擬、待機的介面驗證入口；明確選用實體來源會停用對應的模擬 ROS 輸出，未指定未來驅動時只記錄錯誤。新 `shopping_interfaces` 提供 UWB rosidl 訊息，現有模擬／估測仍沿用舊訊息，不代表實車流程已完成。
+
 ## 私人 Nav2 fork underlay 與選擇流程
 
 主專案是公開儲存庫，Eurobot Nav2 fork 是私人儲存庫，因此以 `third_party/eurobot_nav2` submodule 固定版本，由主機使用者自己的 Git 憑證初始化。不將私人 C++ 複製進主專案，也不在 Dockerfile clone；建置 context 的 `.dockerignore` 排除 `third_party`，image build 無需 GitHub token。只有依需求調整的 BT XML 複本與購物車參數放在主專案。無權限的協作者略過 submodule，保留 apt 開發流程。
@@ -301,7 +306,7 @@ compute 唯讀掛載 `../third_party/eurobot_nav2/src → /nav2_ws/src`，`nav2_
 
 `nav2-build` 成功後 source underlay，以 `scripts/check_nav2_linkage.py` 對 fork shared libraries、apt `libnav2*.so`（含 RPP／collision monitor）及 AMCL 執行 `ldd -r`，缺 library、未定義 symbol 或非零結束碼都使建置失敗，通過才寫 build commit。這能攔截動態連結缺失，無法偵測 C++ layout／vtable 語意變化或 DDS 訊息相容問題；維護者仍須以當前 image apt 版本執行 colcon、AMCL lifecycle 啟動、action／取消／recovery 與 Gazebo 真值回歸。若失敗，回報精確 symbol 與套件版本，決定在 fork 修正 ABI 或增加必要的原始碼重建範圍，不能略過檢查假裝通過。display 不掛 fork，沿用 apt RViz plugins；跨容器 action／訊息仍要驗證。
 
-`nav2_stack` 的純邏輯 helper 不匯入 ROS。`auto` 以 ament index 同時出現 `custom_controller` 與 `custom_nav_to_pose` 選 fork；明確 `fork` 缺套件就失敗；`apt` 保留原參數與 RPP。只換 YAML 並不能換回 apt binaries，所以在 fork underlay 存在而選 apt 時，launch 用移除 `/nav2_ws` 搜尋路徑的環境啟動子程序，source apt 與應用層的 `local_setup.bash`（不重播已記錄的 underlay），再執行相同導航 launch。guide／follow 將選擇參數傳入導航，其他 SLAM、EKF、模擬、模式管理流程不變；AMCL 仍是 apt 套件。一次只執行一個 bringup。若曾建置 fork，未初始化的主機 checkout 不會自動刪除既有 underlay volumes；`auto` 仍依容器 index 判定，要比對 apt 請明確選 apt。
+`nav2_stack:=apt|fork|auto` 預設 `apt`；fork TEB 尚待調參，須明確選用 `fork` 或 `auto`。選擇 helper 不匯入 ROS。`auto` 以 ament index 同時出現 `custom_controller` 與 `custom_nav_to_pose` 選 fork；明確 `fork` 缺套件就失敗；`apt` 保留原參數與 RPP。只換 YAML 並不能換回 apt binaries，所以在 fork underlay 存在而選 apt 時，launch 用移除 `/nav2_ws` 搜尋路徑的環境啟動子程序，source apt 與應用層的 `local_setup.bash`（不重播已記錄的 underlay），再執行相同導航 launch。guide／follow 將選擇參數傳入導航，其他 SLAM、EKF、模擬、模式管理流程不變；AMCL 仍是 apt 套件。一次只執行一個 bringup。若曾建置 fork，未初始化的主機 checkout 不會自動刪除既有 underlay volumes；`auto` 仍依容器 index 判定，要比對 apt 請明確選 apt。
 
 ### TEB、BT 與速度出口
 
