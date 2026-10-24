@@ -296,6 +296,46 @@ def test_plain_message_handles_numpy_like_scalars_and_arrays():
     assert plain_message(Message()) == {'covariance': [0.5, 0.0], 'x': 1.25}
 
 
+def pedestrians(t, points, frame='sim_world'):
+    return '/sim/pedestrians', t, dict(header=dict(frame_id=frame),
+                                      poses=[dict(position=dict(x=x, y=y)) for x, y in points])
+
+
+def test_pedestrian_truth_interpolation_and_clearance():
+    records = [robot(t) for t in (0, .1, .2)]
+    records += [pedestrians(0, [(1, 0), (0, 2)]), pedestrians(.2, [(.8, 0), (0, 1)])]
+    rows, info = convert_records(records)
+    poses = [r for r in rows if r['type'] == 'pose']
+    assert poses[1]['pedestrians'] == [dict(x=.9, y=0., radius=.25), dict(x=0., y=1.5, radius=.25)]
+    result = evaluate_log(rows, [])['clearance']
+    assert result['person_min'] == pytest.approx(.25)
+    assert result['person_sample_count'] == 3
+    assert info['missing_pedestrian_samples'] == 0
+
+
+def test_nearest_person_across_both_truth_sources():
+    rows, _ = convert_records([robot(0), person(0, 2), pedestrians(0, [(.4, 0)])])
+    assert evaluate_log(rows, [])['clearance']['minimum'] == 0
+
+
+def test_pedestrian_truth_gaps_are_counted_without_extrapolation():
+    rows, info = convert_records([robot(0), robot(1), pedestrians(0, [(1, 0)])])
+    assert info['missing_pedestrian_samples'] == 1
+    assert 'pedestrians' not in [r for r in rows if r['type'] == 'pose'][-1]
+
+
+@pytest.mark.parametrize('records', [
+    [pedestrians(0, [(1, 0)], 'map')],
+    [pedestrians(0, [(1, 0)]), pedestrians(0, [(2, 0)])],
+    [pedestrians(0, [(1, 0)]), pedestrians(.1, [(1, 0), (2, 0)])],
+    [pedestrians(0, [])],
+    [pedestrians(0, [(float('nan'), 0)])],
+])
+def test_invalid_pedestrian_truth_is_rejected(records):
+    with pytest.raises(ValueError):
+        convert_records(records)
+
+
 def test_guard_triggers_use_simulation_time_and_do_not_repeat():
     records = [state('/safety/obstacle_state', 100+i,
                      json.dumps(dict(t=t, state=s)))

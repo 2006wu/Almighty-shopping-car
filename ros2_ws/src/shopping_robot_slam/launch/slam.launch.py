@@ -16,6 +16,11 @@ def start(context):
     overrides = {'use_sim_time': LaunchConfiguration('use_sim_time')}
     if mode == 'localization':
         overrides['map_file_name'] = graph
+        if all(context.launch_configurations.get('spawn_'+key, '') != ''
+               for key in ('x', 'y', 'yaw')):
+            overrides['map_start_at_dock'] = False
+            overrides['map_start_pose'] = [float(context.launch_configurations['spawn_'+key])
+                                           for key in ('x', 'y', 'yaw')]
     return [Node(package='slam_toolbox', executable='async_slam_toolbox_node' if mode == 'mapping' else 'localization_slam_toolbox_node', name='slam_toolbox',
                  parameters=[get_package_share_directory('shopping_robot_slam')+'/config/'+filename, overrides], output='screen')]
 
