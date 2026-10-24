@@ -1139,3 +1139,16 @@
 審查時間：2026-10-24 17:20（台北時間），Docker 專案 shoprep（t34s）。限制：manifest 的 Git 欄位在容器內為 unknown（容器沒有可用 git），需在主機補記；機器人在錄製期間靜止，未涵蓋導航中的報表數值。
 
 審查時間：2026-10-24 17:40（台北時間），Docker 專案 shopscen（t31s／t31f）。修正：整數 YAML 航點使 uwb_sim_node 崩潰（'y' 須為 float），person_path 改為一律回傳 float 並加測試。
+
+## 2026-10-24：硬體介面分支審查結果（18:03 台北時間）
+
+| 項目 | 結果 |
+| --- | --- |
+| pytest／check_static（合併含情境的 develop 後） | PASS：943 passed、1 skipped；check_static PASS（4 rosidl 訊息） |
+| Humble colcon build／test（t41） | PASS：672 tests、0 failures |
+| guide nav-check（use_real_* 皆預設 false） | PASS 5/5 |
+| follow fault-check --suite obstacle | PASS 4/4（lidar_front 0.2 停止 0.11 s） |
+| follow fault-check --suite follow | PASS 7/7 |
+| 真實驅動、實體感測器、arm64 | 未驗證（僅模擬；未連接任何硬體） |
+
+- 合併 develop 時 sim.launch.py 保留分源 bridge（lidar／imu／base 各自受 `use_real_*` 控制）並接上情境出生姿態與行人；測試替身新增 `pedestrian_actions`。
