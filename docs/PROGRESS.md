@@ -915,7 +915,7 @@
 | 原地旋轉淨空、側邊障礙與真值最小間距／停止距離 | 待驗證 |
 | NAV2_HANDOFF 繞行、恢復 DIRECT 與平行 Nav2 fork 整合 | 待驗證 |
 | bag 停止 trigger／真值延遲與 METRICS 報表 | 待驗證 |
-| amd64／arm64 原生模擬回歸 | 待驗證 |
+| amd64／arm64 原生模擬回歸 | amd64 Gazebo 無頭模擬如上；arm64 未驗證 |
 
 ## 2026-10-24：t30 障礙安全層與 develop 合併衝突解決
 
@@ -945,10 +945,12 @@
 
 | 項目 | 結果 |
 | --- | --- |
-| 雙方文件歷史與非衝突差異保留 | 待驗證 |
-| launch 參數宣告／轉送與純 Python 回歸 | 待驗證 |
-| Humble colcon build／test 與靜態檢查 | 待驗證 |
-| apt／fork guide／follow 與安全層四種組合 | 待驗證 |
-| 唯一 cmd_vel 發布者、急停／失聯／雷射過期停止 | 待驗證 |
-| NAV2_HANDOFF、恢復 DIRECT 與 Shrink＋Wait 模擬整合 | 待驗證 |
-| amd64／arm64 原生模擬回歸 | 待驗證 |
+| 雙方文件歷史與非衝突差異保留 | PASS（審查者 diff 檢視） |
+| launch 參數宣告／轉送與純 Python 回歸 | PASS：pytest 824 passed、1 skipped |
+| Humble colcon build／test 與靜態檢查 | PASS：Docker 映像建置、colcon test 640 tests、0 failures；check_static PASS |
+| apt／fork guide／follow 與安全層四種組合 | 部分：apt guide＋guard nav-check 5/5 PASS；apt follow＋guard（fault_injection、route_around:=false）通過；fork 與 collision_monitor 組合未模擬 |
+| 唯一 cmd_vel 發布者、急停／失聯／雷射過期停止 | PASS：fault-check --suite obstacle 4/4（lidar_front 0.2 m 停止 0.09 s、lidar_drop 0.37 s、lidar_freeze 0.71 s，門檻 cmd≤0.8 s／真值≤1.5 s）；--suite follow 7/7 |
+| NAV2_HANDOFF、恢復 DIRECT 與 Shrink＋Wait 模擬整合 | 未驗證（route_around:=false；Shrink＋Wait 屬 fork） |
+| amd64／arm64 原生模擬回歸 | amd64 Gazebo 無頭模擬如上；arm64 未驗證 |
+
+審查時間：2026-10-24 16:30（台北時間）；結果紀錄於 Docker 專案 shopobs（t30s）。
