@@ -6,7 +6,8 @@ x-ros-env: &ros-env
   FASTRTPS_DEFAULT_PROFILES_FILE: /etc/fastdds_udp.xml
   LIBGL_ALWAYS_SOFTWARE: "1"
 x-runtime: &runtime
-  image: almighty-shopping-car-compute
+  # One shared runtime image per compose project, so worktrees/projects stay isolated.
+  image: ${COMPOSE_PROJECT_NAME:-almighty-shopping-car}-compute
   build:
     context: ..
     dockerfile: docker/Dockerfile.compute
