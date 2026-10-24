@@ -981,9 +981,11 @@
 
 | 項目 | 結果 |
 | --- | --- |
-| manifest 欄位、Git 降級與 metadata 驗證 | 待驗證 |
-| 正規化、九位精度與差異欄位 | 待驗證 |
-| 暫存重跑、原報告保留與結束碼 | 待驗證 |
-| 多次統計、verdict 與來源警告 | 待驗證 |
-| pytest 與靜態檢查 | 待驗證 |
-| Humble colcon 與模擬 bag 整合 | 待驗證 |
+| manifest 欄位、Git 降級與 metadata 驗證 | PASS：模擬錄製 t34r1 產生 manifest（metadata scenario／nav2_stack 正確）；容器內 git 不可用時三欄降級為 unknown，錄製未受影響 |
+| 正規化、九位精度與差異欄位 | PASS（pytest）；實際 bag 驗證見下列 |
+| 暫存重跑、原報告保留與結束碼 | PASS：`eval-verify t34r1` 輸出 Report matches、結束碼 0 |
+| 多次統計、verdict 與來源警告 | 部分：`eval-summary t34r1` 單一 bag 結束碼 0；多次重複彙整只有 pytest 覆蓋 |
+| pytest 與靜態檢查 | PASS：pytest 834 passed、check_static PASS |
+| Humble colcon 與模擬 bag 整合 | PASS：colcon test 650 tests、0 failures；guide 無頭模擬錄製 60 秒 → eval-bag → eval-verify → eval-summary 全部結束碼 0 |
+
+審查時間：2026-10-24 17:20（台北時間），Docker 專案 shoprep（t34s）。限制：manifest 的 Git 欄位在容器內為 unknown（容器沒有可用 git），需在主機補記；機器人在錄製期間靜止，未涵蓋導航中的報表數值。
