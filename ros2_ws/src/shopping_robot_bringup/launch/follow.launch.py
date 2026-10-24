@@ -17,6 +17,10 @@ def generate_launch_description():
     fault = LaunchConfiguration('fault_injection')
     def raw(topic):
         return PythonExpression(["'/sim/raw", topic, "' if '", fault, "'.lower() == 'true' else '", topic, "'"])
+    person_bridge = Node(package='ros_gz_bridge', executable='parameter_bridge',
+                         name='person_pose_bridge', parameters=[{'use_sim_time': time,
+                         'config_file': get_package_share_directory('shopping_robot_gazebo')+'/config/bridge_person.yaml'}],
+                         output='screen')
     nodes = [Node(package='shopping_uwb_follow', executable=name,
                   parameters=[config, {'use_sim_time': time, 'person_path': get_package_share_directory('shopping_robot_gazebo')+'/config/person_path.yaml'}, *([{'enabled': enabled, 'monitor_odom': ParameterValue(fault, value_type=bool), 'observed_cmd_vel_topic': ParameterValue(observed_topic, value_type=str), 'route_around': ParameterValue(LaunchConfiguration('route_around'), value_type=bool)}] if name == 'follow_controller_node' else [])],
                   remappings=([('/cmd_vel', follow_topic)] if name == 'follow_controller_node' else [('/uwb/ranges', raw('/uwb/ranges'))] if name == 'uwb_sim_node' else [('/uwb/target', raw('/uwb/target'))] if name == 'uwb_estimator_node' else []), output='screen')
@@ -34,4 +38,4 @@ def generate_launch_description():
         DeclareLaunchArgument('route_around', default_value='true'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(get_package_share_directory('shopping_robot_bringup')+'/launch/mode_mux.launch.py'), launch_arguments={'use_mux': use_mux, 'initial_mode': LaunchConfiguration('initial_mode'), 'manage_follow': 'true', 'use_sim_time': time}.items()),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(get_package_share_directory('shopping_robot_navigation')+'/launch/navigation.launch.py'), launch_arguments={'use_mux': use_mux, 'slam_mode': LaunchConfiguration('slam_mode'), 'map': LaunchConfiguration('map'), 'use_sim_time': time}.items()),
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(get_package_share_directory('shopping_robot_gazebo')+'/launch/sim.launch.py'), launch_arguments={'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': 'true', 'fault_injection': fault, 'fault_schedule': LaunchConfiguration('fault_schedule')}.items()), *nodes])
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(get_package_share_directory('shopping_robot_gazebo')+'/launch/sim.launch.py'), launch_arguments={'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': 'true', 'fault_injection': fault, 'fault_schedule': LaunchConfiguration('fault_schedule')}.items()), person_bridge, *nodes])
