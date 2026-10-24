@@ -624,3 +624,55 @@
 | guide 短錄製（70 秒，`goto snacks`→`goto entrance`） | 錄到 /clock、/odom、真值、/cmd_vel、模式與區域狀態；`eval-bag` 產生 report.json／md：2/2 成功，耗時 7.2／16.3 s，最終誤差 0.143／0.127 m，最小靜態間距 0.41 m |
 | follow 短錄製（60 秒） | 跟隨 1916 筆樣本、38.3 s；平均絕對誤差 1.46 m（目標 1.0±0.2 m 帶內 5.7%）；擷取到 obstacle_stop／too_close 停止事件，命令延遲 0.005–0.056 s |
 | 未驗證 | 隔離 bag 回放（`ros2 bag play`）、失敗／取消回合的實際錄製、Mac arm64 |
+
+## 2026-10-24：人物同步與跟隨評估
+
+### 本次完成
+
+- 新增 `shopping_uwb_follow` 的 `person_sync_check`、`follow_eval` 命令入口及 `dev.sh person-sync-check`／`follow-eval`。工具唯讀訂閱，預設使用模擬時鐘，暖機 2 秒後記錄指定模擬時間；具牆鐘逾時、時鐘倒退／框架／有限數值檢查、來源時間對齊、資料覆蓋、表格與 JSON 輸出。結束碼為全部通過 0、有失敗 1、僅未涵蓋 2。
+- 確認人物移動節點與 UWB 模擬都從 Gazebo 套件的唯一 `person_path.yaml` 依絕對模擬時間插值。既有 SceneBroadcaster `/simulation/poses` 雖有模型名稱，但 Humble 的 Pose_V→TFMessage 轉換不保留外層時間戳與父框架，不能可靠用於來源時間延遲量測。故在人物 SDF 加入 Fortress 唯讀 PosePublisher，提供各筆時間戳與 `supermarket → person`；只有 follow launch 透過 `bridge_person.yaml` 單向接至 `/simulation/person_pose`，不進入 `/tf`。此為觀察資料的補足，沒有修改人物位移、UWB 生成或既有橋接消費端；尚未發現需修改移動演算法的同步錯誤。
+- 同步檢查比較人物模型、`/uwb/person_ground_truth` 與解析路徑，列出平面偏差統計和最佳時間位移。跟隨評估使用獨立 `/sim/ground_truth_odom` 與人物真值，轉出車體相對位置，量測估測延遲、直線／轉彎距離與估測誤差、近停違規及 stale／LOST 後新鮮估測至 FOLLOWING 的時間。
+- 指標集中於不匯入 ROS 的 `evaluation_metrics.py`，沿用 `person_path.path_position`。測試涵蓋帶噪已知正負位移、共同搜尋樣本／插值缺口、運動不足／邊界解、轉彎分類、近停持續／旋轉／紀錄截斷、恢復時間／缺資料、框架驗證、純模組匯入、入口／dev.sh 接線，以及假 Humble 單參數回呼的完整同步紀錄與 JSON 輸出。
+- README 與架構文件補齊操作、來源實作連結、門檻與限制。跟隨控制器、調參、TF 所有權與 ROADMAP 均未修改；未提交或推送，未執行 Docker、安裝套件或建立虛擬環境。
+
+### 門檻與判定
+
+| 項目 | 預設門檻／方法 |
+| --- | --- |
+| 人物同步 | 三組平面平均偏差各 <0.05 m；各組最佳延遲絕對值 <0.1 s |
+| 延遲搜尋 | 整段紀錄窗、±0.5 s、0.01 s 格距、相同共同樣本、至少 10 筆與 0.02 m 運動激發；最佳值貼邊不通過 |
+| 濾波延遲 | 相對位置向量最佳位移絕對值 <0.3 s；正值表示估測落後真值 |
+| 直線／轉彎 | 路徑前後各 0.5 s 的航向變化率 >0.3 rad/s 為轉彎；各類至少 10 筆，真實距離減 YAML 期望距離的 RMSE <1.5 m |
+| 近停 | 真實距離 <YAML `stop_distance` 後 0.5 s 起，平面速度 ≤0.03 m/s、角速度絕對值 ≤0.05 rad/s，維持至離開近距區間 |
+| 重新取得 | 估測來源時間缺口 >YAML `lost_timeout` 或 LOST 後，下一筆新鮮估測至 FOLLOWING ≤2 s；另外列出整體遺失至恢復時間 |
+| 資料覆蓋 | 真值／模型／狀態時間窗兩端與中間缺口至多 0.25 s；插值不外插、不跨較大缺口 |
+
+### 本輪執行紀錄（非審查驗證）
+
+| 指令 | 執行觀察 |
+| --- | --- |
+| `/workspace/scratch/venv-shop/bin/python -m pytest -q` | 631 項通過；既有 xacro 棄用警告 1 項 |
+| `/workspace/scratch/venv-shop/bin/python scripts/check_static.py` | PASS：14 個 YAML／RViz、10 個 XML／SDF／xacro、81 個 Python、4 個 Bash；兩／三錨點與兩種里程計模式 xacro 展開通過 |
+| `git diff --check` | 通過 |
+
+### 限制與下一步
+
+- 尚未執行 ROS、colcon 或 Gazebo。維護者須在既有容器建置／測試，再啟動單一 follow，確認人物 PosePublisher 的 Fortress 輸出、來源時間戳與父子框架，執行兩個檢查；純 Python 與靜態檢查不能代替此驗收。
+- 一般循環路徑不保證出現近距停止；無轉彎、近停、UWB 缺口或 FOLLOWING 恢復事件時標為 `NOT_COVERED`。近停起訖碰到紀錄邊界、區間太短或有缺口，也不會通過；觀察到門檻後仍移動則記錄違規。恢復事件若估測未恢復或狀態缺資料則未涵蓋，估測恢復且充分觀察後仍不跟隨則失敗。下一步由維護者安排可重現的近停情境，並在 UWB 缺口前啟動量測，補齊所有事件覆蓋。
+- 延遲統計包含取樣、橋接、服務呼叫排程、位置偏差與模擬時間誤差，並非濾波函式內部耗時；搜尋格距不代表精度。轉彎分類依解析路徑，應先確認同步；角落為折線瞬間轉向，以有限時間窗分類。統計依樣本加權，沒有額外濾波或變更控制器。
+- `/follow/state` 沒有時間戳，使用接收時模擬時間；NAV2_HANDOFF 不視為 FOLLOWING。車體相對位置沿用目前 base_link 與 base_footprint 平面原點相同的模型假設。自訂模擬參數／路徑必須用 `--follow-params`／`--person-path` 提供相同檔案；讀取 YAML 不代表查詢執行中節點的即時參數。
+- 僅模擬、無硬體或裝置連線。兩錨點仍有前後解歧義，NLOS 仍可能產生錯誤位置；量測工具不會改善估測或保證碰撞安全。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 指標與單參數回呼測試複核 | 待驗證 |
+| YAML／XML／launch 語法與 xacro 靜態檢查複核 | 待驗證 |
+| Humble 容器 colcon build／test | 待驗證 |
+| Fortress 人物來源時間、位姿橋接及框架 | 待驗證 |
+| `person-sync-check` 三組位置與延遲 | 待驗證 |
+| `follow-eval` 濾波延遲與直線／轉彎 | 待驗證 |
+| 近距停止、持續停止與違規情境 | 待驗證 |
+| UWB 缺口後重新取得與未涵蓋判定 | 待驗證 |
+| 預設 EKF／ground_truth 模式與 TF 唯一來源回歸 | 待驗證 |

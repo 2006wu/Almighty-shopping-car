@@ -319,3 +319,40 @@ python3 scripts/check_static.py
 `eval-bag` 依序產生 `observations.jsonl`、`observations.jsonl.meta.json`、`report.json` 與 `report.md`；重跑會覆寫這四個檔案。轉換中繼資料揭露缺少人物真值、同時間合併樣本與截止回合，須和報告一起檢視。`eval-bag` 使用目前固定場景的 map→世界 `(0,0,0)` 對齊；自訂地圖原點須改用 `bag_to_eval --map-world-transform X Y YAW`，不能直接套用。
 
 完整時間規則、已支援與無法還原的觀測、固定情境及兩次報告比較方式見 [評估指標](docs/METRICS.md#rosbag-記錄轉換與可重現流程)。沙盒僅驗證純 Python 與靜態配置，ROS／Gazebo 實際錄製回放須由維護者在容器驗證。
+
+### 人物同步與跟隨評估（純模擬）
+
+重新建置後，只啟動一個 follow 模擬；兩個檢查工具都是唯讀訂閱，不會發布速度、改人物路徑或注入故障。以下各指令在不同終端機執行，檢查工具須在模擬時間 120 秒前開始，才能觀察排程的 UWB 缺口：
+
+```bash
+./scripts/dev.sh colcon-build
+./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 120.0, fault: uwb_stale, duration: 3.0}]'
+./scripts/dev.sh person-sync-check --duration 60 --output /tmp/person-sync.json
+./scripts/dev.sh follow-eval --duration 180 --output /tmp/follow-eval.json
+```
+
+JSON 路徑位於 compute 容器內；可改成 `/repo/` 下可寫路徑以保留於主機。工具各自等待 `/clock`、略過開始後 2 秒，再量測指定的模擬秒數；`--wall-timeout` 預設為 `4*duration+30` 秒，避免模擬暫停時無限等待。直接在已 source 的容器執行也可以：
+
+```bash
+ros2 run shopping_uwb_follow person_sync_check --duration 60 --output /tmp/person-sync.json --ros-args -p use_sim_time:=true
+ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eval.json --ros-args -p use_sim_time:=true
+```
+
+`person_sync_check` 比較 `/uwb/person_ground_truth`、`/simulation/person_pose` 的人物幾何位置，以及共用 `person_path.yaml` 在各筆來源模擬時間的位置；輸出平面偏差的平均、RMSE、最大值及延遲搜尋結果。每組平均偏差須小於 0.05 m、延遲絕對值須小於 0.1 s，可用 `--mean-limit`、`--lag-limit` 更改驗收門檻。人物模型父框架必須為 `supermarket`、子框架為 `person`，對應 SDF 世界原點；人物真值必須為 `sim_world`。這是同一個模擬世界座標，不拿 EKF 的 `odom` 當真值。
+
+既有 `/simulation/poses` 保留原用途。Fortress [SceneBroadcaster](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/scene_broadcaster/SceneBroadcaster.cc) 的時間戳在外層 Pose_V，而 Humble [TFMessage 轉換](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/src/convert/tf2_msgs.cpp) 讀取各筆 pose，無法保留該外層時間。此次增加人物唯讀 [PosePublisher](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/pose_publisher/PosePublisher.cc)，產生各筆時間與框架；只有 follow launch 將 `/world/supermarket/model/person/pose` 單向橋接至 `/simulation/person_pose`（TFMessage），不接入 `/tf`。這是量測來源時間的補足，沒有修改人物移動或 UWB 生成演算法；SDF 的觀察外掛在其他模擬也會載入，但沒有新增 ROS 橋接。
+
+`follow_eval` 使用人物真值與 `/sim/ground_truth_odom`（`sim_world → base_footprint_gt`），將真實相對位置轉到車體平面座標，再和 `/uwb/target`（`base_link`）比較。平移原點相同的假設來自目前 URDF 的固定關節。表格包含下列指標，門檻是初始驗收提案，並非控制器調參：
+
+| 項目 | 定義與預設門檻 |
+| --- | --- |
+| 濾波延遲 | 相對位置向量最佳時間位移，絕對值 <0.3 s；`--latency-limit` 可改 |
+| 直線／轉彎追蹤 | 共用人物路徑在前後各 0.5 s 的航向變化率 >0.3 rad/s 視為轉彎；各類至少 10 筆真值，真實距離減 `follow_distance` 的 RMSE <1.5 m（`--tracking-limit`）；另列距離及估測位置誤差統計 |
+| 近距停止 | 真實距離嚴格小於 YAML 的 `stop_distance`；0.5 s（`--stop-deadline`）後平面速度須 ≤0.03 m/s、角速度絕對值須 ≤0.05 rad/s，並維持到離開近距區間；列出所有違規時間 |
+| 重新取得 | 估測來源時間缺口超過 YAML 的 `lost_timeout` 或狀態進入 LOST，從下一筆新鮮估測到 `/follow/state` 回到 FOLLOWING 須 ≤2 s（`--reacquire-limit`）；另列遺失至恢復的總時間，NAV2_HANDOFF 不當作 FOLLOWING |
+
+停止距離、期望跟隨距離和 stale 門檻讀取安裝的 `shopping_uwb_follow/config/uwb_follow.yaml`；若模擬使用自訂設定，量測時也須指定相同的 `--follow-params`。`--person-path` 只供指定模擬已使用的同一份路徑，不能用另一條路徑作為真值。JSON 會記錄設定內容、門檻、來源路徑與各項結果。
+
+延遲以整段紀錄為搜尋窗，在 ±0.5 s 內每 0.01 s 搜尋向量均方差；正值代表觀察訊號落後真值。每個候選使用相同樣本集合，至多跨 0.25 s 缺口插值，不外插；至少需要 10 筆與 0.02 m 的運動激發，邊界最佳值視為無法辨識。空間偏差、取樣與服務呼叫排程可能混入延遲，故不是純濾波器內部耗時，也不能把 0.01 s 搜尋格距當成實際精度。統計依樣本加權；轉彎分類依預期人物路徑，因此應先通過同步檢查。
+
+缺資料、框架不符、時間倒退、時鐘逾時或不符合門檻會 FAIL；沒有轉彎／近停／恢復事件，或近停區間碰到紀錄邊界、太短或有資料缺口，顯示 `NOT_COVERED`。恢復期間狀態缺資料或尚未觀察到恢復也會標記未涵蓋；新鮮估測已恢復但在充分觀察後仍未回到 FOLLOWING 則 FAIL。結束碼為 0（全部 PASS）、1（有 FAIL）、2（僅有未涵蓋）。一般路徑不保證出現近距停止，工具也不會為此改動控制器；應由維護者安排可重現的模擬情境，重新量測未涵蓋項目。以上純 Python 測試不代表 ROS／Gazebo 驗收，兩錨點歧義與 NLOS 限制仍適用。

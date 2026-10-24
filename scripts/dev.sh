@@ -29,6 +29,8 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   map-tour [NAME]          Run mapping tour and save maps (default: supermarket)
   loc-check [ROS_ARGS...]   Check all zones against simulation truth
   mode MODE | estop | reset  Request idle/guide/follow/teleop/estop/reset
+  person-sync-check [ARGS...]  Compare person model, UWB truth and shared path
+  follow-eval [ARGS...]     Measure latency, turns, near stops and reacquisition
   fault-check [ARGS...]    Verify faults against a running opt-in follow sim
   record NAME [--duration S] [TOPICS...]  Record evaluation bag (wall seconds)
   eval-bag NAME [ARGS...]  Convert bag and write report.json/report.md
@@ -57,6 +59,8 @@ EOF
   mapping|slam) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
   guide|nav) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;
   follow) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
+  person-sync-check) run ros2 run shopping_uwb_follow person_sync_check "$@" --ros-args -p use_sim_time:=true ;;
+  follow-eval) run ros2 run shopping_uwb_follow follow_eval "$@" --ros-args -p use_sim_time:=true ;;
   fault-check) run python3 /repo/scripts/fault_check.py "$@" ;;
   goto)
     [[ $# -ge 1 ]] || { echo 'Usage: dev.sh goto ZONE [--timeout S]' >&2; exit 2; }
