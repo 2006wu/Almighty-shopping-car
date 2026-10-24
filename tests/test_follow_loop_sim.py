@@ -16,19 +16,26 @@ loop = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(loop)
 
 
+def historical_path():
+    path, _ = loop.load_inputs()
+    return {**path, 'speed': 0.35}
+
+
 @pytest.fixture(scope='module')
 def world_runs():
-    return loop.simulate(legacy=True, world=True), loop.simulate(world=True)
+    return (loop.simulate(path=historical_path(), legacy=True, world=True),
+            loop.simulate(path=historical_path(), world=True))
 
 
 def test_open_path_feedforward_removes_proportional_lag():
-    old, new = loop.simulate(legacy=True), loop.simulate()
+    old, new = (loop.simulate(path=historical_path(), legacy=True),
+                loop.simulate(path=historical_path()))
     assert 1.35 < old['eligible']['follow_distance_mean'] < 1.55
     assert new['eligible_fraction'] == 1
     error = new['eligible']['distance_error_m']
     assert error['mean'] < 0.5 and error['rmse'] < 1.0
     assert error['mean'] < old['eligible']['distance_error_m']['mean']/3
-    no_accel = loop.simulate(legacy=True, acceleration=False)
+    no_accel = loop.simulate(path=historical_path(), legacy=True, acceleration=False)
     assert abs(no_accel['all']['follow_distance_mean']-old['all']['follow_distance_mean']) < 0.02
 
 
@@ -46,7 +53,7 @@ def test_world_exposes_three_metre_legacy_error_and_exclusion_coverage(world_run
 
 
 def test_sustained_reduced_cap_cannot_track_faster_person():
-    result = loop.simulate(speed_factor=0.4)
+    result = loop.simulate(path=historical_path(), speed_factor=0.4)
     assert result['eligible']['distance_error_m']['rmse'] > 1.0
 
 
@@ -110,7 +117,7 @@ def test_velocity_estimate_compensates_robot_translation_and_rotation():
 
 @pytest.mark.parametrize('service_delay', [0.20, 0.25, 0.30])
 def test_model_prediction_under_measured_service_and_hold_delay(service_delay):
-    path, _ = loop.load_inputs()
+    path = historical_path()
     times = [1+i/30 for i in range(1800)]
     truth = [(t, path_position(path, t)) for t in times]
     # A set_pose command is held until the next completed request. The service
@@ -131,3 +138,22 @@ def test_model_prediction_wraps_shared_path_and_rejects_invalid_timing():
     for compensation in (-1, math.nan, math.inf):
         with pytest.raises(ValueError):
             model_command_position(path, 1, compensation)
+
+
+def test_browsing_pace_tracks_under_narrow_clearance_cap():
+    path, params = loop.load_inputs()
+    assert 0 < path['speed'] < params.max_linear*params.side_min_speed_factor
+    result = loop.simulate(speed_factor=params.side_min_speed_factor)
+    assert result['all']['distance_error_m']['rmse'] < 0.2
+    assert result['limits']['max_command_linear'] <= params.max_linear*params.side_min_speed_factor
+
+
+def test_controller_reports_active_limits_without_changing_safety_reason():
+    control = FollowController()
+    result = control.step((4, 1), 0, math.inf, 0.05, speed_factor=0.4)
+    assert 'speed cap' in result[3] and 'linear acceleration' in result[3]
+    result = control.step((1, 1), 0, math.inf, 0.05)
+    assert 'heading' in result[3] and 'angular acceleration' in result[3]
+    result = settle(control, 1, (0.18, 0))
+    assert 'distance hold' in result[3]
+    assert control.step((2, 0), 0, 0.5, 0.05) == (0, 0, 'OBSTACLE_STOP', 'Obstacle or unavailable scan')

@@ -30,9 +30,12 @@
     goal_update_distance: 0.4
     goal_update_period: 0.5
     clear_margin: 0.15
+    # Release a detour only near the person and aligned with the direct path.
     resume_delay: 0.5
+    resume_max_bearing: 0.25
     retry_cooldown: 3.0
-    robot_half_width: 0.25
+    # Cover the rotating 0.60 x 0.50 m footprint (circumradius 0.391 m).
+    robot_half_width: 0.4
     # Exclude the 0.25 m person radius plus estimation allowance at the endpoint.
     los_margin: 0.35
     # LOS persistence uses seconds; spatial release margin uses metres.

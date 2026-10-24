@@ -9,6 +9,16 @@ def transform_xy(point, pose):
     return x+c*point[0]-s*point[1], y+s*point[0]+c*point[1]
 
 
+def standoff_target(target, follow_distance):
+    """Place the navigation endpoint before the person, never behind the robot."""
+    if (not valid_xy(target) or not math.isfinite(follow_distance)
+            or follow_distance <= 0):
+        raise ValueError('Standoff requires a finite target and positive distance')
+    distance = math.hypot(*target)
+    scale = max(0.0, 1-follow_distance/distance) if distance else 0.0
+    return target[0]*scale, target[1]*scale
+
+
 def valid_xy(target):
     return target is not None and len(target) == 2 and all(math.isfinite(v) for v in target)
 
@@ -113,6 +123,7 @@ class HandoffParams:
     los_block_time: float = 0.3
     los_clear_time: float = 0.6
     los_clear_extra_width: float = 0.10
+    resume_max_bearing: float = 0.25
     min_nav_hold: float = 1.5
     min_direct_hold: float = 1.0
 
@@ -135,6 +146,8 @@ class HandoffSupervisor:
             raise ValueError('Handoff parameters must be finite and within their positive/nonnegative bounds')
         if not isinstance(route_around, bool):
             raise ValueError('route_around must be boolean')
+        if self.p.resume_max_bearing > math.pi/2:
+            raise ValueError('Resume bearing must be at most pi/2')
         self.los = LosDebouncer(self.p.los_block_time, self.p.los_clear_time)
         self.nav_since = self.direct_since = None
         self.route_around = route_around
@@ -173,7 +186,11 @@ class HandoffSupervisor:
             reason = 'Direct only or safety stop'
         elif self.mode == 'NAV2':
             close = math.hypot(*target) <= self.p.follow_distance+self.p.handoff_margin
-            clear = los_clear and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin
+            aligned = abs(math.atan2(target[1], target[0])) <= self.p.resume_max_bearing
+            # Do not abandon a detour just because the person becomes visible:
+            # the direct controller can still cut the corner or be speed-limited.
+            clear = (los_clear and close and aligned
+                     and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin)
             self.clear_since = (now if self.clear_since is None else self.clear_since) if clear else None
             if nav_status in ('failed', 'canceled') or not valid_xy(map_target):
                 self.mode = 'DIRECT'
@@ -181,10 +198,11 @@ class HandoffSupervisor:
                 reason = 'Navigation failed or map transform unavailable'
             elif (nav_status == 'succeeded'
                   or now-self.nav_since >= self.p.min_nav_hold
-                  and (los_clear and close or self.clear_since is not None
-                       and now-self.clear_since >= self.p.resume_delay)):
+                  and self.clear_since is not None
+                  and now-self.clear_since >= self.p.resume_delay):
                 self.mode = 'DIRECT'
-                reason = 'Direct path restored or navigation succeeded'
+                reason = ('Navigation succeeded' if nav_status == 'succeeded'
+                          else 'Close aligned direct path sustained')
             elif (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
                   and now-self.last_goal_time >= self.p.goal_update_period):
                 action, reason = 'update_goal', 'Person moved in map frame'

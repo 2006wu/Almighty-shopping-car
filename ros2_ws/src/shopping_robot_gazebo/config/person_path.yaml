@@ -1,5 +1,6 @@
 # Shared by the visual person and UWB simulator; metres in the world frame.
-speed: 0.35
+# Slow browsing pace: below the 0.20 m/s narrow-clearance robot cap.
+speed: 0.18
 waypoints:
   - [1.5, 0.0]
   - [2.4, 0.0]

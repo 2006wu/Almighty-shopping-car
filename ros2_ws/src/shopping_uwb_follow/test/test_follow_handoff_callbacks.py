@@ -107,7 +107,10 @@ def test_nav2_ownership_and_zero_first_direct_command_after_drain():
     node.now = node.target_time = node.scan_time = 1.0
     node.tick()
     assert node.supervisor.mode == 'NAV2' and node.goal_pending
-    node.publisher.publish.assert_not_called()
+    command = node.publisher.publish.call_args.args[0]
+    assert command.linear.x == command.angular.z == 0  # Front obstacle masks Nav2.
+    node.publisher.reset_mock()
+    node.obstacle = 2.0
     node.goal_pending = False
     node.goal_handle = Mock()
     node.goal_result(completed(NS(status=4)), node.goals.generation)
@@ -147,6 +150,7 @@ def test_update_preempts_without_cancel_or_drain_and_ignores_old_callbacks():
     new_pose = NS(pose=NS(position=NS(x=4, y=5)))
     node.map_goal_and_los = lambda: (new_pose, False)
     node.now = node.target_time = node.scan_time = 1.5
+    node.obstacle = 2.0
     node.publisher.reset_mock()
     node.tick()
     assert node.client.send_goal_async.call_count == 2
@@ -400,3 +404,128 @@ def test_target_velocity_uses_fresh_odometry_and_drops_stale_history():
     node.on_target(NS(header=NS(frame_id='base_link', stamp=NS(sec=3, nanosec=100000000)),
                       point=NS(x=3.1, y=0)))
     assert node.target_velocity == (0, 0)  # First fresh sample reinitializes.
+
+
+def test_pending_goal_updates_coalesce_then_preempt_with_latest_pose():
+    node = make_node()
+    response = Future()
+    node.client.send_goal_async.return_value = response
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    latest = NS(pose=NS(position=NS(x=4, y=5)))
+    node.map_goal_and_los = lambda: (latest, False)
+    node.now = node.target_time = node.scan_time = 1.6
+    node.tick()
+    assert node.client.send_goal_async.call_count == 1
+    handle = Mock(accepted=True)
+    response.set_result(handle)
+    newest = NS(pose=NS(position=NS(x=4.1, y=5)))
+    node.map_goal_and_los = lambda: (newest, False)
+    node.client.send_goal_async.return_value = Future()
+    node.now = node.target_time = node.scan_time = 1.7
+    node.tick()
+    assert node.client.send_goal_async.call_count == 2
+    assert node.client.send_goal_async.call_args.args[0].pose is newest
+    handle.cancel_goal_async.assert_not_called()
+    assert not node.drain.active
+
+
+def test_obstacle_stop_masks_both_nav_axes_without_cancel_resend():
+    node = make_node()
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    handle = Mock(accepted=True)
+    node.goal_response(completed(handle), node.goals.generation)
+    node.last_nav_command = (1.1, 0.4, 0.8)
+    node.now = node.target_time = node.scan_time = 1.1
+    node.publisher.reset_mock()
+    node.tick()
+    command = node.publisher.publish.call_args.args[0]
+    assert command.linear.x == command.angular.z == 0
+    assert node.state.publish.call_args.args[0].data.startswith('OBSTACLE_STOP:')
+    handle.cancel_goal_async.assert_not_called()
+    node.obstacle = 2
+    node.now = node.target_time = node.scan_time = 1.2
+    node.publisher.reset_mock()
+    node.tick()
+    node.publisher.publish.assert_not_called()
+    assert node.supervisor.mode == 'NAV2'
+
+
+def test_diagnostics_throttle_clock_reset_and_nav_command_reporting():
+    node = make_node()
+    for now in (0, 0.05, 0.5, 0.99, 1.0, 1.2, 2.0):
+        node.diagnose(now, 'FOLLOWING', 0.18, 0.1, 'speed cap', 0.4, 2, 0.05)
+    logger = node.get_logger.return_value
+    assert logger.info.call_count == 3
+    message = logger.info.call_args.args[0]
+    for value in ('state=FOLLOWING', 'distance=3.000m', 'command_v=0.180',
+                  'command_w=0.100', 'limit=speed cap', 'cap_factor=0.400'):
+        assert value in message
+    node.diagnose(0, 'IDLE', 0, 0, 'Disabled', 1, 2, 0)
+    assert logger.info.call_count == 4
+    node.supervisor.mode = 'NAV2'
+    node.supervisor.nav_since = 0
+    node.supervisor.record_goal(0, (3, 5))
+    node.goal_pending = True
+    node.obstacle = 2
+    node.now = node.target_time = node.scan_time = 1.1
+    node.on_cmd_vel(NS(linear=NS(x=0.3), angular=NS(z=-0.2)))
+    node.tick()
+    assert 'command_v=0.300 command_w=-0.200' in logger.info.call_args.args[0]
+
+
+@pytest.mark.parametrize('context_ok,race', [(False, False), (True, False), (True, True)])
+def test_shutdown_skips_invalid_context_and_handles_publish_race(context_ok, race):
+    node = make_node()
+    node.context = object()
+    node.stop_before_shutdown.__globals__['rclpy'] = NS(ok=lambda **kwargs: context_ok)
+    node.stop_before_shutdown.__globals__['RCLError'] = RuntimeError
+    node.cancel_goal = Mock()
+    if race:
+        node.publisher.publish.side_effect = RuntimeError('context invalidated after ok')
+    node.stop_before_shutdown()
+    assert node.publisher.publish.call_count == int(context_ok)
+    assert node.cancel_goal.call_count == int(context_ok)
+
+
+def test_independent_clearance_caps_do_not_multiply():
+    node = make_node()
+    # side coverage unavailable -> 0.4; uncertain LOS -> 0.6; combined cap 0.4.
+    # A short interval remains before blocked LOS is latched.
+    node.control.v = 0.2
+    node.obstacle = 2
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.2)
+
+
+def test_map_goal_uses_standoff_while_los_still_checks_the_person():
+    from shopping_uwb_follow.follow_handoff import (
+        standoff_target, transform_xy, line_of_sight_clear,
+    )
+    node = make_node()
+    # make_node substitutes map_goal_and_los; bind the production method here.
+    method = node_class().map_goal_and_los
+    namespace = method.__globals__
+    class FakeTime:
+        def __init__(self, **kwargs):
+            pass
+
+        @staticmethod
+        def from_msg(msg):
+            return msg
+    namespace.update(Time=FakeTime, TransformException=RuntimeError,
+                     planar_pose=lambda transform: transform, standoff_target=standoff_target,
+                     transform_xy=transform_xy, line_of_sight_clear=line_of_sight_clear,
+                     PoseStamped=lambda: NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
+    node.tf_buffer = Mock()
+    node.tf_buffer.lookup_transform.side_effect = [(10, 20, math.pi/2), (-0.18, 0, 0)]
+    node.scan = NS(header=NS(frame_id='laser', stamp=0), ranges=[math.inf, 2.57, math.inf],
+                   angle_min=-0.5, angle_increment=0.5, range_min=0.12, range_max=12)
+    node.robot_half_width, node.los_margin = 0.4, 0.35
+    node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: 0))
+    pose, los = method(node)
+    assert (pose.pose.position.x, pose.pose.position.y) == pytest.approx((10, 22))
+    assert los and node.los_clear_wide  # Person at laser distance 2.82, radius 0.25.

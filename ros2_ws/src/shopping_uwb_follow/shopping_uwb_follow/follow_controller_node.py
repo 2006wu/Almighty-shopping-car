@@ -2,6 +2,8 @@ import math
 
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.executors import ExternalShutdownException
+from rclpy._rclpy_pybind11 import RCLError
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
@@ -19,7 +21,7 @@ from .follow_controller import (
 )
 from .follow_handoff import (
     GoalBook, VelocityDrain, HandoffParams, HandoffSupervisor,
-    line_of_sight_clear, scan_valid, transform_xy,
+    line_of_sight_clear, scan_valid, transform_xy, standoff_target,
 )
 from .node_common import seconds
 from .estimator import TargetVelocityEstimator
@@ -53,7 +55,7 @@ class FollowNode(Node):
             if key not in vars(defaults):
                 setattr(handoff, key, self.declare_parameter(key, value).value)
         self.supervisor = HandoffSupervisor(handoff, route_around)
-        self.robot_half_width = self.declare_parameter('robot_half_width', 0.25).value
+        self.robot_half_width = self.declare_parameter('robot_half_width', 0.4).value
         self.los_margin = self.declare_parameter('los_margin', 0.35).value
         if any(not math.isfinite(v) or v <= 0 for v in (self.robot_half_width, self.los_margin)):
             raise ValueError('LOS parameters must be positive and finite')
@@ -65,6 +67,8 @@ class FollowNode(Node):
         self.target = self.target_time = self.scan_time = self.scan = None
         self.los_clear_wide = False
         self.obstacle = float('nan')
+        self.last_diagnostic = -math.inf
+        self.last_nav_command = None
         self.last_time = seconds(self)
         self.goal_handle = None
         self.goal_pending = self.cancel_pending = self.cancel_requested = False
@@ -118,6 +122,7 @@ class FollowNode(Node):
         if (getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') == '/cmd_vel'
                 and own_zero and now-self.last_own_publish <= 0.2):
             return
+        self.last_nav_command = (now, msg.linear.x, msg.angular.z)
         self.drain.observe(now, msg.linear.x, msg.angular.z)
 
     def on_odom(self, msg):
@@ -158,7 +163,7 @@ class FollowNode(Node):
                 self.scan.header.frame_id, 'base_link', Time.from_msg(self.scan.header.stamp)))
         except TransformException:
             return None, False
-        point = transform_xy(self.target, robot)
+        point = transform_xy(standoff_target(self.target, self.control.p.follow_distance), robot)
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.get_clock().now().to_msg()
@@ -292,7 +297,8 @@ class FollowNode(Node):
         factor = side_speed_factor(clearance, p.side_slow_clearance,
                                    p.side_free_clearance, p.side_min_speed_factor)
         if self.client is not None and not los:
-            factor *= p.los_uncertain_speed_factor
+            # Independent speed caps should not compound into a smaller cap.
+            factor = min(factor, p.los_uncertain_speed_factor)
         v, w, state, reason = self.control.step(
             self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
             target_velocity=(getattr(self, 'target_velocity', (0.0, 0.0))
@@ -301,6 +307,7 @@ class FollowNode(Node):
         self.last_time = now
         if (not self.enabled and not self.busy()
                 and getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') != '/cmd_vel'):
+            self.diagnose(now, 'IDLE', 0.0, 0.0, 'Disabled', factor, obstacle, age)
             self.state.publish(String(data='IDLE: Disabled'))
             return
         point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
@@ -322,14 +329,12 @@ class FollowNode(Node):
             self.first_direct = True
         elif decision.action in ('send_goal', 'update_goal'):
             self.replacement = pose
-            # Nav2 preempts the active goal; updates never cancel or drain.
-            if decision.action == 'update_goal' and not self.drain.active:
-                self.replacement = None
-                self.send_goal(pose)
+            # Coalesce updates while acceptance is pending; preempt without
+            # cancellation once the previous submission has been acknowledged.
         if decision.mode == 'DIRECT':
             self.replacement = None
         if (decision.mode == 'NAV2' and self.replacement is not None
-                and not self.busy() and self.drain.ready(now)):
+                and not self.goal_pending and self.drain.ready(now)):
             self.drain.reset()
             # Use the newest target, rather than the position at cancel time.
             self.replacement = None
@@ -337,11 +342,13 @@ class FollowNode(Node):
         if self.cancel_requested and self.busy():
             self.cancel_goal()
         waiting = self.busy() or not self.drain.ready(now)
+        commanded_v = commanded_w = 0.0
         if decision.direct_publish and not waiting:
             self.drain.reset()
             cmd = Twist()
             if not self.first_direct:
                 cmd.linear.x, cmd.angular.z = v, w
+            commanded_v, commanded_w = cmd.linear.x, cmd.angular.z
             self.publisher.publish(cmd)
             self.last_own_publish = seconds(self)
             if self.first_direct:
@@ -350,14 +357,45 @@ class FollowNode(Node):
         else:
             self.control.v = self.control.w = 0.0
             # Safety stops bypass normal acceleration and cancellation latency.
-            if not valid or state in ('LOST', 'TOO_CLOSE', 'IDLE'):
+            if not valid or state in ('LOST', 'TOO_CLOSE', 'IDLE', 'OBSTACLE_STOP'):
                 self.publisher.publish(Twist())
                 self.last_own_publish = seconds(self)
-        if decision.mode == 'NAV2':
+        if decision.mode == 'NAV2' and state == 'FOLLOWING':
             state, reason = 'NAV2_HANDOFF', decision.reason
+            command = getattr(self, 'last_nav_command', None)
+            if command is not None and 0 <= now-command[0] <= 0.5:
+                commanded_v, commanded_w = command[1:]
+        elif decision.mode == 'NAV2':
+            reason += '; Nav2 output masked by safety zero'
         elif waiting:
             reason += '; waiting for navigation stop'
+        self.diagnose(now, state, commanded_v, commanded_w, reason, factor, obstacle, age)
         self.state.publish(String(data=state+': '+reason))
+
+
+    def diagnose(self, now, state, v, w, reason, factor, obstacle, age):
+        last = getattr(self, 'last_diagnostic', -math.inf)
+        if 0 <= now-last < 1.0:
+            return
+        self.last_diagnostic = now
+        distance = math.hypot(*self.target) if self.target is not None else math.nan
+        bearing = math.atan2(self.target[1], self.target[0]) if self.target is not None else math.nan
+        self.get_logger().info(
+            f'state={state} mode={self.supervisor.mode} distance={distance:.3f}m '
+            f'bearing={bearing:.3f}rad command_v={v:.3f} command_w={w:.3f} cap_factor={factor:.3f} '
+            f'front={obstacle:.3f}m target_age={age:.3f}s '
+            f'nav_status={self.nav_status} nav_pending={self.goal_pending} '
+            f'los_blocked={self.supervisor.los.blocked} drain={self.drain.active} limit={reason}')
+
+    def stop_before_shutdown(self):
+        # SIGINT may already have invalidated the context. The independent
+        # watchdog expires even when a final upstream zero cannot be delivered.
+        if rclpy.ok(context=self.context):
+            try:
+                self.cancel_goal()
+                self.publisher.publish(Twist())
+            except RCLError:
+                pass
 
 
 def main(args=None):
@@ -365,8 +403,10 @@ def main(args=None):
     node = FollowNode()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
-        node.cancel_goal()
-        node.publisher.publish(Twist())
+        node.stop_before_shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

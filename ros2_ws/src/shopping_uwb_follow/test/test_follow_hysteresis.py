@@ -125,7 +125,8 @@ def test_nav_hold_and_debounced_close_return():
     s = nav()
     step(s, 3, **clear)
     assert step(s, 3.59, **clear).mode == 'NAV2'
-    assert step(s, 3.61, **clear).action == 'cancel_goal'  # No extra resume_delay.
+    assert step(s, 3.61, **clear).mode == 'NAV2'
+    assert step(s, 4.12, **clear).action == 'cancel_goal'
 
 
 def test_direct_hold_and_continuously_blocked_exception():
@@ -136,7 +137,7 @@ def test_direct_hold_and_continuously_blocked_exception():
     # Continuous debounced blockage since 0.3 permits a new handoff early.
     assert step(s, 1.52).action == 'send_goal'
     s = nav()
-    clear = dict(los_clear=True, los_clear_wide=True)
+    clear = dict(los_clear=True, los_clear_wide=True, target=(1.3, 0))
     step(s, 1, **clear)
     step(s, 1.61, **clear)
     assert step(s, 2.31, **clear).action == 'cancel_goal'

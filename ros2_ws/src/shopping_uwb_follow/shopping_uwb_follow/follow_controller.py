@@ -126,10 +126,23 @@ class FollowController:
         radial = (sum(a*b for a, b in zip(target_velocity, target))/distance
                   if velocity_valid else 0.0)
         demand = max(0.0, p.velocity_feedforward*radial+correction)
-        v = (min(p.max_linear*max(0.0, min(1.0, speed_factor)), demand)
-             * max(0.0, math.cos(bearing)))
+        cap = p.max_linear*max(0.0, min(1.0, speed_factor))
+        heading = max(0.0, math.cos(bearing))
+        v = min(cap, demand)*heading
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
+        limits = []
+        if demand > cap:
+            limits.append('speed cap')
+        if heading < 0.95:
+            limits.append('heading')
+        if abs(v-self.v) > p.max_linear_accel*dt:
+            limits.append('linear acceleration')
+        if abs(w-self.w) > p.max_angular_accel*dt:
+            limits.append('angular acceleration')
+        if self.holding_distance:
+            limits.append('distance hold')
+        reason = ', '.join(limits) or 'Tracking target'
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))
         return self.v, self.w, state, reason

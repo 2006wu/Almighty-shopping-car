@@ -162,12 +162,14 @@ def simulate(path=None, params=None, *, legacy=False, world=False, duration=None
             factor *= side_speed_factor(clearance, params.side_slow_clearance,
                                         params.side_free_clearance, params.side_min_speed_factor)
             laser_target = (estimated[0]-0.18, estimated[1])
-            los = line_of_sight_clear(scan, -math.pi, math.pi/90, laser_target, 0.25, 0.35, 0.12, 12)
+            corridor = 0.25 if legacy else config['robot_half_width']
+            los = line_of_sight_clear(scan, -math.pi, math.pi/90, laser_target, corridor, 0.35, 0.12, 12)
             wide = line_of_sight_clear(scan, -math.pi, math.pi/90, laser_target,
-                                       0.25+config['los_clear_extra_width'], 0.35, 0.12, 12)
+                                       corridor+config['los_clear_extra_width'], 0.35, 0.12, 12)
             los_filter.step(now, los, wide)
             if not los:
-                factor *= params.los_uncertain_speed_factor
+                factor = (factor*params.los_uncertain_speed_factor if legacy else
+                          min(factor, speed_factor*params.los_uncertain_speed_factor))
         bearing_factor = max(0.0, math.cos(math.atan2(estimated[1], estimated[0])))
         limits['reduced_speed_cap_samples'] += factor < 1-1e-9
         limits['bearing_gate_samples'] += bearing_factor < 0.95

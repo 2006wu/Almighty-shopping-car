@@ -99,7 +99,7 @@ def test_immediate_cancel(kwargs):
 
 def test_clear_resume_delay_resets_with_obstruction():
     s = navigating()
-    clear = dict(los_clear=True, front_clearance=1.0)
+    clear = dict(los_clear=True, front_clearance=1.0, target=(1.3, 0))
     assert tick(s, 2, **clear).mode == 'NAV2'
     assert tick(s, 2.49, **clear).mode == 'NAV2'
     tick(s, 2.5)
@@ -109,11 +109,12 @@ def test_clear_resume_delay_resets_with_obstruction():
     assert tick(s, 4.11, **clear).action == 'cancel_goal'
 
 
-def test_clearance_threshold_and_immediate_close_resume():
+def test_clearance_threshold_and_sustained_close_resume():
     s = navigating()
     tick(s, 2, los_clear=True, front_clearance=0.8)
     assert tick(s, 3, los_clear=True, front_clearance=0.8).mode == 'NAV2'
-    assert tick(s, 3.1, los_clear=True, target=(1.3, 0)).action == 'cancel_goal'
+    assert tick(s, 3.1, los_clear=True, target=(1.3, 0), front_clearance=1).mode == 'NAV2'
+    assert tick(s, 3.61, los_clear=True, target=(1.3, 0), front_clearance=1).action == 'cancel_goal'
     assert tick(navigating(), 2, nav_status='succeeded').action == 'cancel_goal'
 
 
@@ -269,3 +270,59 @@ def test_drain_no_messages_and_repeated_cancel_do_not_restart_wait():
     assert not d.ready(0.29) and d.ready(0.3)
     assert d.terminal_at == 0.1
     assert not d.ready(-1)
+
+
+def test_visible_far_person_does_not_cancel_detour_during_goal_updates():
+    s = navigating()
+    for i in range(1, 101):
+        t = 1+i*0.2
+        decision = tick(s, t, state='FOLLOWING', los_clear=True,
+                        los_clear_wide=True, front_clearance=2,
+                        target=(3, 0), map_target=(3+0.18*t, 5))
+        assert decision.mode == 'NAV2'
+        assert decision.action in ('none', 'update_goal')
+    # Near, but across a corner: visibility alone still cannot release Nav2.
+    for t in (22, 23, 24):
+        assert tick(s, t, los_clear=True, los_clear_wide=True,
+                    front_clearance=2, target=(0.8, 0.8)).mode == 'NAV2'
+    tick(s, 25, los_clear=True, los_clear_wide=True,
+         front_clearance=2, target=(1.2, 0))
+    assert tick(s, 25.51, los_clear=True, los_clear_wide=True,
+                front_clearance=2, target=(1.2, 0)).action == 'cancel_goal'
+
+
+def test_navigation_standoff_is_in_front_of_person_and_transforms_to_map():
+    from shopping_uwb_follow.follow_handoff import standoff_target
+    assert standoff_target((3, 4), 1) == pytest.approx((2.4, 3.2))
+    assert math.dist(standoff_target((3, 4), 1), (3, 4)) == pytest.approx(1)
+    assert transform_xy(standoff_target((3, 0), 1), (10, 20, math.pi/2)) == pytest.approx((10, 22))
+    assert standoff_target((0.5, 0), 1) == (0, 0)
+    assert standoff_target((0, 0), 1) == (0, 0)
+    for target, distance in [(None, 1), ((math.nan, 0), 1), ((2, 0), 0), ((2, 0), math.inf)]:
+        with pytest.raises(ValueError):
+            standoff_target(target, distance)
+
+
+def test_resume_bearing_cannot_allow_a_backward_handoff():
+    with pytest.raises(ValueError):
+        HandoffSupervisor(HandoffParams(resume_max_bearing=math.pi))
+
+
+def test_configured_safety_envelope_and_speed_budget():
+    import yaml
+    root = Path(__file__).resolve().parents[4]
+    if not (root/'docs').is_dir():
+        root = Path('/repo')
+    if not (root/'docs').is_dir():
+        pytest.skip('repository configuration not mounted')
+    follow = yaml.safe_load((root/'ros2_ws/src/shopping_uwb_follow/config/uwb_follow.yaml').read_text())['/**']['ros__parameters']
+    nav = yaml.safe_load((root/'ros2_ws/src/shopping_robot_navigation/config/nav2_params.yaml').read_text())
+    person = yaml.safe_load((root/'ros2_ws/src/shopping_robot_gazebo/config/person_path.yaml').read_text())
+    assert follow['robot_half_width'] >= math.hypot(0.30, 0.25)
+    controller = nav['controller_server']['ros__parameters']['FollowPath']
+    smoother = nav['velocity_smoother']['ros__parameters']
+    assert person['speed'] < follow['max_linear']*follow['side_min_speed_factor']
+    assert person['speed'] < controller['regulated_linear_scaling_min_speed']
+    assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
+    assert smoother['max_velocity'][0] == follow['max_linear']
+    assert smoother['max_accel'][0] == follow['max_linear_accel']
