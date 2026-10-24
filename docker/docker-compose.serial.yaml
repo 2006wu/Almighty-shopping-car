@@ -1,0 +1,8 @@
+# Explicit opt-in micro-ROS XRCE serial agent, NOT the plain-serial fallback.
+# Copy this file and uncomment devices only after confirming the physical port.
+# No device mapping is enabled in the distributed override.
+services:
+  microros_agent:
+    command: [serial, --dev, /dev/ttyACM0, -b, '115200', -v4]
+    # devices:
+    #   - /dev/ttyACM0:/dev/ttyACM0

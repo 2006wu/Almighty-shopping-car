@@ -1,0 +1,22 @@
+# Canonical wire/ROS contract, version 1. Rates are wall-clock Hz.
+version: 1
+wheel_names: [front_left_joint, rear_left_joint, front_right_joint, rear_right_joint]
+timing: {command_timeout: 0.3, heartbeat_timeout: 0.5, recovery_count: 3}
+model: {response_time: 0.12, wheel_acceleration: 12.0, max_linear: 0.6, max_angular: 1.2, ticks_per_revolution: 4096}
+# track = (width - wheel_width) * skid_track_factor from description xacro.
+topics:
+  cmd: {name: /cmd_vel, type: geometry_msgs/msg/Twist, direction: pc_to_mcu, rate: 20, reliability: reliable, depth: 1, unit: 'm/s; rad/s', frame: base_footprint, wire_id: 1, format: 6d}
+  wheel: {name: /mcu/wheel_state, type: sensor_msgs/msg/JointState, direction: mcu_to_pc, rate: 50, reliability: best_effort, depth: 5, unit: 'rad; rad/s', frame: base_link, wire_id: 2, format: 8d}
+  ticks: {name: /mcu/encoder_ticks, type: std_msgs/msg/Int64MultiArray, direction: mcu_to_pc, rate: 50, reliability: best_effort, depth: 5, unit: ticks, frame: wheel_joint_order, wire_id: 3, format: 4q}
+  imu: {name: /mcu/imu, type: sensor_msgs/msg/Imu, direction: mcu_to_pc, rate: 50, reliability: best_effort, depth: 5, unit: 'rad/s; m/s^2', frame: imu_link, wire_id: 4, format: d}
+  estop: {name: /mcu/estop, type: std_msgs/msg/Bool, direction: mcu_to_pc, rate: 10, reliability: reliable, depth: 1, durability: transient_local, unit: bool, frame: none, wire_id: 5, format: '?'}
+  mcu_heartbeat: {name: /mcu/heartbeat, type: std_msgs/msg/UInt32, direction: mcu_to_pc, rate: 10, reliability: reliable, depth: 1, unit: counter, frame: none, wire_id: 6, format: I}
+  pc_heartbeat: {name: /pc/heartbeat, type: std_msgs/msg/UInt32, direction: pc_to_mcu, rate: 10, reliability: reliable, depth: 1, unit: counter, frame: none, wire_id: 7, format: I}
+  status: {name: /mcu/status, type: std_msgs/msg/String, direction: mcu_to_pc, rate: 10, reliability: reliable, depth: 1, unit: enum, frame: none, wire_id: 8, format: B}
+  reset: {name: /mcu/reset_estop, type: std_msgs/msg/Bool, direction: pc_to_mcu, rate: 0, reliability: reliable, depth: 1, unit: bool, frame: none, wire_id: 9, format: '?'}
+  button: {name: /mcu/sim/estop_button, type: std_msgs/msg/Bool, direction: sim_control, rate: 0, reliability: reliable, depth: 1, unit: bool, frame: none, wire_id: 10, format: '?'}
+  drop: {name: /mcu/sim/drop_link, type: std_msgs/msg/Float32, direction: sim_control, rate: 0, reliability: reliable, depth: 1, unit: seconds, frame: none, wire_id: 11, format: f}
+  drop_commands: {name: /mcu/sim/drop_commands, type: std_msgs/msg/Float32, direction: sim_control, rate: 0, reliability: reliable, depth: 1, unit: seconds, frame: none, wire_id: 12, format: f}
+  sim_active: {name: /mcu/sim/active, type: std_msgs/msg/Bool, direction: sim_marker, rate: 1, reliability: reliable, depth: 1, durability: transient_local, unit: bool, frame: none}
+  mode_request: {name: /mode_manager/request, type: std_msgs/msg/String, direction: pc_local, rate: 0, reliability: reliable, depth: 10, unit: enum, frame: none}
+status_values: [LINK_LOST, ESTOP, CMD_TIMEOUT, INVALID_COMMAND, READY]

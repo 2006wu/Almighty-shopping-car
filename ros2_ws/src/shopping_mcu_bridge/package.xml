@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>shopping_mcu_bridge</name><version>0.1.0</version>
+  <description>Simulation-first MCU communication contract and transports</description>
+  <maintainer email="2006wu@users.noreply.github.com">2006wu</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend><exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend><exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend><exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend><exec_depend>launch_ros</exec_depend>
+  <exec_depend>shopping_robot_description</exec_depend>
+  <exec_depend>shopping_zone_manager</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

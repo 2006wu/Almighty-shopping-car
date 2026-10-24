@@ -772,3 +772,45 @@
 | `yaw-check`（plain sim、EKF） | 原地旋轉比值：0.2→1.187、0.4→1.441、0.6→1.382、0.8→1.385 rad/s（平均 1.349）；EKF 與真值一致。弧線兩列因淨空不足中止（工具正確停車並發布零速）。擬合 `fortress_command_factor` ≈ 1.48，**未套用**，xacro 仍為 2.0（低速起轉非線性，需多速度確認） |
 | AMCL 六區 `loc-check`（map_server、新 likelihood_field 參數） | **6/6 PASS**：drinks 0.031 m、snacks **0.096 m**（原 0.168 m 失敗）、produce 0.033 m、household 0.057 m、checkout 0.002 m、entrance 0.008 m；航向誤差最大 2.07° |
 | 未驗證 | Mac arm64、Gazebo GUI、`map-geometry-check` 實際格網比較、yaw 弧線列、AMCL 重複多次的穩定度 |
+## 2026-10-24：micro-ROS 通訊層與模擬韌體
+
+### 修改內容
+
+- 新增 `shopping_mcu_bridge` ament_python 套件與唯一介面來源 `config/interface.yaml`；以標準 Twist、JointState、Imu、Bool、UInt32、Int64MultiArray、String 定義命令、四輪狀態／encoder、IMU、急停、雙向 heartbeat 與狀態。MCU 遙測維持 `/mcu/*`，沒有取代 Gazebo `/odom`、`/imu` 或新增 TF。
+- 新增 `sim_mcu_firmware` 與純 Python 安全／輪模型：直接讀 description xacro 的 0.10 m 輪徑與 0.92 m 有效輪距，具一階響應、加速度限制、不倒車、無效命令拒絕與飽和。命令逾時、PC heartbeat 遺失與急停皆立即零輪速；失聯須三筆新 heartbeat，急停須放開按鈕再明確 reset。所有安全期限採單調壁鐘。
+- 新增 `mcu_link_monitor`，選用後透過既有 `/mode_manager/request` 請求 estop。速度唯一出口仍是既有 watchdog；通訊節點沒有發布 `/cmd_vel`，也不自動解除模式急停。
+- 新增固定二進位 serial codec／CRC16-CCITT-FALSE、可重同步的分段解碼器與 PTY 模擬 peer。`serial_bridge` 預設只建立程序內 PTY；實體串列必須同時 `use_hardware:=true` 與明確 port，才延遲匯入 pyserial，不掃描裝置或自動重連。包含真實 PTY 雙向收送與斷線／恢復測試。
+- 新增 comm launch，支援 sim_ros／serial_loopback；follow、guide 以預設 false 的 `mcu_comm` 引入。獨立 `dev.sh comm-sim` 啟動 mux／watchdog、模擬韌體與 monitor，無 Gazebo 可執行。`comm-check` 檢查隔離 graph 後才經 teleop／mux 注入速度與故障，列 PASS／FAIL，最後保持急停。
+- compose 新增 `comm` profile 的 UDP4 agent（官方 Humble image 命名、內部 8888、無裝置／host port／固定平台），提供獨立 serial opt-in override 範本，預設 devices 仍為註解。`dev.sh up` 仍只啟動 compute／display；新增 comm-up／comm-down／comm-sim／comm-check。
+- 新增 MCU_INTERFACE、MICROROS_GUIDE，更新 README／ARCHITECTURE，對照舊競賽 repo 的 PC bridge 與 rosserial 經驗；說明 CubeIDE／PlatformIO、FreeRTOS／記憶體預算、QoS、重連與備援。H7 完整板型、F446 是否 F446RE、「451d」均保留待確認。ROADMAP 未勾選或修改。
+
+### 本機自行檢查
+
+指定既有環境 `/workspace/scratch/venv-shop/bin/python -m pytest -q`：682 項通過（本次新增 72 項），保留既有 xacro Python 棄用警告 1 項。`/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，包含 YAML／XML／Python／Bash 與兩／三錨點、ekf／ground_truth 的 xacro 展開。`git diff --check`：通過。未安裝套件、建立虛擬環境、執行 Docker、提交或推送。
+
+### 限制與下一步
+
+- 這些是純 Python、PTY 與靜態檢查，不能冒充 Humble DDS、colcon、容器、Gazebo 或硬體驗收。維護者須依 MICROROS_GUIDE 重新建置並分別執行兩種 transport 的 comm-check，再測 follow／guide 的選用啟動。
+- 模擬韌體是一般 rclpy DDS 節點；serial loopback 走自訂 codec；兩者都不經 micro-ROS agent。目前沒有真正 XRCE client 或 MCU 韌體。下一步可另建 micro_ros_setup host／Linux client 或確認板型後再接板；ROADMAP 對 agent 的端到端項目尚未達成。
+- 官方映像名稱與發行版 tag 依官方文件對照，但未 pull 或檢查 registry manifest；amd64／arm64 原生啟動與 DDS discovery 仍待驗證。預設 UDP 僅 compose 內部可達，外部 client 的 port mapping 必須另外明確設定。
+- serial 版本 1 只攜帶 yaw rate，不是完整實體 IMU 資料；stamp 由 PC 接收時重建，未作 MCU 時鐘同步。輪模型未辨識實車滑移；4096 ticks/rev、速度／加速度與 IMU covariance 皆為模擬值。實車 EKF 轉接、馬達／encoder／IMU 驅動與電氣急停均未實作。
+- 實體 serial 分支是未驗證的明確選用備援，預設容器沒有裝置映射，也不保證含 pyserial。連線失敗保持 LINK_LOST，不自動重開；必須先由維護者確認依賴、韌體協定與雙邊安全期限。不要對同一埠同時啟動 agent 與 binary bridge。
+- 通訊注入驗收只能用獨立 comm-sim，不得與 Gazebo／follow／guide 同時執行；整合模擬時沿用原有單一 mux／watchdog 與一致 use_sim_time。
+
+### 審查驗證
+
+以下全部由審查者執行與填寫，本次自行檢查不代填審查結果。
+
+| 項目 | 結果 |
+| --- | --- |
+| 純邏輯／kinematics／heartbeat／急停 pytest 審查 | 待驗證 |
+| codec 分段、損毀、PTY 與硬體雙重啟用條件 | 待驗證 |
+| check_static、xacro、介面／文件／QoS 一致性 | 待驗證 |
+| 容器 colcon build／test（Humble） | 待驗證 |
+| sim_ros 獨立 comm-sim＋comm-check | 待驗證 |
+| serial_loopback 獨立 comm-sim＋comm-check | 待驗證 |
+| agent profile、UDP 啟動與 amd64／arm64 原生映像 | 待驗證 |
+| 真正 micro-ROS client 經 agent 端到端連線 | 待驗證 |
+| follow／guide mcu_comm 預設關閉與明確啟用 | 待驗證 |
+| 模式急停請求、唯一 cmd_vel 發布者及現有 EKF／TF 不受影響 | 待驗證 |
+| 實體 serial 與 MCU 韌體／硬體安全 | 待驗證 |

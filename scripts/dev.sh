@@ -19,6 +19,9 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   colcon-build             Build ROS packages
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
+  comm-up | comm-down     Manage the opt-in UDP micro-ROS agent
+  comm-sim [LAUNCH_ARGS...]  Standalone simulated MCU, monitor, mux and watchdog
+  comm-check              Check an isolated running comm-sim (injects motion/faults)
   sim [LAUNCH_ARGS...]     Headless simulation
   mapping | slam [LAUNCH_ARGS...]    Simulation and online mapping
   guide | nav [LAUNCH_ARGS...]     Simulation, localization/mapping, Nav2, zones
@@ -56,6 +59,10 @@ EOF
     workspace_task colcon test-result --verbose
     ;;
   test) workspace_task bash /repo/scripts/run_unit_tests.sh python3 "$@" ;;
+  comm-up) "${compose[@]}" --profile comm up -d microros_agent ;;
+  comm-down) "${compose[@]}" --profile comm stop microros_agent ;;
+  comm-sim) run ros2 launch shopping_mcu_bridge comm.launch.py standalone:=true "$@" ;;
+  comm-check) run ros2 run shopping_mcu_bridge comm_check "$@" ;;
   sim) run xvfb-run -a -n 50 ros2 launch shopping_robot_gazebo sim.launch.py "$@" ;;
   mapping|slam) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup mapping.launch.py "$@" ;;
   guide|nav) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup guide.launch.py "$@" ;;

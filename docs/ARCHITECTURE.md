@@ -275,3 +275,10 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 同步檢查同時比較幾何、UWB 真值與解析路徑；預設平均偏差 <0.05 m、延遲絕對值 <0.1 s。跟隨評估從車體真值姿態轉換人物真實相對位置，搜尋 ±0.5 秒、0.01 秒格距的最佳位移；只對各候選皆可插值的共同樣本計算，不跨大缺口或外插。另按解析路徑航向率分直線／轉彎、統計真實距離與估測誤差，按 YAML 停止距離檢查近停後 0.5 秒內是否達到 ≤0.03 m/s 與 ≤0.05 rad/s 並持續停止，以及 UWB stale／LOST 後新鮮估測至 FOLLOWING 的時間（≤2 秒）。濾波延遲門檻為絕對值 <0.3 秒，分段距離偏差 RMSE <1.5 m。
 
 狀態訊息沒有 header，以接收時模擬時間記錄；其排程誤差會影響恢復時間。延遲估計也包含取樣、橋接及位置偏差影響，不是內部函式耗時。缺少運動或搜尋結果貼邊不允許通過延遲檢查；缺少近停、轉彎、恢復情境或紀錄邊界截斷時標記 `NOT_COVERED`，不能當成完成驗收。近停與距離統計獨立於估測是否存在；缺包不會刪掉安全事件。使用者須先驗證同步，再安排缺口及近停情境。完整命令、門檻覆寫、結束碼和來源實作連結見 README 的「人物同步與跟隨評估」。
+## MCU 通訊層（選用，2026-10-24）
+
+`shopping_mcu_bridge/config/interface.yaml` 是標準訊息介面的唯一來源；`sim_mcu_firmware` 直接使用 DDS 模擬 MCU，`serial_bridge` 預設用程序內 PTY 與相同安全模型交換 CRC16 二進位訊框。兩者只訂閱 watchdog 輸出的 `/cmd_vel`，不新增速度發布者，輪速／encoder／IMU／狀態都隔離於 `/mcu/*`，不接入現有 EKF 或 TF。輪模型由 description xacro 取得輪徑與有效輪距；沒有新增馬達、裝置或板卡驅動。
+
+`mcu_link_monitor` 發布 `/pc/heartbeat`，檢查 MCU heartbeat／status／急停；選用 `estop_on_link_loss` 時向既有 `/mode_manager/request` 請求 estop。安全期限使用單調壁鐘，訊息 stamp 使用 ROS 時鐘。失聯恢復需要三筆新 heartbeat，MCU latch 與 PC 模式急停均須明確重設。純邏輯、codec、transport 與 ROS 節點分開測試。
+
+`comm.launch.py` 選 `sim_ros` 或 `serial_loopback`；follow／guide 以預設 false 的 `mcu_comm` 引入並沿用 `use_sim_time`。獨立 `dev.sh comm-sim` 才啟動額外 mux／watchdog。compose `comm` profile 的 agent 預設 UDP4:8888、無裝置映射，僅供未來真正 XRCE client；目前兩種模擬均不經 agent。未來硬體 EKF 接法、serial 的雙重啟用條件與驗收限制見 [MCU_INTERFACE.md](MCU_INTERFACE.md) 與 [MICROROS_GUIDE.md](MICROROS_GUIDE.md)。

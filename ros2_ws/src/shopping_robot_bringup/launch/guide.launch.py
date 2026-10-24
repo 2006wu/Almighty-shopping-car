@@ -1,4 +1,5 @@
 from launch import LaunchDescription
+from launch.conditions import IfCondition
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -13,9 +14,14 @@ def include(package, filename, args):
 def generate_launch_description():
     time = LaunchConfiguration('use_sim_time')
     return LaunchDescription([
+        DeclareLaunchArgument('mcu_comm', default_value='false', choices=['true', 'false']),
         DeclareLaunchArgument('fault_injection', default_value='false'),
         DeclareLaunchArgument('fault_schedule', default_value='[]'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            get_package_share_directory('shopping_mcu_bridge')+'/launch/comm.launch.py'),
+            condition=IfCondition(LaunchConfiguration('mcu_comm')),
+            launch_arguments={'use_sim_time': time}.items()),
         DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
         DeclareLaunchArgument('initial_mode', default_value='guide'),
         DeclareLaunchArgument('odom_source', default_value='ekf', choices=['ekf', 'ground_truth']),
