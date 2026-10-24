@@ -102,7 +102,7 @@ docker compose -f docker/docker-compose.yaml --profile comm logs -f microros_age
                               agent → DDS → 檢查器
 ```
 
-客戶端使用 `rmw_microxrcedds`，先由 Docker DNS 將 `microros_agent` 解析成 IPv4，再連 UDP 8888；沒有 host port、devices、主機網路或固定架構。`ROS_DOMAIN_ID` 會明確設入 rcl 初始化選項，預設與 compute／agent 同為 28。Linux client 只支援此獨立壁鐘流程，不能混入 Gazebo 的模擬時間。
+客戶端使用 `rmw_microxrcedds`，與 agent 共用 compute 網路命名空間，以 `127.0.0.1` 連 UDP 8888；沒有 host port、devices、主機網路或固定架構。`ROS_DOMAIN_ID` 會明確設入 rcl 初始化選項，預設與 compute／agent 同為 28。Linux client 只支援此獨立壁鐘流程，不能混入 Gazebo 的模擬時間。
 
 檢查器最多等 10 秒探索 DDS；要求 XRCE 模擬標記、唯一 C 客戶端、唯一 mux／watchdog／monitor、相符的遙測發布者與唯一 `/cmd_vel` 接收者。若有 `/clock` 發布者、Gazebo、`sim_mcu_firmware` 或 `serial_bridge`，即 FAIL 並拒絕注入。注入期間也會重查 graph；請勿在檢查途中啟動其他流程。它不是實體裝置辨識或操作工具。
 
@@ -170,13 +170,13 @@ UART 需要匹配 baud、8N1、電位與 GND；USB-CDC 是 USB device transport�
 
 兩條路互斥：micro-ROS MCU 使用 XRCE agent；純 serial MCU 使用本專案 codec／serial_bridge。不能同時開啟同一埠，也不能把本專案二進位訊框送 agent。
 
-micro-ROS serial agent 的範本是 [docker-compose.serial.yaml](../docker/docker-compose.serial.yaml)。只有使用者確認硬體與埠後，複製成自己的 override，取消該單一 devices mapping 註解，再明確執行：
+micro-ROS serial agent 的範本是 [docker-compose.serial.yaml](../docker/docker-compose.serial.yaml)。只有使用者確認硬體與埠後，複製成自己的 override，取消該單一 devices mapping 註解，設定 `MICROROS_SERIAL_DEVICE` 為同一個已確認埠，再明確執行：
 
 ```bash
 docker compose -f docker/docker-compose.yaml -f /path/to/confirmed-serial.yaml --profile comm up -d microros_agent
 ```
 
-範本 command 為 `serial --dev /dev/ttyACM0 -b 115200`；直接使用原範本沒有 devices，預期無法連到裝置。勿掛整個 `/dev`、勿 privileged、勿自動偵測。這是未來硬體選用步驟，目前開發仍用 sim_ros／PTY。
+範本 command 的 `--dev` 由明確的 `MICROROS_SERIAL_DEVICE` 提供，未設定時 Compose 直接拒絕解析；即使設定，原範本仍沒有 devices，無法連到裝置。勿掛整個 `/dev`、勿 privileged、勿自動偵測。這是未來硬體選用步驟，目前開發仍用 sim_ros／PTY。
 
 如果 MCU 記憶體、RTOS 整合或 micro-ROS transport 支援不合適，可選用固定 binary fallback。它較小、容易在舊韌體實作，但 MCU 需自行維護 codec／CRC、資料與安全狀態機，沒有 DDS discovery。真正連到板子的 bridge 必須同時設定 **`use_hardware:=true` 與非空明確 `port`**；預設 false／空字串，任一條件缺少就拒絕開埠。該程序還需在自己的 opt-in 容器 override 映射單一已確認的 port，並由維護者預先提供 pyserial（套件不自動安裝；只有硬體分支延遲匯入）。範例僅供未來確認硬體後使用：
 

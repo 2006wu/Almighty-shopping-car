@@ -22,6 +22,10 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   colcon-build             Build ROS packages
   colcon-test              Test packages and report results
   test                     Run ROS-free Python tests in compute
+  split-up [guide|follow] [ARGS...]  Start role containers (simulation only)
+  split-down              Stop role containers and optional profiles
+  split-status            Show split/profile container status
+  split-logs SERVICE      Follow one role's logs
   comm-up | comm-down     Manage the opt-in UDP micro-ROS agent
   comm-sim [LAUNCH_ARGS...]  Standalone simulated MCU, monitor, mux and watchdog
   comm-e2e-up             Start agent + C client, then standalone mux/watchdog/monitor
@@ -53,6 +57,32 @@ EOF
   up) "${compose[@]}" up -d compute display ;;
   down) "${compose[@]}" down ;;
   status) "${compose[@]}" ps -a ;;
+  split-up)
+    split_mode="guide"
+    if [[ "${1:-}" == guide || "${1:-}" == follow ]]; then split_mode="$1"; shift; fi
+    for arg in "$@"; do
+      [[ "$arg" != *$'\n'* ]] || { echo 'Newlines are not allowed in split arguments' >&2; exit 2; }
+      case "$arg" in
+        mcu_transport:=sim_ros|mcu_transport:=agent|headless:=*|odom_source:=*|nav2_stack:=*|slam_mode:=*|map:=*|fault_injection:=*|fault_schedule:=*|route_around:=*|person:=*) ;;
+        *) echo "Unsupported split argument: $arg" >&2; exit 2 ;;
+      esac
+    done
+    # Recreate the idle namespace owner so old foreground launches cannot survive.
+    "${compose[@]}" --profile split --profile comm --profile record down
+    export SPLIT_MODE="$split_mode"
+    SPLIT_LAUNCH_ARGS="$(printf '%s\n' "$@")"
+    export SPLIT_LAUNCH_ARGS
+    "${compose[@]}" --profile split up -d compute sim localization navigation app display
+    ;;
+  split-down) "${compose[@]}" --profile split --profile comm --profile record down ;;
+  split-status) "${compose[@]}" --profile split --profile comm --profile record ps -a ;;
+  split-logs)
+    [[ $# == 1 ]] || { echo 'Usage: dev.sh split-logs SERVICE' >&2; exit 2; }
+    case "$1" in compute|sim|localization|navigation|app|display|microros_agent|microros_client|record) ;;
+      *) echo 'Invalid split service' >&2; exit 2 ;;
+    esac
+    "${compose[@]}" --profile split --profile comm --profile record logs -f "$1"
+    ;;
   shell)
     service="${1:-compute}"
     [[ "$service" == compute || "$service" == display ]] || { echo 'Invalid service' >&2; exit 2; }

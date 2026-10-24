@@ -125,10 +125,10 @@ def test_compose_build_and_launch_wiring(repo):
     client = services['microros_client']
     assert client['profiles'] == ['comm']
     assert client['depends_on'] == ['microros_agent']
-    assert client['environment']['MICROROS_AGENT_HOST'] == 'microros_agent'
+    assert client['environment']['MICROROS_AGENT_HOST'] == '127.0.0.1'
     assert client['environment']['MICROROS_AGENT_PORT'] == '8888'
     assert client['environment']['RMW_IMPLEMENTATION'] == 'rmw_microxrcedds'
-    assert client['networks'] == services['microros_agent']['networks']
+    assert client['network_mode'] == services['microros_agent']['network_mode'] == 'service:compute'
     for forbidden in ('ports', 'devices', 'privileged', 'platform', 'volumes'):
         assert forbidden not in client
     dockerfile = (repo/client['build']['dockerfile']).read_text()

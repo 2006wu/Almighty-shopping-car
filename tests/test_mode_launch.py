@@ -11,11 +11,12 @@ SRC = Path(__file__).resolve().parents[1]/'ros2_ws/src'
 
 
 class Configuration:
-    def __init__(self, name):
+    def __init__(self, name, default=None):
         self.name = name
+        self.default = default
 
     def perform(self, context):
-        return context[self.name]
+        return context.get(self.name, self.default)
 
 
 class Expression:

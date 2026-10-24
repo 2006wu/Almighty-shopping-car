@@ -778,3 +778,40 @@
 | mux／watchdog 唯一速度發布與 graph 拒絕注入 | 待驗證 |
 | 命令逾時、PC heartbeat 失聯及 ESTOP 恢復 | 待驗證 |
 | amd64／arm64 原生執行及無裝置預設 | 待驗證 |
+
+## 2026-10-24：t24 依角色拆分模擬容器
+
+### 本次修改
+
+- 新增 `split` profile 的 sim、localization、navigation、app，以及 `record` profile；保留預設 compute／display 與既有 comm agent／XRCE 客戶端服務名稱。角色與工具容器透過 YAML anchors 共用原生架構運算映像、工作區與 Nav2 underlay 卷，補齊 rosbag2 工具依賴。
+- 所有服務共用 compute 網路命名空間與相同 domain；DDS 參與者共用 UDPv4-only profile，XRCE 客戶端改以迴送位址連 agent。沒有新增 devices、privileged 或固定 platform；serial 範本額外要求明確設定 `MICROROS_SERIAL_DEVICE`，仍不掛載裝置。
+- 新增 bringup 的四個角色入口與共用角色 launch，透過既有 guide／follow／Gazebo／navigation launch 的預設相容開關重用節點定義。sim 保留模擬感測與 MCU；EKF 與 SLAM／AMCL 移至 localization；Nav2 獨立；app 保留唯一 watchdog 與 mux。拆分固定模擬時間與 mux，維持 TF 唯一來源、apt／fork／auto 選擇及 apt 隔離重新啟動的角色參數。
+- 新增 `split-up [guide|follow] [ARGS...]`、`split-down`、`split-status`、`split-logs SERVICE`；啟動前重建同一專案的服務，避免舊單容器 launch 殘留。參數不經 eval，支援空白並拒絕換行及未開放參數。Gazebo 健康檢查使用有逾時的 `ign topic -l`，確認世界時鐘主題後才啟動其他角色。
+- 新增離線測試，涵蓋 Compose profiles／映像／DDS／無裝置限制、十二組模式與里程計來源的節點歸屬、定位與導航 include 開關、apt 重新啟動參數、命令派送、字面參數與健康檢查。同步調整既有 XRCE 網路契約測試；套件測試仍保留 repo root／`/repo`／skip 的既有處理。
+- 新增 `docs/CONTAINERS.md` 的角色表、主題圖、Mac／Linux 操作、DDS 排錯、選用 profiles 與維護者驗收命令；更新 README、架構與 micro-ROS 網路／serial 說明。未勾選 ROADMAP，未提交或推送。
+
+### 自行檢查紀錄（不代替審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：803 passed、1 skipped；另有既有 xacro DeprecationWarning。跳過項目為未初始化的私有 Nav2 fork 原始碼契約檢查。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；18 個 YAML／RViz、14 個 XML／SDF／xacro、120 個 Python、7 個 Bash，並完成兩／三錨點及 ekf／ground_truth xacro 展開與錨點設定比對。
+- `git diff --check`：通過。命令派送測試使用假 Docker 執行檔，沒有執行 Docker、安裝套件或建立虛擬環境。
+
+### 限制與下一步
+
+- 本環境沒有 ROS，未執行 Compose 實際解析、映像建置、colcon、DDS、Gazebo、Nav2 或硬體驗收；靜態結果不代表容器整合通過。維護者請依 `docs/CONTAINERS.md` 的完整指令建置、執行 `split-up guide headless:=true`、對拆分堆疊執行 `nav-check`，最後 `split-down`，回報錯誤後再修正。
+- Gazebo 健康僅代表 transport 已列出世界時鐘主題，不保證 ROS 時鐘、模型、感測器、TF、定位與 Nav2 lifecycle 已就緒。app 延用既有 steady timer 重試及零速等待機制；連線異常觸發的 ESTOP 仍須明確解除。
+- XRCE C 模擬客戶端保留既有壁鐘 wheel telemetry，獨立 comm-e2e 流程仍使用壁鐘；不當作 Gazebo EKF 輸入。預設 split 使用 Python 模擬韌體；替換為 agent 的時間戳與整合尚待驗收，不能同時開啟兩個韌體發布者。
+- `split-up`／`split-down` 會停止同一專案的選用通訊與錄製工作；先正常結束錄製，再切換模式。Mac 日常使用預設單容器；拆分驗收先保持 headless 並不啟用額外 profiles。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 離線 pytest、靜態語法與模型檢查 | 待驗證 |
+| Mac arm64／Linux 原生映像、Compose 與 colcon | 待驗證 |
+| split 啟動順序、Gazebo transport、ROS 時鐘與 DDS | 待驗證 |
+| EKF／ground_truth、SLAM／AMCL TF 唯一來源 | 待驗證 |
+| guide／follow、Nav2 apt／fork 與晚啟動容忍 | 待驗證 |
+| watchdog 唯一發布者、急停與失聯零速 | 待驗證 |
+| 單容器與 micro-ROS e2e 相容性 | 待驗證 |
+| noVNC／RViz、record 與停止清理 | 待驗證 |

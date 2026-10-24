@@ -5,28 +5,31 @@ x-ros-env: &ros-env
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
   FASTRTPS_DEFAULT_PROFILES_FILE: /etc/fastdds_udp.xml
   LIBGL_ALWAYS_SOFTWARE: "1"
+x-runtime: &runtime
+  image: almighty-shopping-car-compute
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.compute
+    args:
+      ROS_APT_MIRROR: ${ROS_APT_MIRROR:-}
+  init: true
+  working_dir: /ws
+  shm_size: 1gb
+  environment: *ros-env
+  volumes:
+    - ../ros2_ws/src:/ws/src
+    - ../third_party/eurobot_nav2/src:/nav2_ws/src:ro
+    - nav2_build:/nav2_ws/build
+    - nav2_install:/nav2_ws/install
+    - nav2_log:/nav2_ws/log
+    - ..:/repo
+    - build:/ws/build
+    - install:/ws/install
+    - log:/ws/log
+    - ./fastdds_udp.xml:/etc/fastdds_udp.xml:ro
 services:
   compute:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.compute
-      args:
-        ROS_APT_MIRROR: ${ROS_APT_MIRROR:-}
-    init: true
-    working_dir: /ws
-    shm_size: 1gb
-    environment: *ros-env
-    volumes:
-      - ../ros2_ws/src:/ws/src
-      - ../third_party/eurobot_nav2/src:/nav2_ws/src:ro
-      - nav2_build:/nav2_ws/build
-      - nav2_install:/nav2_ws/install
-      - nav2_log:/nav2_ws/log
-      - ..:/repo
-      - build:/ws/build
-      - install:/ws/install
-      - log:/ws/log
-      - ./fastdds_udp.xml:/etc/fastdds_udp.xml:ro
+    <<: *runtime
     # The display shares this network namespace, so its noVNC/VNC ports are published here.
     ports:
       - 127.0.0.1:${NOVNC_HOST_PORT:-6080}:6080
@@ -44,7 +47,9 @@ services:
     environment: *ros-env
     volumes:
       - ./fastdds_udp.xml:/etc/fastdds_udp.xml:ro
-    networks: [ros]
+    network_mode: service:compute
+    depends_on:
+      compute: {condition: service_healthy}
     # UDP 8888 is intentionally internal; no device access or host port by default.
   microros_client:
     build:
@@ -56,11 +61,62 @@ services:
     environment:
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-28}
       RMW_IMPLEMENTATION: rmw_microxrcedds
-      MICROROS_AGENT_HOST: microros_agent
+      MICROROS_AGENT_HOST: 127.0.0.1
       MICROROS_AGENT_PORT: '8888'
     depends_on: [microros_agent]
-    networks: [ros]
+    network_mode: service:compute
     # Linux simulation only: UDP to the agent, no devices or published ports.
+  sim:
+    <<: *runtime
+    profiles: [split]
+    environment: &split-env
+      <<: *ros-env
+      SPLIT_MODE: ${SPLIT_MODE:-guide}
+      SPLIT_LAUNCH_ARGS: ${SPLIT_LAUNCH_ARGS:-}
+    network_mode: service:compute
+    depends_on:
+      compute: {condition: service_healthy}
+    command: [bash, /repo/scripts/split_role.sh, sim]
+    healthcheck:
+      test: [CMD, python3, /repo/scripts/sim_health.py]
+      interval: 5s
+      timeout: 4s
+      retries: 24
+      start_period: 20s
+  localization:
+    <<: *runtime
+    profiles: [split]
+    environment: *split-env
+    network_mode: service:compute
+    depends_on:
+      sim: {condition: service_healthy}
+    command: [bash, /repo/scripts/split_role.sh, localization]
+  navigation:
+    <<: *runtime
+    profiles: [split]
+    environment: *split-env
+    network_mode: service:compute
+    depends_on:
+      sim: {condition: service_healthy}
+      localization: {condition: service_started}
+    command: [bash, /repo/scripts/split_role.sh, navigation]
+  app:
+    <<: *runtime
+    profiles: [split]
+    environment: *split-env
+    network_mode: service:compute
+    depends_on:
+      sim: {condition: service_healthy}
+      localization: {condition: service_started}
+      navigation: {condition: service_started}
+    command: [bash, /repo/scripts/split_role.sh, app]
+  record:
+    <<: *runtime
+    profiles: [record]
+    network_mode: service:compute
+    depends_on:
+      compute: {condition: service_healthy}
+    command: [sleep, infinity]
   display:
     build:
       context: ..
