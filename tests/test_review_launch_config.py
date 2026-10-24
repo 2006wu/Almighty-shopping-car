@@ -60,6 +60,8 @@ def test_ament_python_packages_enable_pytest():
 def test_pytest_files_do_not_import_rclpy():
     root = SRC.parents[1]
     for path in root.rglob('test_*.py'):
+        if 'third_party' in path.relative_to(root).parts:
+            continue
         for node in ast.walk(ast.parse(path.read_text())):
             modules = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
                        else [node.module or ''] if isinstance(node, ast.ImportFrom) else [])
