@@ -304,7 +304,7 @@ compute 唯讀掛載 `../third_party/eurobot_nav2/src → /nav2_ws/src`，`nav2_
 
 ### TEB、BT 與速度出口
 
-`nav2_params_fork.yaml` 從原購物車參數複製，只調整 controller、BT 與 recovery plugins；frames、時間、車體 footprint、代價地圖、膨脹、NavFn 與速度平滑參數維持相同。`Slow`／`Fast` 使用 `teb_controller::TebController`，0.30／0.40 m/s、0.8 rad/s，平移／角加速度 0.4 m/s²／1.5 rad/s²。非全向與 gentle 參數使用 fork 平行工作的合約：不輸出側向速度，遇人降至最多 0.15 m/s，距離 0.45 m 停止，等待 1.5 s 再請求重規劃，關閉 rival topic。這些是待模擬調整的初始值，不是性能驗收。建置前 `check_nav2_contract.py` 會確認 TEB 原始碼包含八個新參數名稱；初始 pin `31c3ef1` 尚無合約，因此先拒絕建置，待維護者更新到已審查的 fork commit。本輪未修改 submodule 或其 C++。
+`nav2_params_fork.yaml` 從原購物車參數複製，只調整 controller、BT 與 recovery plugins；frames、時間、車體 footprint、代價地圖、膨脹、NavFn 與速度平滑參數維持相同。`Slow`／`Fast` 使用 `teb_controller::TebController`，0.30／0.40 m/s、0.8 rad/s，平移／角加速度 0.4 m/s²／1.5 rad/s²。非全向與 gentle 參數使用 fork 平行工作的合約：不輸出側向速度，遇人降至最多 0.15 m/s，距離 0.45 m 停止，等待 1.5 s 再請求重規劃，關閉 rival topic。這些是待模擬調整的初始值，不是性能驗收。建置前 `check_nav2_contract.py` 會確認 TEB 原始碼包含八個新參數名稱；初始 pin `31c3ef1` 尚無合約而被拒絕；目前固定在已含合約的 `shopping-car` `bf60ee0`。
 
 controller selector 預設 `Slow`，goal checker selector 預設 `Loose`，可無外部 topic publisher 執行；`Precise` 與 fork 原有名稱 `NonStopGoalChecker` 也有定義。後者實際是 `SimpleGoalChecker` profile、yaw 容差 6.28 rad；沒有臆造不存在的 `nav2_controller::NonStopGoalChecker` class。一般區域目標使用 `Loose` 的 0.15 m／0.25 rad 容差，NavFn 終點容差仍為 0.8 m。
 
@@ -316,7 +316,7 @@ behavior server 與 velocity smoother 出口仍 remap `/cmd_vel/nav`；fork Stop
 
 XML 的 `shrink_to=0.40 m` 提案高於車體半對角線 `sqrt(0.30²+0.25²) ≈ 0.391 m`，意圖避免 recovery 把規劃淨空縮到車體之內；**目前 fork 實作無法落實此提案**：
 
-- `Shrink::onRun` 只將 `shrink_to` 存到未使用欄位；修改過的 InflationLayer 在 `/inflation_layer/set_mode` 服務中寫死 0.15 m，並將 `inscribed_radius_` 設為 0。這可能改變碰撞代價，不得把參數中的 footprint 等同於完整安全檢查。
+- （已於 fork `bf60ee0` 以 opt-in `safe_recovery` 修正）原 `Shrink::onRun` 忽略 `shrink_to`、InflationLayer 寫死 0.15 m 並把 `inscribed_radius_` 設為 0；購物車參數開啟 `safe_recovery`，Eurobot 預設行為不變。
 - Shrink 另等待 `/rival_layer/set_mode` 與 `/object_layer/set_mode`，兩者未載入，會逾時跳過並增加 recovery 延遲。local／global inflation layers 都使用同一個絕對 service 名稱，實際哪一層收到請求也須檢查。
 - Shrink 的目標來源為 `/move_base_simple/goal`，正常 `NavigateToPose` 不發布該 topic，因此終點 cost 判斷不保證對應目前目標；其 costmap 索引亦缺範圍保護。Wait 只有 Shrink 成功後才會執行。
 

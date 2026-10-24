@@ -412,7 +412,7 @@ git submodule update --init third_party/eurobot_nav2
 
 私人原始碼以唯讀掛載進 compute 的 `/nav2_ws/src`，產物留在具名 volume；Dockerfile 不 clone、不接收 GitHub token，`.dockerignore` 排除整個 `third_party`。這能讓公開主專案保留整合設定與固定版本指標，而不複製私人實作。顯示容器維持 apt RViz plugins。`nav2-build` 預設 `--parallel-workers 2` 與 `MAKEFLAGS=-j3`；記憶體較少時可用 `env NAV2_PARALLEL_WORKERS=1 MAKEFLAGS=-j1 ./scripts/dev.sh nav2-build`，不指定架構。
 
-**目前固定版本的限制：** `31c3ef1` 尚未包含平行工作中的非全向／gentle TEB 參數合約。建置前檢查會明確拒絕缺少合約的版本，避免 YAML 被舊控制器忽略後仍輸出全向速度。待 fork 維護者完成、審查並更新 submodule 固定版本後再執行 `nav2-build`；本輪沒有更動 fork 原始碼或指標。檢查參數名稱不能取代 C++ 行為測試。
+**目前固定版本：** fork `shopping-car` 分支 `bf60ee0` 已含非全向／gentle TEB 參數合約與 opt-in 的 Shrink `safe_recovery`（遵守 `shrink_to`、0.40 m 下限、local／global 各自的 inflation service、optional rival／object layer 逾時、結束或取消時還原）。建置前檢查仍會拒絕缺少合約的版本。2026-10-24 模擬中 fork 建置、連結、lifecycle、BT 與 Shrink 均正常，但 gentle TEB 在店內走道仍常判定阻擋、未能抵達區域目標，因此 launch 預設維持 `apt`（見 PROGRESS）。
 
 `guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `apt`（fork TEB 尚在調參，2026-10-24 起需明確指定 `fork` 或 `auto`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
 
@@ -424,7 +424,7 @@ git submodule update --init third_party/eurobot_nav2
 
 fork 使用 `Slow`（0.30 m/s）／`Fast`（0.40 m/s）TEB、`holonomic: false`、`avoidance_mode: gentle` 與 `use_rival_topic: false`，預設 selector 選 `Slow`／`Loose`，不需額外發布者。`Loose` 維持區域目標 0.15 m／0.25 rad 容差；`NonStopGoalChecker` 沿用 fork 中以 `SimpleGoalChecker` 定義、忽略朝向的 profile 名稱，不是獨立 plugin class。NavFn 的既有 0.8 m 可接受終點容差維持不變，仍須量測原始目標誤差。跟隨交接、區域引導、nav-check 與 map-tour 都使用 `NavigateToPose`，空白 `behavior_tree` 會選新的預設樹。
 
-to_pose recovery 為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。`shrink_to=0.40 m` 以 0.60 × 0.50 m 車體的半對角線約 0.391 m 為保守提案，**目前 fork 的 Shrink 卻忽略這個欄位，InflationLayer 的 service 寫死 0.15 m，且把 inscribed radius 改為 0**。它另等待本專案未載入的 rival／object layer services，並以 `/move_base_simple/goal` 取得目標，正常 action client 不發布這個 topic。這些上游差異仍須在 fork 修正／模擬驗證，不能宣稱已符合提案半徑、可靠 recovery 或碰撞安全；本主專案依要求未修改 fork。詳見 [架構文件](docs/ARCHITECTURE.md)。
+to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。Shrink 使用 fork 的 `safe_recovery: true`：BT `shrink_to=0.45 m`，下限 0.40 m（大於 0.60 × 0.50 m 車體半對角線約 0.391 m），兩個 costmap 各用自己的 inflation service，結束或取消時還原；缺少的 rival／object layer service 只等待 0.05 s 即略過。詳見 [架構文件](docs/ARCHITECTURE.md)。
 
 ### 記錄兩種導航的同一路線
 
