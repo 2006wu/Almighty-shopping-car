@@ -510,11 +510,16 @@ def test_independent_clearance_caps_do_not_multiply():
     assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.2)
 
 
-def test_map_goal_uses_standoff_while_los_still_checks_the_person():
+@pytest.mark.parametrize('follow_distance,return_range,clear', [
+    (1.0, 2.57, True), (1.0, 2.1, True), (1.0, 1.7, False),
+    (0.5, 2.1, False),
+])
+def test_map_goal_and_both_los_checks_use_follow_distance(follow_distance, return_range, clear):
     from shopping_uwb_follow.follow_handoff import (
         standoff_target, transform_xy, line_of_sight_clear,
     )
     node = make_node()
+    node.control.p.follow_distance = follow_distance
     # make_node substitutes map_goal_and_los; bind the production method here.
     method = node_class().map_goal_and_los
     namespace = method.__globals__
@@ -531,13 +536,14 @@ def test_map_goal_uses_standoff_while_los_still_checks_the_person():
                      PoseStamped=lambda: NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
     node.tf_buffer = Mock()
     node.tf_buffer.lookup_transform.side_effect = [(10, 20, math.pi/2), (-0.18, 0, 0)]
-    node.scan = NS(header=NS(frame_id='laser', stamp=0), ranges=[math.inf, 2.57, math.inf],
+    node.scan = NS(header=NS(frame_id='laser', stamp=0), ranges=[math.inf, return_range, math.inf],
                    angle_min=-0.5, angle_increment=0.5, range_min=0.12, range_max=12)
     node.robot_half_width, node.los_margin = 0.4, 0.35
     node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: 0))
     pose, los = method(node)
-    assert (pose.pose.position.x, pose.pose.position.y) == pytest.approx((10, 22))
-    assert los and node.los_clear_wide  # Person at laser distance 2.82, radius 0.25.
+    assert (pose.pose.position.x, pose.pose.position.y) == pytest.approx((10, 23-follow_distance))
+    assert los is clear
+    assert node.los_clear_wide is clear
 
 
 def test_node_relays_rotation_at_fixed_front_shelf_then_translation_and_expires():

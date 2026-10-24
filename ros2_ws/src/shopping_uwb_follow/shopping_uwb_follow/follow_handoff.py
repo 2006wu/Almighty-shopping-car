@@ -35,21 +35,30 @@ def scan_valid(ranges, angle_min, angle_increment, range_min, range_max):
 
 
 def line_of_sight_clear(ranges, angle_min, angle_increment, target_xy,
-                        robot_half_width, margin, range_min, range_max):
+                        robot_half_width, margin, range_min, range_max, *,
+                        follow_distance=None):
     """Check the target-width angular corridor in the scan frame.
 
     Rays must intersect the forward strip; finite returns are tested against
     its lateral boundary. The strip starts at the scan origin.
     Include the nearest bearing ray even when the strip is sub-resolution.
     All distances use the scan origin; the caller transforms the target.
+    With follow_distance, stop at distance - max(margin, follow_distance).
+    At or inside follow_distance, retain the distance - margin check so nearby
+    returns still block. Omitting follow_distance preserves the original check.
     """
     if (not valid_xy(target_xy)
             or not all(math.isfinite(v) and v > 0 for v in (robot_half_width, margin))
+            or follow_distance is not None
+            and (not math.isfinite(follow_distance) or follow_distance <= 0)
             or not scan_valid(ranges, angle_min, angle_increment, range_min, range_max)):
         return False
     distance = math.hypot(*target_xy)
     if distance <= margin:
         return False
+    clear_length = distance-margin
+    if follow_distance is not None and distance > follow_distance:
+        clear_length = distance-max(margin, follow_distance)
     bearing = math.atan2(target_xy[1], target_xy[0])
     errors = [abs(math.atan2(math.sin(angle_min+i*angle_increment-bearing),
                              math.cos(angle_min+i*angle_increment-bearing)))
@@ -63,7 +72,7 @@ def line_of_sight_clear(ranges, angle_min, angle_increment, target_xy,
             continue
         if value < range_min:
             return False
-        if value == math.inf or value >= distance-margin:
+        if value == math.inf or value >= clear_length:
             continue
         if i == nearest or abs(value*math.sin(error)) <= robot_half_width:
             return False

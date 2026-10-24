@@ -1139,3 +1139,16 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 - t35（遮蔽時持續由 Nav2 接手、不取消重送）在 Gazebo follow-eval 反而變差：直線平均距離 3.64 公尺、轉彎 4.17 公尺（t32 為 3.03／3.47，develop 基準 t18s 為 2.89／3.36，目標 1.0 公尺）。205 筆 1 Hz 診斷中 NAV2_HANDOFF 佔 205、其中 162 筆 `los_blocked=True`，Nav2 接手期間平均命令速度僅 0.10 m/s（人物 0.35 m/s），51 筆為「Forward blocked; rotation allowed」。因此以 `git revert` 撤回 t35 程式與測試，保留 t32 行為；本節上方 t35 紀錄僅作歷史參考。
 - 推論：主要瓶頸是視線遮蔽判定過於保守（大量誤判遮蔽）與 Nav2 接手時速度過低，不是 BLOCKED_WAIT 本身；需另外調整 LOS 判定寬度／去彈跳與 Nav2 跟隨速度上限，再以 follow-eval 驗證。ROADMAP「評估濾波延遲、轉彎跟隨…」維持未勾選。
 - 已驗證：filter latency 0.07–0.08 s PASS；near_stop PASS；pytest 893 passed。fault-check 結果見合併 PR 說明。
+
+## 2026-10-24：LOS 足跡檢查縮至跟隨停止點（待模擬驗證）
+
+- `line_of_sight_clear` 新增可選的 `follow_distance` 關鍵字參數，舊呼叫維持原行為。目標距離大於跟隨距離時，足跡檢查長度改為 `distance - max(los_margin, follow_distance)`，排除停止點與人物間的回波；一般與加寬 LOS 均使用控制器的跟隨距離，保留原寬度、去彈跳、寬度遲滯與 NAV2_HANDOFF 狀態機。
+- 目標距離小於或等於跟隨距離時，仍檢查至 `distance - los_margin`，範圍內有回波就回報阻擋；距離小於或等於 margin、掃描無效或目標方向無涵蓋時，保留不淨空判定。既有近距離停車與障礙安全邏輯維持原樣。
+- 補上停止點前後障礙、側向 0.45／0.35 公尺貨架、近距離與端點、參數／掃描失效，以及節點兩種 LOS 與跟隨距離轉送的回歸測試。
+- 本機自行檢查：根目錄 `python3 -m pytest -q` 因系統缺少 pytest 無法執行，改用允許的 `/workspace/scratch/venv-shop/bin/python -m pytest -q`，結果 912 passed、1 skipped、1 warning（既有 xacro 棄用警告）。儲存庫無 `tools/check_static.py`，使用現有 `scripts/check_static.py`；系統 Python 缺少 PyYAML，改用同一虛擬環境執行後 PASS，包含 YAML、XML、Python／launch 語法與 xacro 展開。
+- 限制與下一步：本次未執行 Gazebo、Humble 或容器驗收；需重跑 follow-eval，比較平均跟隨距離、LOS 阻擋比例及交接行為，並確認貨架轉角與近距離停止安全。未更動 Nav2 設定、Docker 或其他套件，未執行 git 指令。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| LOS 停止點與近距離回歸、節點參數轉送 | 待驗證 |
+| Gazebo follow-eval、貨架避障與交接安全 | 待驗證 |

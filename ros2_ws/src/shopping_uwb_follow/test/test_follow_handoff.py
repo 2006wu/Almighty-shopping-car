@@ -44,6 +44,41 @@ def test_los_bearing_resolution_wrap_and_strip():
     assert los([1, 4, 4])  # Outside the swept width.
 
 
+@pytest.mark.parametrize('return_range,clear', [(2.5, True), (2.0, True), (1.9, False)])
+def test_los_footprint_ends_at_standoff(return_range, clear):
+    scan = [math.inf, return_range, math.inf]
+    assert los(scan, robot_half_width=0.4, margin=0.35, follow_distance=1.0) is clear
+    # The original signature retains its target-minus-margin endpoint.
+    assert not los(scan, robot_half_width=0.4, margin=0.35)
+
+
+@pytest.mark.parametrize('lateral,clear', [(0.45, True), (0.35, False)])
+def test_los_standoff_strip_aisle_width(lateral, clear):
+    angle = math.atan2(lateral, 1.0)
+    assert los([math.inf, math.hypot(1.0, lateral)], angle_min=0,
+               angle_increment=angle, robot_half_width=0.4, margin=0.35,
+               follow_distance=1.0) is clear
+
+
+@pytest.mark.parametrize('distance', [0.8, 1.0])
+@pytest.mark.parametrize('offset,clear', [(-0.01, False), (0.0, True), (0.01, True)])
+def test_los_inside_follow_distance_retains_target_margin(distance, offset, clear):
+    assert los([math.inf, distance-0.35+offset, math.inf], target_xy=(distance, 0),
+               robot_half_width=0.4, margin=0.35, follow_distance=1.0) is clear
+
+
+def test_los_standoff_retains_margin_and_scan_safety():
+    assert not los([math.inf, 2.6, math.inf], margin=0.35, follow_distance=0.2)
+    assert not los([math.inf]*3, target_xy=(0.35, 0), margin=0.35, follow_distance=1.0)
+    assert not los([math.inf, math.nan, math.inf], follow_distance=1.0)
+    assert not los([math.inf, 0.01, math.inf], follow_distance=1.0)
+
+
+@pytest.mark.parametrize('follow_distance', [0, -1, math.nan, math.inf])
+def test_los_invalid_follow_distance(follow_distance):
+    assert not los([math.inf]*3, follow_distance=follow_distance)
+
+
 def tick(supervisor, now, **kwargs):
     inputs = dict(state='OBSTACLE_STOP', target=(3, 0), los_clear=False,
                   front_clearance=0.4, map_target=(3, 5))

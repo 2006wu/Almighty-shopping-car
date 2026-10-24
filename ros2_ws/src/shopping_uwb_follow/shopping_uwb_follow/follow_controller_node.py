@@ -191,12 +191,14 @@ class FollowNode(Node):
         scan = self.scan
         los = line_of_sight_clear(scan.ranges, scan.angle_min, scan.angle_increment,
                                   transform_xy(self.target, laser), self.robot_half_width,
-                                  self.los_margin, scan.range_min, scan.range_max)
+                                  self.los_margin, scan.range_min, scan.range_max,
+                                  follow_distance=self.control.p.follow_distance)
         self.los_clear_wide = line_of_sight_clear(
             scan.ranges, scan.angle_min, scan.angle_increment,
             transform_xy(self.target, laser),
             self.robot_half_width+self.supervisor.p.los_clear_extra_width,
-            self.los_margin, scan.range_min, scan.range_max)
+            self.los_margin, scan.range_min, scan.range_max,
+            follow_distance=self.control.p.follow_distance)
         return pose, los
 
     def busy(self):
