@@ -11,8 +11,13 @@ rm -f install/fork_commit
 python3 /repo/scripts/check_nav2_contract.py
 mapfile -t packages < /repo/docker/nav2_fork_packages.txt
 export MAKEFLAGS="${MAKEFLAGS:--j3}"
+override=()
+# Older colcon-core releases have no --allow-overriding (they only warn about overlays).
+if colcon build --help 2>/dev/null | grep -q -- '--allow-overriding'; then
+  override=(--allow-overriding "${packages[@]}")
+fi
 colcon build --packages-up-to "${packages[@]}" --parallel-workers "${NAV2_PARALLEL_WORKERS:-2}" \
-  --allow-overriding "${packages[@]}" --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF "$@"
+  "${override[@]}" --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF "$@"
 source install/setup.bash
 python3 /repo/scripts/check_nav2_linkage.py
 # A successful marker is written only after the link check.
