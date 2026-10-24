@@ -105,11 +105,10 @@ def test_fork_params_and_tree():
                  'min_inflation_radius', 'inscribed_radius_floor'}
     for name in ('local_costmap', 'global_costmap'):
         layer = params[name][name]['ros__parameters']['inflation_layer']
-        # The fork uses the floor verbatim as the inscribed radius: it must cover the
-        # footprint half-width (0.25 m) but stay below the circumscribed radius so
-        # NavFn can still plan through aisles the robot fits through (sim t33s).
+        # The floor alone sets the 253 plateau. min_inflation_radius only limits
+        # inflation support; it does not enlarge the inscribed radius.
         assert layer['min_inflation_radius'] >= 0.4
-        assert 0.25 <= layer['inscribed_radius_floor'] < 0.39
+        assert layer['inscribed_radius_floor'] == 0.25
         assert layer['radius_service_name'] == shrink[name.split('_')[0]+'_inflation_radius_service']
         assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
         for key in fork_only:
@@ -125,6 +124,44 @@ def test_fork_params_and_tree():
         for node in yaml.safe_load(path.read_text()).values():
             p = node.get('ros__parameters', node.get(next(iter(node)), {}).get('ros__parameters', {}))
             assert p.get('use_sim_time') is True
+
+
+def inflation_probe():
+    spec = importlib.util.spec_from_file_location('inflation_probe', ROOT/'tools/nav2_inflation_probe.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_saved_map_cannot_reproduce_logged_inscribed_goals():
+    result = inflation_probe().report()
+    assert result['apt_inscribed'] == pytest.approx(0.26)
+    assert result['normal_radius'] == 0.8 and result['shrink_radius'] == 0.45
+    for row in result['goals']:
+        household = row['zone'] == 'household'
+        assert row['distance_m'] == pytest.approx(0.75 if household else 0.80)
+        assert row['nearest_occupied'] == (103 if household else 54, row['cell'][1])
+        assert row['fork_cost'] == (119 if household else 110)
+        assert row['fork_floor_040_cost'] == (149 if household else 138)
+        assert row['apt_cost'] == (120 if household else 112)
+        assert row['fork_shrink_cost'] == 0
+        if row['coordinates'] == 'saved_map_world':
+            assert row['cell'] == ((118, 152) if household else (70, 102))
+
+
+def test_inflation_clearance_and_navfn_diagnostic_semantics():
+    probe = inflation_probe()
+    layer = dict(inflation_radius=0.8, min_inflation_radius=0.4,
+                 inscribed_radius_floor=0.25)
+    assert probe.effective_radius(layer, 0.01) == 0.4
+    cost = probe.inflation_cost
+    assert cost(0, 0.05, 0.25, 0.4, 1.5) == 254
+    assert cost(5, 0.05, 0.25, 0.4, 1.5) == 253
+    assert cost(6, 0.05, 0.25, 0.4, 1.5) == 233
+    # A larger support floor still does not turn a 0.75 m goal into 253.
+    assert cost(15, 0.05, 0.25, 0.8, 1.5) == 119
+    assert [probe.fork_navfn_cost(c) for c in (0, 119, 252, 253, 254, 255)] == [
+        1, 119, 252, 253, 253, 253]
 
 
 def test_build_configuration():

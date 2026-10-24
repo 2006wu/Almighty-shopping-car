@@ -942,3 +942,55 @@
 - loc-check：snacks、produce 導航成功並 PASS（前次 0.40 時 drinks 起即失敗）；drinks 仍 navigation_success=false，household 未通過。
 - planner log 仍為「NavFn has no reachable goal within tolerance 0.80 … goal_cost=253」（goal_cell (118,151)／(70,101)），代表 household／drinks 目標附近仍被 fork 的膨脹層視為致命；另有一次 worldToMap 超界（目標座標在 costmap 外）。
 - 結論：0.25 改善部分走道，但 fork 仍未達 apt 的 nav-check 5/5；**不合併**，預設維持 `nav2_stack:=apt`。下一步：比對 fork InflationLayer 與 apt 在 household／drinks 目標格的 cost，檢查 min_inflation_radius≥0.4 與 cost_scaling 是否把目標格推到 253，以及 TEB 控制器在 cancel-stop 不出發的原因。
+
+## 2026-10-24：fork 膨脹成本離線核對（待模擬驗證）
+
+- 讀取子模組 `src/Navigation2/nav2_costmap_2d/plugins/inflation_layer.cpp` 與
+  `include/nav2_costmap_2d/inflation_layer.hpp`：初始化及 footprint 更新皆直接令
+  `inscribed_radius_ = inscribed_radius_floor`，**不採用 footprint 的內切半徑**。
+  正常膨脹半徑為 `max(inflation_radius, min_inflation_radius, inscribed_radius_floor)`；
+  模式服務縮小時將第一項換成 `shrink_to`，數值服務則換成請求半徑，還原時取回
+  YAML 的 `inflation_radius`。目前正常為 0.80 m、縮小為 0.45 m，最小範圍仍為 0.40 m。
+- 令 `r = inscribed_radius_floor`、`d` 為格中心到障礙格中心的距離：障礙格成本 254；
+  `0 < d <= r` 時為 253；其他受膨脹格為 `floor(252 * exp(-1.5 * (d-r)))`。
+  傳播只到 `ceil(膨脹半徑 / resolution)` 格；`min_inflation_radius` 與 `shrink_to`
+  只限制傳播範圍，不會擴大 253 平臺。合併成本時取原格與膨脹成本的最大值，
+  因此既有致命障礙亦不會因調低 floor 消失。這個 0.40 m 下限是膨脹範圍，
+  **不是保證車體與障礙相距 0.40 m 的硬性淨空**。
+- 新增 `tools/nav2_inflation_probe.py`，沿用既有 PGM 讀取與 trinary 門檻，將影像
+  Y 軸反轉為成本圖索引。執行 `/workspace/scratch/venv-shop/bin/python tools/nav2_inflation_probe.py`
+  可重現下表（原始成本圖數值，非 OccupancyGrid 的 0–100）：
+
+| 目標 | 日誌格索引 | 最近佔用格 | 距離 | fork floor=0.25 | fork floor=0.40 | apt |
+| --- | --- | --- | --- | --- | --- | --- |
+| household | (118,151) | (103,151) | 0.75 m | 119 | 149 | 120 |
+| drinks | (70,101) | (54,101) | 0.80 m | 110 | 138 | 112 |
+
+- apt 的 0.60×0.50 m footprint 加上預設 `footprint_padding=0.01`，內切半徑為
+  0.26 m；fork 的 0.25 不含此 padding，故成本略低。指定地圖的 origin 為
+  (-5.92,-3.12)、解析度 0.05 m；NavFn 的四捨五入換算實際得到 (118,152) 與
+  (70,102)，與日誌差一列。腳本也計算這兩格，距離與成本均相同。
+- **目前原始碼、地圖與 YAML 無法重現目標成本 253，故不套用沒有證據的參數修正，
+  `nav2_params_fork.yaml` 保持原值。** 現有設定已使兩格小於 253，連舊 floor=0.40
+  亦如此。新增 pytest 鎖定數值、最小範圍與 253 平臺的差異，取代原先僅檢查
+  floor 大小區間的斷言。縮小後這兩格皆在傳播範圍外，靜態膨脹貢獻為 0。
+- 日誌的 `goal_cost` 取自 NavFn `costarr`，不是原始成本圖；fork `setCostmap`
+  先判斷 `v >= 253`，將 253／254／255 全映為 253，連 `allow_unknown=true`
+  的未知格分支也無法到達。因此不能由該日誌認定是 InflationLayer 的 INSCRIBED。
+  若實測確認原值為 255，候選程式修正是先處理未知格再處理障礙門檻，讓
+  `allow_unknown` 生效；尚無證據證明本次就是未知格，依要求僅記錄、不修改子模組。
+- 自行檢查：指定 pytest 為 **778 passed**，1 個既有 xacro DeprecationWarning；
+  指定 `scripts/check_static.py` PASS（18 YAML/RViz、13 XML/SDF/xacro、110 Python、
+  5 Bash，含兩／三錨點及 ekf／ground_truth 的 xacro 展開）。未執行 git 指令、
+  Docker、ROS 或 Gazebo；未修改子模組，這些檢查不代表模擬驗收。
+- 下一步：在同一次失敗中擷取載入的地圖 origin／尺寸／解析度、兩層 InflationLayer
+  執行期參數、global costmap 原始 0–255 資料及目標附近 scan 障礙，核對執行中
+  函式庫與目前原始碼是否一致，再區分未知格、雷射標記、地圖或參數／建置版本差異。
+  cancel-and-stop 未出發可能是規劃失敗的下游結果，仍須追蹤該次 action 與控制器日誌；
+  目前不能宣稱已修復。維持單一移動流程，重跑 household／drinks、nav-check 與六區測試。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| 公式、地圖數值與離線測試審查 | 待驗證 |
+| 執行期原始成本、參數與地圖差異定位 | 待驗證 |
+| Gazebo 目標導航與取消停止（待模擬驗證） | 待驗證 |
