@@ -675,7 +675,7 @@
 | --- | --- |
 | 純 Python 測試與轉換／評估往返 | 待驗證 |
 | YAML／XML／xacro／launch 與 Bash 靜態檢查 | 待驗證 |
-| Humble colcon build／test 與執行期依賴 | 待驗證 |
+| Humble colcon build／test 與執行期依賴 | PASS：colcon test 647 tests、0 failures（t31s） |
 | guide 短錄製、成功／失敗回合與真值邊界 | 待驗證 |
 | follow 短錄製、同步距離與停止事件 | 待驗證 |
 | report JSON／Markdown 與中繼資料完整性 | 待驗證 |
@@ -909,15 +909,15 @@
 
 | 項目 | 結果 |
 | --- | --- |
-| 純 Python 測試與情境 schema／原始人物路徑一致性 | 待驗證 |
-| 全情境路徑／行人／出生點淨空與地圖邊界 | 待驗證 |
-| YAML／SDF／xacro／launch／Bash 靜態檢查 | 待驗證 |
-| Humble colcon build／test 與執行期依賴 | 待驗證 |
-| 七種情境 headless 啟動及 default 舊路徑重現 | 待驗證 |
-| alt_start 的 EKF／AMCL／slam_toolbox／loc-check 初始姿態 | 待驗證 |
+| 純 Python 測試與情境 schema／原始人物路徑一致性 | PASS：合併 develop 後 pytest 897 passed、1 skipped |
+| 全情境路徑／行人／出生點淨空與地圖邊界 | PASS（pytest／check_static） |
+| YAML／SDF／xacro／launch／Bash 靜態檢查 | PASS：check_static（7 情境） |
+| Humble colcon build／test 與執行期依賴 | PASS：colcon test 647 tests、0 failures（t31s） |
+| 七種情境 headless 啟動及 default 舊路徑重現 | 部分：aisle_crossing、alt_start、follow_stop_go、follow_turns 已啟動；narrow_pass、checkout_queue 未跑 |
+| alt_start 的 EKF／AMCL／slam_toolbox／loc-check 初始姿態 | PASS：loc-check 6/6，平均誤差 0.04 m |
 | Fortress 行人碰撞幾何、雷射與 Nav2 成本地圖可見性 | 待驗證 |
-| 窄走道／結帳／穿越的實際相遇、讓行與恢復 | 待驗證 |
-| 急轉／迴轉／停走／過近完整零 Twist 與故障回歸 | 待驗證 |
+| 窄走道／結帳／穿越的實際相遇、讓行與恢復 | 部分：aisle_crossing nav-check 4/5，valid goal 到 household 120 秒內未收斂（ACTIVE）；窄走道、結帳未驗 |
+| 急轉／迴轉／停走／過近完整零 Twist 與故障回歸 | 部分：follow_stop_go 追蹤 PASS（直線平均 0.95 m、轉彎 1.04 m）；follow_turns FAIL（平均 2.71 m，屬既有跟隨控制問題，非情境框架） |
 | PoseArray 真值、錄製完整性、間距與 report 中繼資料 | 待驗證 |
 | amd64／arm64 原生容器驗收 | 待驗證 |
 
@@ -1070,3 +1070,5 @@
 | Humble colcon 與模擬 bag 整合 | PASS：colcon test 650 tests、0 failures；guide 無頭模擬錄製 60 秒 → eval-bag → eval-verify → eval-summary 全部結束碼 0 |
 
 審查時間：2026-10-24 17:20（台北時間），Docker 專案 shoprep（t34s）。限制：manifest 的 Git 欄位在容器內為 unknown（容器沒有可用 git），需在主機補記；機器人在錄製期間靜止，未涵蓋導航中的報表數值。
+
+審查時間：2026-10-24 17:40（台北時間），Docker 專案 shopscen（t31s／t31f）。修正：整數 YAML 航點使 uwb_sim_node 崩潰（'y' 須為 float），person_path 改為一律回傳 float 並加測試。
