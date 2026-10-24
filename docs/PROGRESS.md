@@ -576,3 +576,51 @@
   - `t11-prompt.md`：階段 3 第 3、4 項，人物同步檢查與 `follow_eval`。
   這兩項沒有建立遠端分支。
 - 未完成分支：無。
+
+## 2026-10-24：rosbag 記錄與評估報告
+
+### 本次完成
+
+- 新增 `dev.sh record NAME [--duration S] [額外 topic...]`，透過純 Python helper 載入唯一 `shopping_zone_manager/config/record_topics.yaml`，在 compute 使用 Humble sqlite3、模擬接收時間與正常 SIGINT 結束錄製。輸出 `bags/NAME/` 共用回主機並加入 Git 忽略；既有名稱不覆寫，時限使用牆鐘秒數。
+- 新增 `bag_to_eval` console entry 與 Humble ROS 讀取薄層，使用 SequentialReader／StorageOptions／ConverterOptions、訊息型別查詢與 CDR 反序列化。純 `bag_converter.py` 不匯入 ROS，處理來源時間排序、同 tick 狀態、真值有界內插、地圖目標剛體對齊、區域導航生命週期、跟隨距離、狀態、保護／急停事件、最終命令與真值停止速度。
+- 新增 `dev.sh eval-bag NAME [eval_report 參數...]`，依序輸出觀測 JSONL、來源與覆蓋中繼資料及 `report.json`／`report.md`。導航截止仍納入失敗；真值重複、導航邊界缺樣、部分導航及跟隨內部缺口明確拒絕，避免無聲補零或略過失敗。
+- 新增 21 項合成資料／假 ROS 讀取介面測試，涵蓋成功、拒絕、取消、失敗、逾時、未完成、多回合、最短 yaw 內插、跟隨同步、停止 pending／延遲、空輸入、亂序／缺樣、時鐘倒退、topic 清單來源、錄製正常結束與轉換結果載入評估器的往返測試。
+- README、METRICS 與架構文件補上固定情境、時間規則、可推導列、來源限制、獨立 domain 回放與兩次報告比較程序。ROADMAP 未勾選；未提交或推送，未執行 Docker、安裝套件或建立虛擬環境。
+
+### 本輪執行紀錄（非審查驗證）
+
+| 指令／方法 | 執行觀察 |
+| --- | --- |
+| `/workspace/scratch/venv-shop/bin/python -m pytest -q` | 631 項通過；既有 xacro 棄用警告 1 項 |
+| `/workspace/scratch/venv-shop/bin/python scripts/check_static.py` | PASS：YAML、XML／SDF／xacro、Python、Bash 與兩／三錨點、兩種里程計模式展開 |
+| `git diff --check` | 通過 |
+
+### 限制與下一步
+
+- 本環境沒有 ROS，只有純 Python、假 Humble API 與靜態驗證；維護者須在既有容器執行 colcon build／test、短 guide／follow 錄製、轉換、報告與隔離回放，核對真實型別、QoS、錄製關閉及時間覆蓋。這不是容器、跨架構或硬體驗收。
+- `eval-bag` 僅適用目前預設 map 與世界原點、朝向一致的程序；其他地圖要手動提供經驗證的 map→世界轉換。導航只還原區域管理器已送出的回合，無法涵蓋 RViz 目標、跟隨 handoff 或未送出前的未知區域／伺服器不可用；孤立終態與截止回合需連同中繼資料檢視。
+- 人物真值是唯一人物路徑模型的位置，非 Gazebo 人物模型實際到位量測；跟隨位置採有界內插，不外推或跨內部缺口。長紀錄目前在記憶體排序，沒有串流或自動情境執行器。
+- 無 header 的資料須由 `--use-sim-time` bag 接收時間對齊；同 topic、同 tick 的命令／跟隨狀態取最後一筆並揭露合併數，無法解析 tick 內延遲。LOST／OBSTACLE_STOP 不能區分 UWB 過期、掉訊、雷射／里程計失效或障礙；停止延遲從狀態公布算起，看門狗缺少獨立事件來源。固定種子仍不能消除 Gazebo／DDS／人物相位非決定性，應多次重複保存所有失敗。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 測試與轉換／評估往返 | 待驗證 |
+| YAML／XML／xacro／launch 與 Bash 靜態檢查 | 待驗證 |
+| Humble colcon build／test 與執行期依賴 | 待驗證 |
+| guide 短錄製、成功／失敗回合與真值邊界 | 待驗證 |
+| follow 短錄製、同步距離與停止事件 | 待驗證 |
+| report JSON／Markdown 與中繼資料完整性 | 待驗證 |
+| 停止所有控制來源後的隔離 bag 回放 | 待驗證 |
+
+### 本輪審查驗證（2026-10-24 08:50 臺北時間，盒內 Linux amd64，EKF 預設）
+
+| 項目 | 結果 |
+| --- | --- |
+| 審查修正 | 實際 bag 轉換時 `bag_to_eval` 失敗：`numpy.float64` 也有 `tolist()`，原本會被當成序列走訪。已改為先呼叫 `tolist()` 再判斷是否為序列，並新增 numpy 類純量／陣列測試 |
+| 純 Python 測試 | `pytest -q` 632 項通過；check_static PASS；`git diff --check` 通過 |
+| colcon | 7 套件建置成功；colcon test 531 項、0 錯誤、0 失敗、5 略過 |
+| guide 短錄製（70 秒，`goto snacks`→`goto entrance`） | 錄到 /clock、/odom、真值、/cmd_vel、模式與區域狀態；`eval-bag` 產生 report.json／md：2/2 成功，耗時 7.2／16.3 s，最終誤差 0.143／0.127 m，最小靜態間距 0.41 m |
+| follow 短錄製（60 秒） | 跟隨 1916 筆樣本、38.3 s；平均絕對誤差 1.46 m（目標 1.0±0.2 m 帶內 5.7%）；擷取到 obstacle_stop／too_close 停止事件，命令延遲 0.005–0.056 s |
+| 未驗證 | 隔離 bag 回放（`ros2 bag play`）、失敗／取消回合的實際錄製、Mac arm64 |

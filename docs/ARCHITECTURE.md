@@ -261,3 +261,7 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 | 噪聲情境 | 不要求停車，量測命令／真值並檢查資料覆蓋；命令 abs(vx) <= 0.51 m/s、abs(wz) <= 1.01 rad/s（預設上限加數值餘量）與清除後恢復 |
 
 工具以 `/clock` 對齊的本機接收時間計算延遲，同一模擬 tick 若收到多筆速度，保留非零命令以免掩蓋衝突；不是精確傳輸延遲量測。測試適用預設控制速度與逾時參數，改參數須同步審查門檻。每輪應分別以 `route_around:=false` 和 `true` 執行，並在導航交接時手動重測；自動腳本不保證注入時正處於 NAV2_HANDOFF，也不控制人物相位或路線，無法替代具固定情境的整合測試。目前測試僅驗證純邏輯與假回呼，尚未執行 ROS／Gazebo 故障驗收。
+
+## rosbag 離線評估資料流
+
+`dev.sh record` 透過 `scripts/record_bag.py` 載入區域管理套件的 `config/record_topics.yaml`，以 Humble sqlite3 和模擬接收時間保存至主機共用的 `bags/`。不錄雷射與 TF，使用獨立 `sim_world` 真值及既有區域狀態還原指標。`bag_to_eval.py` 是讀取 ROS 訊息的薄層；`bag_converter.py` 以純 Python 進行有界時間同步、區域回合還原與保護狀態事件轉換，再交給既有 `eval_report`。`eval-bag` 產生觀測 JSONL、轉換中繼資料與 JSON／Markdown 報告；固定場景採 map→世界零位移與零旋轉，其他對齊須明確提供。完整來源、缺資料與回放隔離規則見 [評估指標](METRICS.md#rosbag-記錄轉換與可重現流程)。這是旁路資料處理，不新增命令來源或改動 TF 所有權。

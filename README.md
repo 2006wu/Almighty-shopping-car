@@ -286,3 +286,36 @@ python3 scripts/check_static.py
 此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
 
 [模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
+
+## rosbag 記錄與離線報告（僅模擬）
+
+先在既有 compute 容器執行 `./scripts/dev.sh colcon-build`，重新啟動 launch。在另一個終端機錄製；固定清單位於 `shopping_zone_manager/config/record_topics.yaml`，預設不錄 `/scan`、TF 或 action 服務。輸出 `bags/NAME/` 由 `/repo` 掛載回主機，已加入 Git 忽略清單，不會覆寫既有 bag。
+
+```bash
+# 終端機 A：全新模擬，預設起點與 map／世界原點一致
+./scripts/dev.sh guide
+# 終端機 B：等待導航就緒後，先開始記錄
+./scripts/dev.sh record guide1 --duration 120
+# 終端機 C：確認 B 顯示正在錄製，再依序執行；每次等待結果
+./scripts/dev.sh goto drinks --timeout 30
+./scripts/dev.sh goto snacks --timeout 30
+./scripts/dev.sh goto entrance --timeout 30
+# B 正常結束並產生 metadata.yaml 後
+./scripts/dev.sh eval-bag guide1
+```
+
+先停止 guide，再以全新模擬執行 follow；兩種 launch 不可同時控制底盤：
+
+```bash
+./scripts/dev.sh follow
+# 另一個終端機，確認 follow 與人物真值已開始發布
+./scripts/dev.sh record follow1 --duration 120
+# 錄製完成後
+./scripts/dev.sh eval-bag follow1 --target 1.0 --band 0.2
+```
+
+`--duration` 為正值的牆鐘秒數，省略時以 Ctrl-C 正常結束；暫停模擬仍會消耗此時限。可在尾端加入額外 topic，例如 `./scripts/dev.sh record diagnostic --duration 30 /scan`。必須等待 recorder 完成寫檔，不能以強制終止取代。記錄使用 Humble sqlite3 與 `--use-sim-time`，啟動 `/clock` 前不會記錄資料。
+
+`eval-bag` 依序產生 `observations.jsonl`、`observations.jsonl.meta.json`、`report.json` 與 `report.md`；重跑會覆寫這四個檔案。轉換中繼資料揭露缺少人物真值、同時間合併樣本與截止回合，須和報告一起檢視。`eval-bag` 使用目前固定場景的 map→世界 `(0,0,0)` 對齊；自訂地圖原點須改用 `bag_to_eval --map-world-transform X Y YAW`，不能直接套用。
+
+完整時間規則、已支援與無法還原的觀測、固定情境及兩次報告比較方式見 [評估指標](docs/METRICS.md#rosbag-記錄轉換與可重現流程)。沙盒僅驗證純 Python 與靜態配置，ROS／Gazebo 實際錄製回放須由維護者在容器驗證。

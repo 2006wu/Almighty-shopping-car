@@ -30,6 +30,8 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   loc-check [ROS_ARGS...]   Check all zones against simulation truth
   mode MODE | estop | reset  Request idle/guide/follow/teleop/estop/reset
   fault-check [ARGS...]    Verify faults against a running opt-in follow sim
+  record NAME [--duration S] [TOPICS...]  Record evaluation bag (wall seconds)
+  eval-bag NAME [ARGS...]  Convert bag and write report.json/report.md
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
@@ -72,6 +74,16 @@ EOF
     fi
     case "$mode_request" in idle|guide|follow|teleop|estop|reset) ;; *) echo 'Invalid mode' >&2; exit 2 ;; esac
     run ros2 topic pub --once /mode_manager/request std_msgs/msg/String "{data: '$mode_request'}"
+    ;;
+  record) run python3 /repo/scripts/record_bag.py "$@" ;;
+  eval-bag)
+    [[ $# -ge 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple bag name' >&2; exit 2; }
+    name="$1"
+    shift
+    run ros2 run shopping_zone_manager bag_to_eval "/repo/bags/$name" --output "/repo/bags/$name/observations.jsonl" \
+      --zones /ws/src/shopping_zone_manager/config/zones.yaml --map-world-transform 0 0 0
+    run ros2 run shopping_zone_manager eval_report "/repo/bags/$name/observations.jsonl" "$@" \
+      --world /ws/src/shopping_robot_gazebo/worlds/supermarket.sdf --output "/repo/bags/$name/report"
     ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
   map-tour)

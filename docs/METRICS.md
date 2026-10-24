@@ -1,6 +1,6 @@
 # 模擬評估指標
 
-本文件定義 ROADMAP 階段 5 第 1 項的離線量測方式。實作位於 `shopping_zone_manager/eval_metrics.py`（純 Python、標準函式庫、不匯入 ROS），`eval_report.py` 僅負責檔案載入及報表。適用於 ROS 2 Humble、Gazebo Fortress 的模擬商店；本次沒有新增錄製節點、rosbag 轉換或情境執行器。
+本文件定義 ROADMAP 階段 5 第 1 項的離線量測方式。實作位於 `shopping_zone_manager/eval_metrics.py`（純 Python、標準函式庫、不匯入 ROS），`eval_report.py` 僅負責檔案載入及報表。適用於 ROS 2 Humble、Gazebo Fortress 的模擬商店；rosbag 記錄與轉換流程見文末，仍沒有自動情境執行器。
 
 ## 共通規則
 
@@ -136,12 +136,12 @@ PYTHONPATH=ros2_ws/src/shopping_zone_manager \
 
 ## 後續錄製介面的預期對應
 
-此表是後續 rosbag／轉換器的介面契約，不是目前已實作的錄製功能。使用不同框架時，轉換器必須先用 TF 對齊；不得由本模組猜測座標。
+此表為來源介面契約；目前 bag 轉換器採用的子集與限制見下一節。使用不同框架時，轉換器必須先用 TF 對齊；不得由本模組猜測座標。
 
 | 預期來源 | 紀錄欄位 | 注意事項 |
 | --- | --- | --- |
 | NavigateToPose 目標、結果與對齊的車體位姿 | `navigation` 的 episode、success、goal_*、x/y/yaw | 一次動作一回合，保留取消／拒絕／失敗／逾時；以目標送出到終態的姿態邊界取樣，座標須一致 |
-| `/odom` 的 pose，或 `/simulation/poses` 的車體真值 | `pose` 的 x/y/yaw；導航另轉入目標框架 | 現有 `/odom` 是模擬真值；未來輪式里程計不能直接當真值 |
+| `/odom` 的 pose，或 `/simulation/poses` 的車體真值 | `pose` 的 x/y/yaw；導航另轉入目標框架 | 預設 `/odom` 為 EKF 估測；真值須使用 `/sim/ground_truth_odom` |
 | `/uwb/person_ground_truth` 或 `/simulation/poses` 的人物真值 | `pose` 的 person_x/person_y，並計算 `distance` | 轉成與車體相同的世界框架並同步；解析人物路徑真值與 Gazebo 模型實際到位可能有時間差 |
 | `/follow/state` | `state` | 使用接收的模擬時間，保留狀態變化與取樣終點 |
 | 最終 `/cmd_vel` 的 linear.x／angular.z | `cmd` 的 linear/angular | 輸入為底盤最終命令；Nav2 上游 `/cmd_vel_nav` 不代表底盤實際收到的命令 |
@@ -150,3 +150,61 @@ PYTHONPATH=ros2_ws/src/shopping_zone_manager \
 | `/clock`、訊息 header、`/tf` | t 及離線框架對齊 | 無 header 的狀態／命令使用模擬接收時間並記錄其限制；重啟與倒退時間必須分檔 |
 
 UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` 與 `/uwb/estimate_error`；本指標的跟隨距離誤差評估控制結果，兩者應分開呈現。後續情境變化須由 Gazebo 套件的 `config/person_path.yaml` 產生，不另建執行期人物路徑來源。
+
+## rosbag 記錄、轉換與可重現流程
+
+`dev.sh record NAME [--duration S] [額外 topic...]` 在 compute 使用 Humble `ros2 bag record --storage sqlite3 --use-sim-time`。`S` 是牆鐘秒數，省略時以 Ctrl-C 結束；到期送 SIGINT 並等待 SQLite 與 `metadata.yaml` 寫完。不要在同一次錄製重設模擬時間。資料位於主機 `bags/NAME/`，既有名稱拒絕覆寫。清單唯一來源為 `shopping_zone_manager/config/record_topics.yaml`，由 `scripts/record_bag.py` 載入；測試另外核對各 topic 在實際程式或 bridge 中存在。
+
+| 固定 topic | 實際型別 | 轉換用途 |
+| --- | --- | --- |
+| `/clock` | `rosgraph_msgs/msg/Clock` | 模擬接收時間、偵測時鐘倒退 |
+| `/sim/ground_truth_odom` | `nav_msgs/msg/Odometry` | 世界位姿、真值速度、導航路徑與邊界 |
+| `/odom` | `nav_msgs/msg/Odometry` | 保留估測里程計供診斷；不代替真值 |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | 最終命令 `cmd`，非上游 Nav2 命令 |
+| `/uwb/person_ground_truth` | `geometry_msgs/msg/PointStamped` | 依唯一 `person_path.yaml` 產生的人物路徑真值 |
+| `/uwb/target` | `geometry_msgs/msg/PointStamped` | 保留車體座標估測供診斷；不代替人物真值 |
+| `/follow/state` | `std_msgs/msg/String` | `state` 與保護狀態進入事件 |
+| `/shopping/zone_status` | `std_msgs/msg/String` | 區域導航回合生命週期 |
+| `/mode_manager/state` | `std_msgs/msg/String` | ESTOP 進入事件 |
+| `/sim/fault_status` | `std_msgs/msg/String` | 僅故障模式存在；保留注入狀態供診斷 |
+
+這些流程不需 `/scan`、`/tf`、`/tf_static` 或 action feedback；額外錄製的 topic 僅保留於 bag，不自動成為指標。`/sim/fault_status` 不是保護偵測事件，不直接拿來算停止觸發。此工具沒有新增控制、硬體連線或故障注入。
+
+### 時間與同步
+
+薄層 `bag_to_eval.py` 使用 Humble `SequentialReader`、sqlite3 與 CDR，將訊息轉成普通字典；有頂層 header 時採 header stamp（含零秒），否則採 bag 接收時間。因此外部 bag 也必須用 `--use-sim-time` 錄製，不能混入系統時間。`/clock` 倒退立即拒絕；不含 `/clock` 的外部檔案無法保證偵測重設，須由使用者確保單次模擬。轉換不修改 TF 或 ROS 時鐘。
+
+純模組 `bag_converter.py` 先依來源時間排序，處理接收順序與 header 順序不同；同 topic 的真值時間重複拒絕。沒有 header 的命令／狀態可能共用 recorder 的同一個時鐘 tick，因此其他 topic 同時刻採最後一筆，合併數量列於 `.meta.json`；無法量測 tick 內的先後延遲。區域導航生命週期保留同 tick 的原始先後順序。狀態來源同時觸發時合併原因為一筆 `trigger`，以符合既有指標的嚴格時間規則。
+
+人物與車體都須為 `sim_world`。車體真值取樣時，人物位置以左右兩筆線性內插對齊；導航起訖邊界同樣內插車體真值，yaw 使用最短角差。每側時間差不得超過 `--max-skew`（預設 0.15 秒），不外推。`pose` 永遠使用車體真值；人物無法配對時省略成對欄位並統計缺樣數。有 follow 狀態才產生 `distance`；開頭／結尾未配對區間不延伸，內部配對缺口或距離取樣間隔超過兩倍同步上限會拒絕轉換，須分割評估區間，避免距離指標跨缺口保留舊值。這是對原始列格式要求「先同步」的前處理，原有評估器仍不自行插值。
+
+### 可還原與不可還原的觀測
+
+- `navigation`：使用 `PENDING: Requested NAME` 建立回合，目標讀取當次保存的 zones YAML；SUCCEEDED 為成功，ABORTED／CANCELED／REJECTED／TIMEOUT 為失敗。ACTIVE 的進度文字不另開回合。沒有終態時，在最後車體真值時刻補記失敗截止，識別碼列入 `cutoff_episodes`；不是宣稱 Nav2 回傳失敗。缺少邊界真值、未知區域或重疊回合立即報錯。錄製中途才看到 ACTIVE／CANCELING 也會報錯；孤立終態只列入 `ignored_zone_statuses`，不可拿這類 bag 計算完整成功率。UNKNOWN_ZONE／UNAVAILABLE 在目標送出前即失敗，沒有可對應目標，不產生回合。RViz 直接目標、跟隨的 Nav2 handoff 及其他 action client 沒有區域狀態，不能從此清單還原其導航回合。
+- 地圖目標要先以明確 `--map-world-transform X Y YAW` 轉入真值世界。轉換器沒有 TF 推算功能；`eval-bag` 固定傳入 `(0,0,0)`，僅適用目前世界起點、初始 yaw 與 map 原點一致的固定程序。自訂地圖、重新定位或變更起點必須自行提供經驗證的剛體對齊，並使用手動轉換命令。參數保存在轉換中繼資料；估測漂移不會拿來修正世界真值。
+- `pose`／`distance`：車體矩形間距與真值中心跟隨距離；人物資料是路徑模型真值，仍非 Gazebo 人物模型實際到位量測。`/uwb/target` 是 base_link 估測，這裡不計 UWB 位置估測誤差。
+- `state`：取冒號前的大寫狀態，保留每次取樣。`trigger` 由進入 LOST／TOO_CLOSE／OBSTACLE_STOP 或 ESTOP 產生；重複同狀態不重開事件。LOST 無法區分 UWB 過期或掉訊；OBSTACLE_STOP 無法區分障礙、雷射失效或里程計保護。延遲從狀態發布後開始，不含故障注入到偵測的時間；首次觀測已在保護狀態也計一次。
+- `cmd` 為最終 `/cmd_vel`；`odom` 列刻意使用 `/sim/ground_truth_odom` 的平面線速度與 yaw 角速度，以免 EKF 或故障凍結影響實際停止量測。無命令或真值時保留 pending，不補零。獨立看門狗目前沒有逾時狀態 topic，因此無法還原 `command_timeout`；沒有獨立事件的雷射／UWB 過期也不能聲稱量到各自觸發延遲。
+
+空 bag 可輸出空 JSONL，報告為無資料，不表示通過。`.meta.json` 保存來源、輸入 topic 數量、同步上限、最大車體真值取樣間隔、缺樣、同時間合併、截止與孤立狀態數；必須和 JSON／Markdown 報告一起保存。工具目前會在記憶體載入及排序一次紀錄，適合固定時長評估，不適合無上限長期錄製。
+
+### 固定程序、回放與比較
+
+1. 保存 Git 版本、使用的 zones YAML、人物唯一 `shopping_robot_gazebo/config/person_path.yaml`、控制參數、世界檔及 launch 參數。每次重新啟動模擬，使用相同預設起點與 `odom_source:=ekf`、`use_mux:=true`；不可在錄製中重設模擬時間。
+2. 導航：終端機 A 執行 `./scripts/dev.sh guide`，等待定位及 Nav2 就緒；B 執行 `./scripts/dev.sh record guide1 --duration 120`。確認錄製就緒後，C 依序執行 `./scripts/dev.sh goto drinks --timeout 30`、`goto snacks --timeout 30`、`goto entrance --timeout 30`，每次等前一筆結束。若到期仍未結束會列為失敗截止，不能排除重跑以美化成功率。
+3. 停止 guide 後重新開模擬：A 執行 `./scripts/dev.sh follow`，B 執行 `./scripts/dev.sh record follow1 --duration 120`。人物僅沿既有 `person_path.yaml`，不另建路徑來源。保存錄製起始模擬秒數；人工啟動不能保證人物相位完全相同。自然情境可能沒有保護事件，事件數 0 不是停止驗收。故障比較需另固定既有注入排程並保存參數。
+4. 等 recorder 結束，再執行 `./scripts/dev.sh eval-bag guide1` 與 `./scripts/dev.sh eval-bag follow1 --target 1.0`。報表位於對應 bag 目錄。也可直接在 compute 執行：
+
+   ```bash
+   ros2 run shopping_zone_manager bag_to_eval /repo/bags/guide1 \
+     --zones /ws/src/shopping_zone_manager/config/zones.yaml \
+     --map-world-transform 0 0 0 --output /repo/bags/guide1/observations.jsonl
+   ros2 run shopping_zone_manager eval_report /repo/bags/guide1/observations.jsonl \
+     --world /ws/src/shopping_robot_gazebo/worlds/supermarket.sdf \
+     --output /repo/bags/guide1/report
+   ```
+
+5. 回放僅在停止所有模擬、Nav2、跟隨及其他底盤命令來源後，於獨立 ROS domain 使用 `ros2 bag play /repo/bags/guide1`。bag 已錄 `/clock`，不要另加 `--clock` 產生第二個時鐘；也不要與現場 Gazebo 並播。此回放用於觀察已錄資料，離線轉換不需啟動任何 ROS 節點，也不會重送導航目標。
+6. 以相同程序產生 guide2／follow2，先比對 `.meta.json` 的涵蓋程度、缺樣、截止回合及報告 parameters，再按相同區域順序比較 success_rate、逐回合 duration／path_length／final_position_error，以及跟隨 RMSE、帶內時間比例與停止 pending／每事件延遲。可用 `diff -u bags/guide1/report.json bags/guide2/report.json` 檢視完整差異（source 路徑必然不同）。不同資料覆蓋率不可只比平均數。
+
+Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非決定性；固定種子不保證逐位元相同。應重複多次並保留失敗，這份程序不是自動通過判準，也不代表容器或硬體已驗收。

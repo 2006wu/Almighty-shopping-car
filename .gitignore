@@ -16,3 +16,5 @@ ros2_ws/src/shopping_robot_navigation/maps/*.posegraph
 ros2_ws/src/shopping_robot_navigation/maps/*.data
 !ros2_ws/src/shopping_robot_navigation/maps/supermarket.yaml
 !ros2_ws/src/shopping_robot_navigation/maps/supermarket.pgm
+
+bags/
