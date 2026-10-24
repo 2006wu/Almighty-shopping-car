@@ -176,6 +176,7 @@ def test_recorder_uses_manifest_and_graceful_duration(monkeypatch):
         def send_signal(self, sig):
             calls.append(sig)
 
+    monkeypatch.setattr(module, 'git_provenance', lambda: {'commit': 'unknown'})
     monkeypatch.setattr(module.subprocess, 'Popen', Process)
     monkeypatch.setattr(module.Path, 'mkdir', lambda *a, **kw: None)
     assert module.main(['synthetic-test-bag', '--duration', '1', '/extra']) == 0

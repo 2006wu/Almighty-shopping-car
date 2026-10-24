@@ -1035,3 +1035,38 @@
 | amd64／arm64 原生模擬回歸 | amd64 Gazebo 無頭模擬如上；arm64 未驗證 |
 
 審查時間：2026-10-24 16:30（台北時間）；結果紀錄於 Docker 專案 shopobs（t30s）。
+
+## 2026-10-24：可重現離線評估的錄製來源、重跑驗證與多次彙整
+
+### 本次完成
+
+- 錄製命令增加可重複的 `--meta KEY=VALUE` 與鍵名驗證；收尾時保存 UTC 起始時間、Git 提交／dirty、Nav2 子模組提交、topics、指定錄製秒數與使用者中繼資料至 bag 內的 `manifest.json`。Git 查詢失敗以 unknown 表示，不阻止錄製。
+- 報告固定鍵排序與九位小數精度，CLI 參數先正規化再計算；新增純邏輯正規化與欄位差異比較，排除來源路徑及預留的獨立產生時間欄位。
+- 新增 `eval_verify`／`dev.sh eval-verify NAME`，依保存的轉換設定與評估參數在暫存目錄重跑，回傳相同／差異狀態並列出差異欄位，不覆寫原報告。
+- 新增純邏輯彙整與 `eval_summary`／`dev.sh eval-summary NAME... [--output DIR]`，輸出數值 count／mean／min／max／樣本標準差、既有 verdict 的通過／失敗次數及來源缺漏／版本與情境不一致警告。
+- 補齊純邏輯、錄製收尾、命令列驗證、暫存清理及高精度參數重現測試；更新使用說明與 `docs/METRICS.md` 精確命令。未修改 bag_converter、ROADMAP 或控制流程，未提交或推送。
+
+### 自行檢查
+
+- 使用指定沙盒 Python 執行儲存庫根目錄 pytest：834 項通過、1 項略過，另有既有 xacro 相依套件的棄用警告。`scripts/check_static.py` 回報 PASS：19 份 YAML／RViz、13 份 XML／SDF／xacro、117 份 Python、5 份 Bash，並完成兩／三錨點在 ekf／ground_truth 的 xacro 展開。
+- `git diff --check` 通過。未安裝套件、建立虛擬環境或執行 Docker。
+
+### 已知限制與下一步
+
+- 本環境沒有 ROS，尚未以 Humble sqlite3 真實 bag 驗證錄製與 SequentialReader；維護者需執行容器 colcon build/test 與模擬，驗證 console script、錄製收尾、重跑一致及差異回傳碼。
+- manifest 的 duration 為指定上限而非實際經過時間；中繼資料由使用者填寫，dirty 旗標不保存修改內容。Git 不可用時只能標示 unknown。
+- 驗證需原 bag、轉換中繼資料、世界檔與 zones 原路徑仍有效；不保證重新啟動 Gazebo 會產生相同資料。舊版未正規化參數的報告可能需先重新評估。
+- 彙整警告不會禁止比較，仍需人工核對參數、資料覆蓋、回合順序與失敗事件；現有報告沒有 verdict 時不推論通過。下一步由維護者以同情境兩次錄製及刻意改動報告的案例驗收。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| manifest 欄位、Git 降級與 metadata 驗證 | PASS：模擬錄製 t34r1 產生 manifest（metadata scenario／nav2_stack 正確）；容器內 git 不可用時三欄降級為 unknown，錄製未受影響 |
+| 正規化、九位精度與差異欄位 | PASS（pytest）；實際 bag 驗證見下列 |
+| 暫存重跑、原報告保留與結束碼 | PASS：`eval-verify t34r1` 輸出 Report matches、結束碼 0 |
+| 多次統計、verdict 與來源警告 | 部分：`eval-summary t34r1` 單一 bag 結束碼 0；多次重複彙整只有 pytest 覆蓋 |
+| pytest 與靜態檢查 | PASS：pytest 834 passed、check_static PASS |
+| Humble colcon 與模擬 bag 整合 | PASS：colcon test 650 tests、0 failures；guide 無頭模擬錄製 60 秒 → eval-bag → eval-verify → eval-summary 全部結束碼 0 |
+
+審查時間：2026-10-24 17:20（台北時間），Docker 專案 shoprep（t34s）。限制：manifest 的 Git 欄位在容器內為 unknown（容器沒有可用 git），需在主機補記；機器人在錄製期間靜止，未涵蓋導航中的報表數值。
