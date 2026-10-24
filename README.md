@@ -242,7 +242,7 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 
 ## 安全與驗證狀態
 
-所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用（`use_mux:=false` 時維持 launch 直接啟用）；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用（`use_mux:=false` 時維持 launch 直接啟用）；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，直接控制器的 `OBSTACLE_STOP` 立即輸出完整零 Twist，包含角速度；繞行仍由既有交接器獨占交給 Nav2。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
@@ -261,8 +261,26 @@ NAV2 至少保持 1.5 秒，然後以遲滯確認暢通的 LOS 加上前方淨�
 | `side_sector_min`／`side_sector_max` | 0.523599／1.745329 | 左右各 30°～100° 的側向扇區 |
 | `side_slow_clearance`／`side_free_clearance` | 0.35／0.75 | 最小側向淨空的減速／全速門檻 |
 | `side_min_speed_factor` | 0.4 | 淨空不超過減速門檻時的最低線速度倍率 |
+| `velocity_feedforward` | 1.0 | 目標絕對速度在視線方向上的前饋增益；0 停用 |
+| `distance_hysteresis_enter`／`distance_hysteresis_exit` | 0.04／0.08 | 距離誤差進入／離開保持區的門檻；保持時只抑制距離修正，仍保留前饋 |
 
-側向淨空取雷射回波的最小 `range * abs(sin(angle))`；兩門檻間線性插值，缺少側向涵蓋時採最低倍率。側向與 LOS 倍率相乘，套用在線速度及其上限，仍受既有加速度限制。直接上限 0.5 m/s 已高於人物 0.35 m/s，且等於 Nav2 velocity_smoother 上限，因此本次不提高。比例控制 `kp_distance=0.7` 在無減速、正前方等速追蹤時本來就有約 0.5 公尺的穩態距離誤差；不能把 1.0 公尺設定解讀為動態距離保證。遲滯及側向減速可能延後恢復或追近，須比較下一輪 240 秒模擬的真實距離及切換率，尚未驗證改善幅度。
+側向淨空取雷射回波的最小 `range * abs(sin(angle))`；兩門檻間線性插值，缺少側向涵蓋時採最低倍率。側向與 LOS 倍率相乘，現在用來限制線速度上限，再套用朝向餘弦閘控與加速度限制；不再將未飽和的距離修正與前饋一併縮小。實體減速上限不變，直接控制仍為 0.5 m/s、1.0 rad/s，仲裁／看門狗管線與唯一 `/cmd_vel` 發布者維持原狀。
+
+目標速度由 `/uwb/target` 估測位置搭配 `/odom` 位姿轉入 odom 後差分，經 EMA（alpha=0.2）、0.6 m/s 向量限幅，再轉回車體座標，避免把車體移動誤認成人物移動。里程計與目標來源時間差或控制時里程計年齡超過 0.15 s 時不使用前饋；資料缺口超過 0.5 s 或時間倒退會丟棄差分歷史。一般模式會退回距離控制；`monitor_odom` 的故障停止規則維持原狀。此估速使用最新里程計，沒有補間；EKF 雜訊、漂移與兩來源時間差仍須容器驗證。距離保持遲滯須滿足 `0 <= enter <= exit`。
+
+純 Python 閉迴路診斷可在儲存庫根目錄執行：
+
+```bash
+/workspace/scratch/venv-shop/bin/python scripts/follow_loop_sim.py
+/workspace/scratch/venv-shop/bin/python scripts/follow_loop_sim.py --world
+/workspace/scratch/venv-shop/bin/python scripts/follow_loop_sim.py --speed-factor 0.4
+```
+
+工具直接讀取唯一 `person_path.yaml` 與控制 YAML，包含整個循環及啟動暫態；使用現有 TargetFilter、控制器、速度仲裁、加速度限制與看門狗的純邏輯。輸出保留舊版公式、修正版、移除前饋與移除控制器加速度限制的對照。預設無障礙情境的平均距離由 1.397 m 改為 1.003 m；`--world` 以 SDF 碰撞盒及人物圓柱近似雷射，舊版全程平均距離為 2.766 m，修正版為 1.807 m；修正版排除 LOS 鎖定與安全停止後，平均距離誤差 0.171 m、RMSE 0.198 m，有效樣本 69.3%。兩者都不是 Gazebo 驗收。模型不執行 Nav2，也不模擬車體動力學或 UWB 雜訊；全程統計與排除計數必須一起閱讀，詳見 [指標說明](docs/METRICS.md)。
+
+目前人物速度固定為 0.35 m/s，路徑與速度均未修改。比例控制原本在直線等速情境需要約 `0.35/0.7=0.5 m` 落後才能維持前進；轉角朝向閘控、側向減速與 LOS 等待會進一步放大落後。當減速倍率長期為 0.4，上限只有 0.2 m/s，前饋也無法追上 0.35 m/s 的人物；該壓力情境刻意保留失敗。預設走道中央淨空約 0.8 m，可使用完整速度，因此未全面放慢人物。貨架末端仍須驗證既有 Nav2 交接，不能由此模型推論已解決繞行。人物本身也是雷射障礙：正前方距離約 `0.18+0.25+0.65=1.08 m` 時就可能觸發停止，因此目前幾何與安全門檻下不能保證持續精確維持 1.0 m；距離遲滯不延後安全停止。
+
+人物模型沿用 Fortress `/world/supermarket/set_pose`，每 0.05 s 嘗試更新，但同時最多一個 `ign service` 子程序，未完成便略過。原流程在發出請求前取樣當下路徑，之後才啟動子程序、等待服務套用，模型再保持位置直到下次完成；這會累積命令與保持延遲，且不是 ROS bridge 傳送移動命令。新增 `/person_path` 節點參數 `model_lag_compensation_s=0.30`，只將模型命令取樣改為 `t+補償`；UWB 真值與同步檢查仍使用 t，不修改觀測時間戳。服務完成觀察耗時以模擬秒寫入 DEBUG 紀錄，但不能分離程序啟動與實際套用時間。0.30 s 依 2026-10-24 實測總延遲校準；不同模擬速度／主機負載可能需要重校，必須以 `person-sync-check` 確認平均誤差 <0.05 m、延遲絕對值 <0.1 s。可用 `ros2 param set /person_path model_lag_compensation_s 0.0` 關閉，或設為新的非負補償值；設定不代表已通過驗收。
 
 可直接分析 `ros2 topic echo /follow/state` 文字紀錄，不需 rosbag：
 
@@ -340,7 +358,7 @@ ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eva
 
 `person_sync_check` 比較 `/uwb/person_ground_truth`、`/simulation/person_pose` 的人物幾何位置，以及共用 `person_path.yaml` 在各筆來源模擬時間的位置；輸出平面偏差的平均、RMSE、最大值及延遲搜尋結果。每組平均偏差須小於 0.05 m、延遲絕對值須小於 0.1 s，可用 `--mean-limit`、`--lag-limit` 更改驗收門檻。人物模型父框架必須為 `supermarket`、子框架為 `person`，對應 SDF 世界原點；人物真值必須為 `sim_world`。這是同一個模擬世界座標，不拿 EKF 的 `odom` 當真值。
 
-既有 `/simulation/poses` 保留原用途。Fortress [SceneBroadcaster](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/scene_broadcaster/SceneBroadcaster.cc) 的時間戳在外層 Pose_V，而 Humble [TFMessage 轉換](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/src/convert/tf2_msgs.cpp) 讀取各筆 pose，無法保留該外層時間。此次增加人物唯讀 [PosePublisher](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/pose_publisher/PosePublisher.cc)，產生各筆時間與框架；只有 follow launch 將 `/model/person/pose` 單向橋接至 `/simulation/person_pose`（TFMessage），不接入 `/tf`。這是量測來源時間的補足，沒有修改人物移動或 UWB 生成演算法；SDF 的觀察外掛在其他模擬也會載入，但沒有新增 ROS 橋接。
+既有 `/simulation/poses` 保留原用途。Fortress [SceneBroadcaster](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/scene_broadcaster/SceneBroadcaster.cc) 的時間戳在外層 Pose_V，而 Humble [TFMessage 轉換](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/src/convert/tf2_msgs.cpp) 讀取各筆 pose，無法保留該外層時間。此次增加人物唯讀 [PosePublisher](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/pose_publisher/PosePublisher.cc)，產生各筆時間與框架；只有 follow launch 將 `/model/person/pose` 單向橋接至 `/simulation/person_pose`（TFMessage），不接入 `/tf`。PosePublisher 僅補足量測來源時間；人物命令延遲補償見跟隨控制說明。SDF 的觀察外掛在其他模擬也會載入，但沒有新增 ROS 橋接。
 
 `follow_eval` 使用人物真值與 `/sim/ground_truth_odom`（`sim_world → base_footprint_gt`），將真實相對位置轉到車體平面座標，再和 `/uwb/target`（`base_link`）比較。平移原點相同的假設來自目前 URDF 的固定關節。表格包含下列指標，門檻是初始驗收提案，並非控制器調參：
 

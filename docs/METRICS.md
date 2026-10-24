@@ -208,3 +208,16 @@ UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` �
 6. 以相同程序產生 guide2／follow2，先比對 `.meta.json` 的涵蓋程度、缺樣、截止回合及報告 parameters，再按相同區域順序比較 success_rate、逐回合 duration／path_length／final_position_error，以及跟隨 RMSE、帶內時間比例與停止 pending／每事件延遲。可用 `diff -u bags/guide1/report.json bags/guide2/report.json` 檢視完整差異（source 路徑必然不同）。不同資料覆蓋率不可只比平均數。
 
 Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非決定性；固定種子不保證逐位元相同。應重複多次並保留失敗，這份程序不是自動通過判準，也不代表容器或硬體已驗收。
+
+
+## 純 Python 跟隨閉迴路診斷（2026-10-24）
+
+`scripts/follow_loop_sim.py` 的距離使用 `follow_metrics.evaluate_series`，距離誤差使用 `evaluation_metrics.stats(abs(distance-follow_distance))`，直線／轉彎使用既有 `segment_kind`。誤差平均為平均絕對誤差，RMSE 與帶正負距離誤差的 RMSE 相同；不使用「平均距離減目標」替代平均絕對誤差。沒有修改 `follow-eval` 的定義或預設門檻。
+
+預設讀取同一份路徑的完整循環，初始車體 `(0, 0, 0)`，包含啟動暫態，控制／仲裁／看門狗 20 Hz、UWB 與雷射 10 Hz。使用無雜訊 UWB 位置加既有 EMA、理想里程計與單輪車運動學。`--world` 直接解析 SDF 軸向碰撞盒，加入人物半徑 0.25 m，雷射原點前移 0.18 m，以 181 條射線近似實際 720 條雷射，沿用前方停止、側向淨空、LOS 與遲滯純邏輯。模型在 LOS 鎖定時保持零速，沒有執行 Nav2 交接或替車體重設位置；不包含 SLAM、TF／服務排程、接觸動力學、噪聲或掉包。`without_controller_accel` 只移除控制器加速度限制，管線的速度／加速度限制仍存在。
+
+JSON 的 `all` 保留所有同步樣本；`eligible` 僅保留控制器為 FOLLOWING、原始 LOS 暢通且 LOS 鎖定已解除的樣本，`excluded.safety_stop` 優先於 `excluded.occluded` 計數，兩者互斥。`eligible_fraction` 是有效樣本比例，`segments_distance_error_m` 只分類有效樣本。`limits` 另列減速、朝向閘控及人物快於瞬時速度上限的樣本數，以及最終命令最大速度。這些排除條件只用於離線閉迴路診斷，線上 `follow-eval` 仍保留遮蔽、Nav2 與停止期間的真實距離，不能直接拿有效區間結果宣稱線上驗收通過。
+
+此次單圈 94.857 s（20 Hz 取樣 1898 筆），無障礙修正版距離誤差平均 0.053 m／RMSE 0.109 m；SDF 情境有效區間為 0.171 m／0.198 m（1316 筆，69.3%），但全程平均距離仍為 1.807 m。目標是有效區間平均誤差 <0.5 m、RMSE <1.0 m；全程追蹤與貨架末端繞行仍需容器驗證。
+
+人物補償測試用相同解析路徑建立「服務延遲＋位置保持」合成訊號，使用原 `sync_report` 的誤差與延遲搜尋，沒有把補償加到參考真值或模型觀測時間。服務延遲 0.20／0.25／0.30 s、命令週期 0.05 s、補償 0.30 s 的合成案例均須通過平均誤差 <0.05 m、延遲絕對值 <0.1 s；這只驗證補償邏輯，不能證明 Fortress 執行時延遲固定或已通過同步檢查。

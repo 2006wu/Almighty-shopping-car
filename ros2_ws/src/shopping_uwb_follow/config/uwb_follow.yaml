@@ -19,6 +19,9 @@
     max_angular_accel: 1.5
     kp_distance: 0.7
     kp_bearing: 1.5
+    velocity_feedforward: 1.0
+    distance_hysteresis_enter: 0.04
+    distance_hysteresis_exit: 0.08
     enabled: false
     route_around: true
     handoff_margin: 0.3

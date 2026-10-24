@@ -22,6 +22,7 @@ from .follow_handoff import (
     line_of_sight_clear, scan_valid, transform_xy,
 )
 from .node_common import seconds
+from .estimator import TargetVelocityEstimator
 
 
 def planar_pose(transform):
@@ -40,8 +41,10 @@ class FollowNode(Node):
         self.control = FollowController(params)
         self.monitor_odom = self.declare_parameter('monitor_odom', False).value
         self.odom_time = None
-        if self.monitor_odom:
-            self.create_subscription(Odometry, '/odom', self.on_odom, 10)
+        self.odom_pose = None
+        self.target_velocity = (0.0, 0.0)
+        self.velocity_estimator = TargetVelocityEstimator()
+        self.create_subscription(Odometry, '/odom', self.on_odom, 10)
         self.enabled = self.declare_parameter('enabled', False).value
         route_around = self.declare_parameter('route_around', True).value
         handoff = HandoffParams(follow_distance=params.follow_distance,
@@ -119,12 +122,22 @@ class FollowNode(Node):
 
     def on_odom(self, msg):
         self.odom_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
+        position, q = msg.pose.pose.position, msg.pose.pose.orientation
+        yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
+        self.odom_pose = (position.x, position.y, yaw)
 
     def on_target(self, msg):
         if msg.header.frame_id != 'base_link':
             return
         self.target = (msg.point.x, msg.point.y)
         self.target_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
+        if (self.odom_pose is not None and self.odom_time is not None
+                and -1e-9 <= self.target_time-self.odom_time <= 0.15):
+            self.target_velocity = self.velocity_estimator.update(
+                self.target, self.odom_pose, self.target_time)
+        else:
+            self.velocity_estimator.reset()
+            self.target_velocity = (0.0, 0.0)
 
     def on_scan(self, msg):
         self.scan = msg
@@ -281,7 +294,10 @@ class FollowNode(Node):
         if self.client is not None and not los:
             factor *= p.los_uncertain_speed_factor
         v, w, state, reason = self.control.step(
-            self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor)
+            self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
+            target_velocity=(getattr(self, 'target_velocity', (0.0, 0.0))
+                             if getattr(self, 'odom_time', None) is not None and 0 <= now-self.odom_time <= 0.15
+                             else (0.0, 0.0)))
         self.last_time = now
         if (not self.enabled and not self.busy()
                 and getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') != '/cmd_vel'):

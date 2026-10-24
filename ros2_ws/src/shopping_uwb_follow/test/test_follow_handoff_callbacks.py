@@ -350,7 +350,9 @@ def test_odom_watchdog_recovery_uses_fresh_header():
     node.monitor_odom = True
     node.odom_time = -1
     node.tick()
-    node.on_odom(NS(header=NS(stamp=NS(sec=0, nanosec=0))))
+    node.on_odom(NS(header=NS(stamp=NS(sec=0, nanosec=0)),
+                    pose=NS(pose=NS(position=NS(x=0, y=0),
+                                    orientation=NS(x=0, y=0, z=0, w=1)))))
     node.obstacle = 3
     node.map_goal_and_los = lambda: (None, True)
     node.now = 0.05
@@ -374,3 +376,27 @@ def test_frozen_measurement_headers_stop_despite_recent_delivery(fault, nav):
     assert cmd.linear.x == cmd.angular.z == 0
     if nav:
         assert node.cancel_requested
+
+
+def test_target_velocity_uses_fresh_odometry_and_drops_stale_history():
+    from shopping_uwb_follow.estimator import TargetVelocityEstimator
+    node = make_node()
+    node.velocity_estimator = TargetVelocityEstimator()
+    node.odom_pose = (0, 0, 0)
+    node.odom_time = 0
+    for i in range(20):
+        t = i*0.1
+        node.odom_time = t
+        node.odom_pose = (0.2*t, 0, 0)
+        node.on_target(NS(header=NS(frame_id='base_link',
+                                   stamp=NS(sec=int(t), nanosec=round((t-int(t))*1e9))),
+                          point=NS(x=2+0.15*t, y=0)))
+    assert node.target_velocity[0] == pytest.approx(0.35, abs=0.006)
+    node.on_target(NS(header=NS(frame_id='base_link', stamp=NS(sec=3, nanosec=0)),
+                      point=NS(x=3, y=0)))
+    assert node.target_velocity == (0, 0)
+    assert node.velocity_estimator.previous is None
+    node.odom_time = 3.1
+    node.on_target(NS(header=NS(frame_id='base_link', stamp=NS(sec=3, nanosec=100000000)),
+                      point=NS(x=3.1, y=0)))
+    assert node.target_velocity == (0, 0)  # First fresh sample reinitializes.

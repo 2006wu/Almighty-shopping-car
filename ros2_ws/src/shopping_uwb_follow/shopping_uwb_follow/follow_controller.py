@@ -59,6 +59,9 @@ class ControllerParams:
     max_angular_accel: float = 1.5
     kp_distance: float = 0.7
     kp_bearing: float = 1.5
+    velocity_feedforward: float = 1.0
+    distance_hysteresis_enter: float = 0.04
+    distance_hysteresis_exit: float = 0.08
     los_uncertain_speed_factor: float = 0.6
     side_sector_min: float = math.pi/6
     side_sector_max: float = math.radians(100)
@@ -70,7 +73,8 @@ class ControllerParams:
 class FollowController:
     def __init__(self, params=None):
         self.p = params or ControllerParams()
-        nonnegative = {'side_slow_clearance', 'side_sector_min',
+        nonnegative = {'velocity_feedforward', 'distance_hysteresis_enter',
+                       'distance_hysteresis_exit', 'side_slow_clearance', 'side_sector_min',
                        'side_min_speed_factor', 'los_uncertain_speed_factor'}
         if any(not math.isfinite(v) or (v < 0 if k in nonnegative else v <= 0)
                for k, v in vars(self.p).items()):
@@ -82,9 +86,12 @@ class FollowController:
         if (self.p.los_uncertain_speed_factor > 1
                 or not 0 <= self.p.side_sector_min < self.p.side_sector_max <= math.pi):
             raise ValueError('Invalid slowdown factor or side sectors')
+        if not 0 <= self.p.distance_hysteresis_enter <= self.p.distance_hysteresis_exit:
+            raise ValueError('Hysteresis requires enter <= exit')
+        self.holding_distance = False
         self.v = self.w = 0.0
 
-    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0):
+    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0, target_velocity=(0.0, 0.0)):
         p = self.p
         state, reason = 'FOLLOWING', 'Tracking target'
         if not enabled:
@@ -95,18 +102,32 @@ class FollowController:
             state, reason = 'TOO_CLOSE', 'Target inside stop distance'
         elif math.isnan(obstacle) or obstacle <= p.obstacle_stop_distance:
             state, reason = 'OBSTACLE_STOP', 'Obstacle or unavailable scan'
-        if state not in ('FOLLOWING', 'OBSTACLE_STOP') or math.isnan(obstacle):
+        if (state == 'OBSTACLE_STOP' and math.isfinite(obstacle)
+                and (not math.isfinite(dt) or dt <= 0)):
+            state, reason = 'IDLE', 'Invalid control interval'
+        if state != 'FOLLOWING':
+            self.holding_distance = False
             self.v = self.w = 0.0
             return self.v, self.w, state, reason
         if not math.isfinite(dt) or dt <= 0:
             self.v = self.w = 0.0
             return 0.0, 0.0, 'IDLE', 'Invalid control interval'
         distance, bearing = math.hypot(*target), math.atan2(target[1], target[0])
-        v = (min(p.max_linear, max(0.0, p.kp_distance*(distance-p.follow_distance)))
-             * max(0.0, min(1.0, speed_factor)) * max(0.0, math.cos(bearing)))
-        if state == 'OBSTACLE_STOP':
-            self.v = v = 0.0
-            reason = 'Obstacle: translation stopped, turning toward target'
+        error = distance-p.follow_distance
+        if abs(error) <= p.distance_hysteresis_enter:
+            self.holding_distance = True
+        elif abs(error) >= p.distance_hysteresis_exit:
+            self.holding_distance = False
+        correction = 0.0 if self.holding_distance else p.kp_distance*error
+        # Velocity is the target's absolute velocity expressed in base_link.
+        # Project onto the sight line; odometry compensation belongs upstream.
+        velocity_valid = (len(target_velocity) == 2
+                          and all(math.isfinite(v) for v in target_velocity))
+        radial = (sum(a*b for a, b in zip(target_velocity, target))/distance
+                  if velocity_valid else 0.0)
+        demand = max(0.0, p.velocity_feedforward*radial+correction)
+        v = (min(p.max_linear*max(0.0, min(1.0, speed_factor)), demand)
+             * max(0.0, math.cos(bearing)))
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))

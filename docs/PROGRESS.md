@@ -825,3 +825,59 @@
 | serial_loopback `comm-sim` + `comm-check` | 10/10 PASS |
 | `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
 | 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
+
+## 2026-10-24：跟隨追蹤誤差修正
+
+### 根因分析與修改
+
+- 新增 `scripts/follow_loop_sim.py`：直接讀取 Gazebo 套件唯一 `config/person_path.yaml` 與 `uwb_follow.yaml`，使用既有 TargetFilter、控制器、LOS 遲滯、VelocityMux、VelocityLimiter 與 OutputWatchdog。保留修改前完整 `step` 公式作為固定對照。單輪車模型從原點開始，控制／仲裁／看門狗 20 Hz、UWB／雷射 10 Hz；`--world` 由 SDF 碰撞盒與人物圓柱產生 181 條近似雷射，使用車前 0.18 m 的雷射原點。完整一圈 94.857 s，1898 筆樣本，沒有省略啟動暫態或重設車體追上人物。
+- 人物各段都是同一個 0.35 m/s，低於直接控制上限 0.5 m/s 與仲裁上限 0.6 m/s；不是預設路徑整體超速。原本比例控制在正前方等速時需要 `0.35/0.7=0.5 m` 距離誤差才產生維持速度。側向／LOS 倍率原先乘在飽和後的整個命令，再乘朝向餘弦，會同時縮小未飽和修正量及實際速度上限。倍率 0.4 時上限僅 0.2 m/s；LOS 不確定倍率 0.6 時上限也僅 0.3 m/s，均無法追上 0.35 m/s 人物。彎道落後增加後，LOS 鎖定等待會進一步放大距離。
+- 無障礙舊版平均距離只有 1.397 m；加入 SDF、側向減速、朝向閘控與 LOS 保持後，全程平均距離為 2.766 m，接近容器 3.35 m 的量級，但不是精確重播。無障礙情境移除控制器加速度限制後為 1.396 m，顯示該情境中加速度不是主因；障礙情境則會因轉角進入不同阻塞狀態而改變結果。主要證據支持比例控制落後與幾何／安全等待的放大效應，不能只把 3.35 m 歸因於增益不足，也不能從此近似模型斷言 Nav2 執行時的單一根因。
+- 人物圓柱本身也會被雷射掃到：雷射前移 0.18 m＋人物半徑 0.25 m＋前方停止門檻 0.65 m，使正前方距離約 1.08 m 就可能觸發安全停止。這解釋修正版仍有部分安全停止與正距離誤差，不能透過提高增益消除；保留原安全幾何與門檻。
+- 新增純邏輯 TargetVelocityEstimator：以 UWB 估測位置及里程計位姿轉至 odom 後差分，EMA alpha=0.2、向量限幅 0.6 m/s，再轉回車體座標；資料缺口／時間倒退會清除歷史。跟隨節點持續訂閱 `/odom`，量測時間差與控制時里程計年齡限制為 0.15 s；超過門檻停用前饋，故障模式原有里程計停止規則不變。
+- 控制改為目標絕對速度在視線方向的前饋＋距離比例修正，再以原側向／LOS 速度上限限幅，保留朝向閘控及原加速度限制。沒有提高線／角速度、加速度或增益。新增距離誤差 0.04／0.08 m 保持遲滯，保持時抑制比例修正、保留前饋。近距、目標遺失／過期、雷射失效及前方障礙直接輸出零 Twist；前方有效障礙停止改為包含角速度歸零，不再原地轉向。既有 Nav2 獨占交接流程與管線保持原狀，看門狗仍是預設模式唯一 `/cmd_vel` 發布者。
+- 人物模型原先每 0.1 s 取樣當下路徑後啟動 `ign service set_pose` 子程序，前一個請求未結束就跳過；命令取樣早於套用，加上位置保持會累積延遲。移動命令沒有經 ROS bridge，bridge 只量測位姿；`set_pose` 也沒有排程套用時間戳。本輪不能分離 0.30 s 中程序啟動、服務排程與保持時間的各自比例。新增純邏輯 `model_command_position` 與節點參數 `model_lag_compensation_s=0.30`，模型命令取樣改為 t+補償，嘗試週期縮至 0.05 s，仍只允許一個請求在途。服務完成觀察耗時寫入 DEBUG 紀錄，依模擬秒計算。
+- 補償不修改 UWB 真值、人物觀測時間戳或同步檢查參考路徑。人物路徑、速度與碰撞模型均未修改，仍為模型與 UWB 的唯一來源；未修改 Nav2 設定／launch、Docker、通訊層或 ROADMAP，未提交／推送。
+
+### 閉迴路結果（純 Python，非容器驗收）
+
+誤差平均為 `mean(abs(distance-1.0))`，RMSE 使用相同誤差；距離與分類沿用 `follow_metrics`／`evaluation_metrics`。有效區間排除安全停止、原始 LOS 不通或 LOS 鎖定未解除的樣本；每次均保留全程統計及互斥排除計數。無雜訊、理想里程計，尚未模擬 Nav2、碰撞動力學或傳輸排程。
+
+| 情境 | 全程平均距離 m | 有效區間平均距離 m | 有效區間平均誤差 m | 有效區間 RMSE m | 有效樣本比例 |
+| --- | --- | --- | --- | --- | --- |
+| 無障礙，舊版 | 1.397 | 1.397 | 0.397 | 0.412 | 100% |
+| 無障礙，修正版 | 1.003 | 1.003 | 0.053 | 0.109 | 100% |
+| SDF，舊版 | 2.766 | 1.673 | 0.673 | 0.734 | 51.7%（982／1898） |
+| SDF，修正版 | 1.807 | 1.171 | 0.171 | 0.198 | 69.3%（1316／1898） |
+| SDF，修正限幅但停用前饋 | 2.010 | 1.470 | 0.470 | 0.505 | 73.6%（1396／1898） |
+| SDF，舊版移除控制器加速度限制 | 3.158 | 1.620 | 0.620 | 0.680 | 33.7%（640／1898） |
+
+SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分別為 86／496 筆。修正版有效區間已達平均誤差 <0.5 m、RMSE <1.0 m，但全程平均距離仍大於目標，不能視為完整跟隨驗收通過。固定倍率 0.4 的壓力情境仍會失敗，證明前饋沒有繞過實際速度上限。預設走道中央約 0.8 m 側向淨空可使用完整速度，因此沒有全面放慢人物路徑。
+
+### 測試、限制與下一步
+
+- 新增 pytest 覆蓋舊版閉迴路量級、修正版全路徑有效區間門檻、移除前饋／加速度對照、持續低速上限的失敗、速度估測的自車平移／旋轉補償與缺口重設、節點新鮮里程計接線、距離遲滯、前饋不得越過安全停止、模型路徑補償與循環邊界。既有前方障礙測試更新為完整零 Twist；其餘安全與路徑淨空回歸一併執行。
+- 人物補償的合成測試明確假設服務延遲為 0.20／0.25／0.30 s，加上命令保持；以原 `sync_report` 檢查修正後平均誤差 <0.05 m、延遲絕對值 <0.1 s。這不是 Gazebo 量測。0.30 s 補償依維護者先前實測校準，主機負載、實際模擬倍率與轉角外推都可能改變結果；必要時用 `ros2 param set /person_path model_lag_compensation_s 值` 重校，0 關閉。
+- 尚未執行 ROS、colcon 或 Gazebo；沒有安裝套件、執行 Docker、加入硬體／裝置連線。里程計時間只用最新量測，未補間；EKF 雜訊、漂移、UWB 雜訊／掉包與兩錨點前後解歧義／NLOS 限制仍存在。模型命令補償不能修正真實 UWB 估測錯誤。
+- 近似閉迴路沒有 Nav2，因此不能證明貨架末端繞行已修復。維護者須在既有容器重新建置／測試，停止其他移動流程後只啟動單一 follow；同時量測人物同步與全程追蹤，檢查交接卡住、轉角與停止事件。線上 `follow-eval` 沒有套用離線有效區間排除，應保留原始全程結果。
+- 建議命令：`./scripts/dev.sh colcon-build`、`./scripts/dev.sh colcon-test`；啟動 `./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 120.0, fault: uwb_stale, duration: 3.0}]'`，再於不同終端機執行 `./scripts/dev.sh person-sync-check --duration 60 --output /tmp/person-sync-follow-tracking.json` 與 `./scripts/dev.sh follow-eval --duration 180 --tracking-limit 1.0 --output /tmp/follow-tracking.json`。兩個量測都須在 120 s 故障前啟動。近距停止可能仍為 NOT_COVERED，需另外安排可重現的近停測試。
+
+### 本輪執行紀錄（非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：682 項通過，既有 xacro 棄用警告 1 項。
+- `PATH=/workspace/scratch/venv-shop/bin:$PATH python3 scripts/check_static.py`：PASS；15 個 YAML／RViz、10 個 XML／SDF／xacro、87 個 Python、4 個 Bash，兩／三錨點與 ekf／ground_truth 的 xacro 展開及錨點一致性通過。
+- `git diff --check`：通過。以上未包含 ROS、colcon、Gazebo 或硬體驗收。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 舊版重現、前饋、遲滯與安全回歸複核 | 待驗證 |
+| 人物模型補償合成測試與路徑淨空複核 | 待驗證 |
+| pytest、YAML／XML／launch 語法與 xacro 靜態檢查複核 | 待驗證 |
+| Humble 容器 colcon build／test | 待驗證 |
+| Fortress `person-sync-check` 平均誤差與延遲 | 待驗證 |
+| `follow-eval` 全程直線／轉彎追蹤與前饋雜訊 | 待驗證 |
+| 貨架末端 LOS／Nav2 繞行與獨占控制 | 待驗證 |
+| 近距停止、前方障礙零 Twist、UWB 缺口恢復與急停 | 待驗證 |
+| 預設 EKF／ground_truth 與唯一 TF／cmd_vel 發布者回歸 | 待驗證 |

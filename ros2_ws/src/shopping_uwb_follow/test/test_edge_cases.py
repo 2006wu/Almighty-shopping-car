@@ -115,7 +115,8 @@ def test_scan_sensor_limits():
 @pytest.mark.parametrize('field', list(vars(ControllerParams())))
 @pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf')])
 def test_controller_parameter_validation(field, value):
-    if value == 0 and field in ('side_slow_clearance', 'side_sector_min',
+    if value == 0 and field in ('velocity_feedforward', 'distance_hysteresis_enter',
+                                'side_slow_clearance', 'side_sector_min',
                                 'side_min_speed_factor', 'los_uncertain_speed_factor'):
         FollowController(ControllerParams(**{field: value}))
     else:

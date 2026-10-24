@@ -155,8 +155,12 @@ def test_safety_and_terminal_events_bypass_minimum_nav_hold(override):
     assert step(s, 0.81, **override).action == 'cancel_goal'
 
 
-def test_uncertain_slowdown_also_applies_below_speed_limit():
+def test_uncertain_slowdown_caps_speed_without_scaling_feedback_gain():
     s = FollowController()
     for _ in range(50):
         result = s.step((1.2, 0), 0, 3, 0.05, speed_factor=0.6)
-    assert result[0] == pytest.approx(0.7*0.2*0.6)
+    assert result[0] == pytest.approx(0.7*0.2)
+    for _ in range(50):
+        result = s.step((4, 0), 0, 3, 0.05, speed_factor=0.6,
+                        target_velocity=(0.35, 0))
+    assert result[0] == pytest.approx(0.5*0.6)
