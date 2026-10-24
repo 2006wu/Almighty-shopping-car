@@ -1133,3 +1133,9 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 | amd64／arm64 原生模擬回歸 | amd64 Gazebo 無頭模擬如上；arm64 未驗證 |
 
 審查時間：2026-10-24 16:30（台北時間）；結果紀錄於 Docker 專案 shopobs（t30s）。
+
+## 2026-10-24：t35 撤回與跟隨模擬審查（17:10 台北時間）
+
+- t35（遮蔽時持續由 Nav2 接手、不取消重送）在 Gazebo follow-eval 反而變差：直線平均距離 3.64 公尺、轉彎 4.17 公尺（t32 為 3.03／3.47，develop 基準 t18s 為 2.89／3.36，目標 1.0 公尺）。205 筆 1 Hz 診斷中 NAV2_HANDOFF 佔 205、其中 162 筆 `los_blocked=True`，Nav2 接手期間平均命令速度僅 0.10 m/s（人物 0.35 m/s），51 筆為「Forward blocked; rotation allowed」。因此以 `git revert` 撤回 t35 程式與測試，保留 t32 行為；本節上方 t35 紀錄僅作歷史參考。
+- 推論：主要瓶頸是視線遮蔽判定過於保守（大量誤判遮蔽）與 Nav2 接手時速度過低，不是 BLOCKED_WAIT 本身；需另外調整 LOS 判定寬度／去彈跳與 Nav2 跟隨速度上限，再以 follow-eval 驗證。ROADMAP「評估濾波延遲、轉彎跟隨…」維持未勾選。
+- 已驗證：filter latency 0.07–0.08 s PASS；near_stop PASS；pytest 893 passed。fault-check 結果見合併 PR 說明。

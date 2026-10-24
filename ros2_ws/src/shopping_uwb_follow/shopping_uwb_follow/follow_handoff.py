@@ -168,7 +168,7 @@ class HandoffSupervisor:
         clock_reset = (not math.isfinite(now)
                        or self.last_time is not None and now < self.last_time)
         self.last_time = now
-        safe = (enabled and state not in ('LOST', 'STALE', 'TOO_CLOSE', 'IDLE')
+        safe = (enabled and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
                 and valid_xy(target) and scan_valid
                 and not math.isnan(front_clearance) and front_clearance >= 0)
         if not safe or clock_reset:
@@ -192,37 +192,29 @@ class HandoffSupervisor:
             clear = (los_clear and close and aligned
                      and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin)
             self.clear_since = (now if self.clear_since is None else self.clear_since) if clear else None
-            if (now-self.nav_since >= self.p.min_nav_hold
+            if nav_status in ('failed', 'canceled') or not valid_xy(map_target):
+                self.mode = 'DIRECT'
+                self.retry_after = now+self.p.retry_cooldown
+                reason = 'Navigation failed or map transform unavailable'
+            elif (now-self.nav_since >= self.p.min_nav_hold
                   and self.clear_since is not None
                   and now-self.clear_since >= self.p.resume_delay):
                 self.mode = 'DIRECT'
                 reason = 'Close aligned direct path sustained'
-            elif not valid_xy(map_target):
-                reason = 'Map transform unavailable; navigation ownership held'
-            elif ((self.last_goal_time is None
-                   or now-self.last_goal_time >= self.p.goal_update_period)
-                  and (self.last_goal is None
-                       or math.dist(map_target, self.last_goal) > self.p.goal_update_distance
-                       or nav_status in ('succeeded', 'aborted', 'failed', 'canceled', 'unavailable'))):
+            elif (now-self.last_goal_time >= self.p.goal_update_period
+                  and (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
+                       or nav_status == 'succeeded'
+                       and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin)):
                 action, reason = 'update_goal', 'Refresh moving standoff goal'
             else:
                 reason = 'Navigation owns velocity'
-            if nav_status == 'unavailable':
-                reason = 'Nav2 unavailable; holding for rate-limited retry'
         else:
             blocked = state == 'OBSTACLE_STOP' or self.los.blocked
             eligible = (blocked and valid_xy(map_target)
                         and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin
                         and now >= self.retry_after)
             self.blocked_since = (now if self.blocked_since is None else self.blocked_since) if eligible else None
-            # Debounced hidden targets immediately reserve Nav2 ownership.
-            # Obstacle-only handoffs retain their existing delay/hold policy.
-            if self.los.blocked:
-                self.mode = 'NAV2'
-                action = 'send_goal' if valid_xy(map_target) else 'none'
-                reason = ('Persistent blocked line of sight' if valid_xy(map_target) else
-                          'Map transform unavailable; navigation ownership held')
-            elif (self.blocked_since is not None
+            if (self.blocked_since is not None
                     and now-self.blocked_since >= self.p.handoff_delay
                     and (self.direct_since is None
                          or now-self.direct_since >= self.p.min_direct_hold

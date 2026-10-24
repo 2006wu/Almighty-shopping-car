@@ -36,7 +36,7 @@ def node_class():
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
                      String=lambda **kwargs: NS(**kwargs),
                      NavigateToPose=NS(Goal=lambda: NS()),
-                     GoalStatus=NS(STATUS_SUCCEEDED=4, STATUS_CANCELED=5, STATUS_ABORTED=6),
+                     GoalStatus=NS(STATUS_SUCCEEDED=4, STATUS_CANCELED=5),
                      scan_valid=lambda *args: True)
     exec(compile(ast.Module(body=[cls], type_ignores=[]), str(source), 'exec'), namespace)
     return namespace['FollowNode']
@@ -286,11 +286,7 @@ def test_blocked_line_of_sight_holds_instead_of_driving_into_shelf():
     node.tick()
     command = node.publisher.publish.call_args.args[0]
     assert command.linear.x == command.angular.z == 0
-    assert node.state.publish.call_args.args[0].data.startswith('NAV2_HANDOFF')
-    assert node.goal_pending
-    node.goal_result(completed(NS(status=4)), node.goals.generation)
-    node = make_node()
-    node.obstacle = 3.0
+    assert node.state.publish.call_args.args[0].data.startswith('BLOCKED_WAIT')
     node.supervisor.route_around = False
     node.now = node.target_time = node.scan_time = 0.4
     node.tick()
@@ -571,95 +567,3 @@ def test_node_relays_rotation_at_fixed_front_shelf_then_translation_and_expires(
     node.tick()
     cmd = node.publisher.publish.call_args.args[0]
     assert cmd.linear.x == cmd.angular.z == 0  # Fresh target cannot renew old Nav2 velocity.
-
-
-@pytest.mark.parametrize('terminal', [4, 6])
-def test_hidden_person_terminal_results_refresh_without_cancel_or_drain(terminal):
-    node = make_node()
-    node.obstacle = 3
-    handles, submissions = [], []
-
-    def accept(goal):
-        handle = Mock(accepted=True)
-        handle.get_result_async.return_value = Future()
-        handles.append(handle)
-        submissions.append(node.now)
-        return completed(handle)
-
-    node.client.send_goal_async.side_effect = accept
-    blocked_wait = 0
-    for index in range(401):
-        node.now = node.target_time = node.scan_time = index*0.05
-        if index > 6 and index % 40 == 0:
-            node.goal_result(completed(NS(status=terminal)), node.goals.generation)
-        node.tick()
-        state = node.state.publish.call_args.args[0].data
-        blocked_wait += 0.05 if state.startswith('BLOCKED_WAIT:') else 0
-        if node.supervisor.los.blocked:
-            assert node.supervisor.mode == 'NAV2'
-        assert not node.drain.active and not node.cancel_requested
-    assert len(submissions) >= 10 and blocked_wait <= 1
-    assert all(b-a >= 0.5-1e-9 for a, b in zip(submissions, submissions[1:]))
-    for handle in handles:
-        handle.cancel_goal_async.assert_not_called()
-
-
-def test_unavailable_nav2_holds_hidden_target_and_rate_limits_retries():
-    node = make_node()
-    node.obstacle = 3
-    node.client.server_is_ready.return_value = False
-    attempts = []
-    node.client.server_is_ready.side_effect = lambda: attempts.append(node.now) or False
-    for index in range(101):
-        node.now = node.target_time = node.scan_time = index*0.05
-        node.tick()
-        if node.supervisor.los.blocked:
-            assert node.supervisor.mode == 'NAV2'
-            assert 'Nav2 unavailable' in node.state.publish.call_args.args[0].data
-            cmd = node.publisher.publish.call_args.args[0]
-            assert cmd.linear.x == cmd.angular.z == 0
-            assert not node.drain.active
-    assert 2 <= len(attempts) <= 10
-    assert all(b-a >= 0.5-1e-9 for a, b in zip(attempts, attempts[1:]))
-    node.client.send_goal_async.assert_not_called()
-
-
-def test_close_clear_return_cancels_once_and_first_direct_command_is_zero():
-    node = make_node()
-    node.obstacle = 3
-    handle = Mock(accepted=True)
-    handle.get_result_async.return_value = Future()
-    node.client.send_goal_async.return_value = completed(handle)
-    node.tick()
-    node.now = node.target_time = node.scan_time = 0.3
-    node.tick()
-    pose, _ = node.map_goal_and_los()
-    node.map_goal_and_los = lambda: (pose, True)
-    node.los_clear_wide = True
-    node.target = (1.2, 0)
-    for index in range(7, 41):
-        node.now = node.target_time = node.scan_time = index*0.05
-        node.tick()
-    assert node.supervisor.mode == 'DIRECT' and node.drain.active
-    handle.cancel_goal_async.assert_called_once()
-    node.goal_result(completed(NS(status=5)), node.goals.generation)
-    node.now = node.target_time = node.scan_time = 2.4
-    node.tick()
-    cmd = node.publisher.publish.call_args.args[0]
-    assert cmd.linear.x == cmd.angular.z == 0
-    node.now = node.target_time = node.scan_time = 2.45
-    node.tick()
-    assert node.publisher.publish.call_args.args[0].linear.x > 0
-    handle.cancel_goal_async.assert_called_once()
-def test_guard_stop_requests_existing_handoff_and_stale_cancels_it():
-    node = make_node()
-    node.obstacle = 2.0
-    node.on_guard(NS(data=json.dumps(dict(state='STOP', t=node.now))))
-    node.tick()
-    assert node.supervisor.blocked_since is not None
-    node.on_guard(NS(data=json.dumps(dict(state='STALE', t=node.now))))
-    node.tick()
-    assert node.supervisor.mode == 'DIRECT'
-    assert node.supervisor.blocked_since is None
-    output = node.publisher.publish.call_args.args[0]
-    assert output.linear.x == output.angular.z == 0
