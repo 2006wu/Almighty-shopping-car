@@ -46,6 +46,21 @@ services:
       - ./fastdds_udp.xml:/etc/fastdds_udp.xml:ro
     networks: [ros]
     # UDP 8888 is intentionally internal; no device access or host port by default.
+  microros_client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.microros-client
+    profiles: [comm]
+    init: true
+    restart: on-failure
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-28}
+      RMW_IMPLEMENTATION: rmw_microxrcedds
+      MICROROS_AGENT_HOST: microros_agent
+      MICROROS_AGENT_PORT: '8888'
+    depends_on: [microros_agent]
+    networks: [ros]
+    # Linux simulation only: UDP to the agent, no devices or published ports.
   display:
     build:
       context: ..

@@ -8,6 +8,8 @@ from .logic import LinkMonitor
 class MonitorNode(Node):
     def __init__(self):
         super().__init__('mcu_link_monitor')
+        self.allow_faults = self.declare_parameter('allow_simulation_faults', False).value
+        self.declare_parameter('simulate_pc_heartbeat_loss', False)
         self.stop_enabled = self.declare_parameter('estop_on_link_loss', False).value
         spec = contract()
         self.topics = spec['topics']
@@ -30,8 +32,10 @@ class MonitorNode(Node):
             self.mode.publish(message_type(self.topics['mode_request'])(data='estop'))
 
     def tick(self):
-        self.hb.publish(message_type(self.topics['pc_heartbeat'])(data=self.counter))
-        self.counter = (self.counter+1) & 0xffffffff
+        paused = self.allow_faults and self.get_parameter('simulate_pc_heartbeat_loss').value
+        if not paused:
+            self.hb.publish(message_type(self.topics['pc_heartbeat'])(data=self.counter))
+            self.counter = (self.counter+1) & 0xffffffff
         if self.logic.should_stop(time.monotonic()):
             self.request_stop()  # Repeat so late/restarted mode managers receive the stop.
 

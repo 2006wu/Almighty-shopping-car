@@ -11,7 +11,7 @@ def generate_launch_description():
     transport = LaunchConfiguration('transport')
     params = {'use_sim_time': time}
     return LaunchDescription([
-        DeclareLaunchArgument('transport', default_value='sim_ros', choices=['sim_ros', 'serial_loopback']),
+        DeclareLaunchArgument('transport', default_value='sim_ros', choices=['sim_ros', 'serial_loopback', 'agent']),
         DeclareLaunchArgument('estop_on_link_loss', default_value='true', choices=['true', 'false']),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('standalone', default_value='false', choices=['true', 'false']),
@@ -28,5 +28,7 @@ def generate_launch_description():
              condition=IfCondition(PythonExpression(["'", transport, "' == 'serial_loopback'"])),
              parameters=[params, {'use_hardware': False, 'port': ''}], output='screen'),
         Node(package='shopping_mcu_bridge', executable='mcu_link_monitor', parameters=[params,
+             {'allow_simulation_faults': ParameterValue(PythonExpression([
+                 "'", transport, "' == 'agent' and '", LaunchConfiguration('standalone'), "' == 'true'"]), value_type=bool)},
              {'estop_on_link_loss': ParameterValue(LaunchConfiguration('estop_on_link_loss'), value_type=bool)}],
              output='screen')])
