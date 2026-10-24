@@ -1164,3 +1164,9 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 | --- | --- |
 | 原地旋轉安全條件、加速度限制與停用參數回歸 | 待驗證 |
 | Gazebo 轉角脫困、恢復跟隨與 fault-check 移動基準 | 待驗證 |
+
+## 2026-10-24：follow-los 模擬審查（17:58 台北時間）
+
+- t39s（含 t40 LOS 修正，route_around:=false）：fault-check obstacle 與 follow 套件全部「no moving baseline」→ **FAIL**。log 顯示機器人起步跟隨（v 0.18–0.5、w 至 0.72），轉彎切角後前方 0.593 m < 0.65 進入 OBSTACLE_STOP，v、w 皆 0 且永不恢復，人員離開至 5.6 m。
+- 已由 t44 加入 `obstacle_stop_rotate`（預設 true）：OBSTACLE_STOP 時線速度維持 0，旋轉淨空且目標新鮮時原地轉向人員；pytest 946 passed，**待模擬驗證**。
+- follow-eval 未跑完（為讓出模擬鎖給 hw／split 提前停止）。此分支**未合併**；下一步：重建後跑 fault-check --suite obstacle／follow 與 follow-eval，確認不再卡死且追蹤距離改善後再開 PR。
