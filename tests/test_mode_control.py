@@ -66,7 +66,8 @@ def test_priority_expiry_and_no_cached_inputs_after_clear():
     mux.receive('nav', 0.3, 0, 0)
     mux.receive('follow', 0.2, 0, 0)
     assert mux.select('FOLLOW', 0.29).source == 'follow'
-    assert mux.select('FOLLOW', 0.3).source == 'nav'
+    assert mux.select('FOLLOW', 0.3).velocity == ZERO
+    assert mux.select('GUIDE', 0.3).source == 'nav'
     assert mux.select('FOLLOW', 0.5).velocity == ZERO
     mux.receive('nav', 0.4, 0, 1)
     mux.receive('safety_stop', 9, 9, 1)
@@ -142,3 +143,15 @@ def test_linear_stop_bypasses_ramp_during_in_place_turn():
     limiter.step((0.6, 1.2), 0)
     limiter.step((0.6, 1.2), 0.1)
     assert limiter.step((0.0, 1.2), 0.15)[0] == 0.0
+
+
+def test_follow_requires_guarded_relay_even_after_its_command_expires():
+    mux = VelocityMux()
+    mux.receive('nav', 0.5, 0.8, 0)
+    assert mux.select('FOLLOW', 0).velocity == ZERO
+    mux.receive('follow', 0, 0.075, 0)
+    assert mux.select('FOLLOW', 0.1).velocity == (0, 0.075)
+    # An alive Nav2 publisher must never bypass a crashed/stalled safety guard.
+    mux.receive('nav', 0.5, 0.8, 0.31)
+    assert mux.select('FOLLOW', 0.31).velocity == ZERO
+    assert mux.select('GUIDE', 0.31).velocity == (0.5, 0.8)

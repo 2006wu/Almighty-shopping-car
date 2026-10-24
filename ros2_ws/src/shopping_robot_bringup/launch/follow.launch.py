@@ -12,9 +12,10 @@ def generate_launch_description():
     time = LaunchConfiguration('use_sim_time')
     config = get_package_share_directory('shopping_uwb_follow')+'/config/uwb_follow.yaml'
     use_mux = LaunchConfiguration('use_mux')
-    follow_topic = PythonExpression(["'/cmd_vel/follow' if '", use_mux, "'.lower() == 'true' else '/cmd_vel'"])
-    observed_topic = PythonExpression(["'/cmd_vel/nav' if '", use_mux, "'.lower() == 'true' else '/cmd_vel'"])
-    enabled = ParameterValue(PythonExpression(["'", use_mux, "'.lower() != 'true'"]), value_type=bool)
+    # The guarded Nav2 relay requires separate inputs and the output watchdog.
+    follow_topic = '/cmd_vel/follow'
+    observed_topic = '/cmd_vel/nav'
+    enabled = False
     fault = LaunchConfiguration('fault_injection')
     def raw(topic):
         return PythonExpression(["'/sim/raw", topic, "' if '", fault, "'.lower() == 'true' else '", topic, "'"])
@@ -35,7 +36,7 @@ def generate_launch_description():
             get_package_share_directory('shopping_mcu_bridge')+'/launch/comm.launch.py'),
             condition=IfCondition(LaunchConfiguration('mcu_comm')),
             launch_arguments={'use_sim_time': time}.items()),
-        DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
+        DeclareLaunchArgument('use_mux', default_value='true', choices=['true']),
         DeclareLaunchArgument('initial_mode', default_value='follow'),
         DeclareLaunchArgument('odom_source', default_value='ekf', choices=['ekf', 'ground_truth']),
         DeclareLaunchArgument('headless', default_value='true'),

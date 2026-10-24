@@ -131,11 +131,9 @@ def test_nav_hold_and_debounced_close_return():
 
 def test_direct_hold_and_continuously_blocked_exception():
     s = nav()
-    # Terminal success bypasses the NAV2 hold, while LOS is still blocked.
-    assert step(s, 1, nav_status='succeeded').action == 'cancel_goal'
-    step(s, 1.01)
-    # Continuous debounced blockage since 0.3 permits a new handoff early.
-    assert step(s, 1.52).action == 'send_goal'
+    # Success retains navigation despite a hidden person and an expired goal.
+    assert step(s, 1, nav_status='succeeded').mode == 'NAV2'
+    assert step(s, 1.52, nav_status='succeeded').action == 'update_goal'
     s = nav()
     clear = dict(los_clear=True, los_clear_wide=True, target=(1.3, 0))
     step(s, 1, **clear)
@@ -150,7 +148,7 @@ def test_direct_hold_and_continuously_blocked_exception():
 @pytest.mark.parametrize('override', [dict(state='LOST'), dict(state='TOO_CLOSE'),
     dict(state='IDLE'), dict(enabled=False), dict(scan_valid=False),
     dict(front_clearance=math.nan), dict(nav_status='failed'),
-    dict(nav_status='canceled'), dict(nav_status='succeeded')])
+    dict(nav_status='canceled')])
 def test_safety_and_terminal_events_bypass_minimum_nav_hold(override):
     s = nav()
     assert step(s, 0.81, **override).action == 'cancel_goal'

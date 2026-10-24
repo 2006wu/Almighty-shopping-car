@@ -140,11 +140,12 @@ def test_model_prediction_wraps_shared_path_and_rejects_invalid_timing():
             model_command_position(path, 1, compensation)
 
 
-def test_browsing_pace_tracks_under_narrow_clearance_cap():
+def test_realistic_browsing_pace_exposes_sustained_narrow_cap_lag():
     path, params = loop.load_inputs()
-    assert 0 < path['speed'] < params.max_linear*params.side_min_speed_factor
+    assert path['speed'] == 0.35
+    assert path['speed'] > params.max_linear*params.side_min_speed_factor
     result = loop.simulate(speed_factor=params.side_min_speed_factor)
-    assert result['all']['distance_error_m']['rmse'] < 0.2
+    assert result['all']['distance_error_m']['rmse'] > 1.0
     assert result['limits']['max_command_linear'] <= params.max_linear*params.side_min_speed_factor
 
 

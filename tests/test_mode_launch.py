@@ -46,13 +46,15 @@ def load(relative):
     return env
 
 
-@pytest.mark.parametrize('enabled', ['true', 'false'])
-def test_follow_wiring_for_both_mux_modes(enabled):
+def test_follow_requires_mux_and_separate_guarded_navigation_input():
+    enabled = 'true'
     actions = load('shopping_robot_bringup/launch/follow.launch.py')['generate_launch_description']()
     context = {'use_mux': enabled}
     follow = next(a for a in actions if a.kind == 'Node' and a.executable == 'follow_controller_node')
     parameters = follow.parameters[-1]
-    assert resolve(parameters['enabled'].args[0], context) == (enabled == 'false')
+    declaration = next(a for a in actions if a.kind == 'DeclareLaunchArgument' and a.args[0] == 'use_mux')
+    assert declaration.choices == ['true']
+    assert parameters['enabled'] is False
     assert resolve(parameters['observed_cmd_vel_topic'].args[0], context) == (
         '/cmd_vel/nav' if enabled == 'true' else '/cmd_vel')
     assert resolve(follow.remappings[0][1], context) == (

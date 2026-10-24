@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from shopping_uwb_follow.follow_controller import FollowController, side_clearance, side_speed_factor
+from shopping_uwb_follow.follow_controller import FollowController, NavigationGuard, rotation_scan_clear, side_clearance, side_speed_factor
 from shopping_uwb_follow.follow_handoff import GoalBook, VelocityDrain, HandoffSupervisor
 
 
@@ -29,7 +29,7 @@ def node_class():
     tree = ast.parse(source.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FollowNode')
     cls.bases = []
-    namespace = dict(math=math, side_clearance=side_clearance,
+    namespace = dict(math=math, rotation_scan_clear=rotation_scan_clear, side_clearance=side_clearance,
                      side_speed_factor=side_speed_factor, seconds=lambda node: node.now,
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
                      String=lambda **kwargs: NS(**kwargs),
@@ -45,6 +45,8 @@ def make_node():
     node = cls.__new__(cls)
     node.now, node.last_time = 0.0, -0.05
     node.control = FollowController()
+    node.nav_guard = NavigationGuard(node.control.p)
+    node.rotation_clear = False
     node.supervisor = HandoffSupervisor()
     node.enabled = True
     node.client = Mock()
@@ -116,7 +118,9 @@ def test_nav2_ownership_and_zero_first_direct_command_after_drain():
     node.goal_result(completed(NS(status=4)), node.goals.generation)
     node.now = node.target_time = node.scan_time = 1.1
     node.tick()
-    node.publisher.publish.assert_not_called()
+    assert node.supervisor.mode == 'NAV2'  # Success alone never abandons a detour.
+    assert node.publisher.publish.call_args.args[0].linear.x == 0
+    node.nav_status = 'failed'
     node.now = node.target_time = node.scan_time = 1.41
     node.tick()
     command = node.publisher.publish.call_args.args[0]
@@ -156,7 +160,7 @@ def test_update_preempts_without_cancel_or_drain_and_ignores_old_callbacks():
     assert node.client.send_goal_async.call_count == 2
     old_handle.cancel_goal_async.assert_not_called()
     assert not node.drain.active and not node.cancel_requested
-    node.publisher.publish.assert_not_called()
+    assert node.publisher.publish.call_args.args[0].linear.x == 0
     new_handle = Mock(accepted=True)
     second_response.set_result(new_handle)
     old_result.set_result(NS(status=5))
@@ -238,6 +242,8 @@ def test_safety_zero_bypasses_navigation_and_drain(safety, draining):
     node.tick()
     handle = Mock(accepted=True)
     node.goal_response(completed(handle), node.goals.generation)
+    node.rotation_clear = True
+    node.last_nav_command = (1.1, 0.4, 0.8)
     if draining:
         node.supervisor.mode = 'DIRECT'
         node.cancel_goal()
@@ -431,7 +437,7 @@ def test_pending_goal_updates_coalesce_then_preempt_with_latest_pose():
     assert not node.drain.active
 
 
-def test_obstacle_stop_masks_both_nav_axes_without_cancel_resend():
+def test_obstacle_stop_without_rotation_clearance_masks_both_axes_without_cancel():
     node = make_node()
     node.tick()
     node.now = node.target_time = node.scan_time = 1.0
@@ -444,13 +450,13 @@ def test_obstacle_stop_masks_both_nav_axes_without_cancel_resend():
     node.tick()
     command = node.publisher.publish.call_args.args[0]
     assert command.linear.x == command.angular.z == 0
-    assert node.state.publish.call_args.args[0].data.startswith('OBSTACLE_STOP:')
+    assert 'rotation clearance unavailable' in node.state.publish.call_args.args[0].data
     handle.cancel_goal_async.assert_not_called()
     node.obstacle = 2
     node.now = node.target_time = node.scan_time = 1.2
     node.publisher.reset_mock()
     node.tick()
-    node.publisher.publish.assert_not_called()
+    assert node.publisher.publish.call_args.args[0].linear.x > 0
     assert node.supervisor.mode == 'NAV2'
 
 
@@ -470,11 +476,12 @@ def test_diagnostics_throttle_clock_reset_and_nav_command_reporting():
     node.supervisor.nav_since = 0
     node.supervisor.record_goal(0, (3, 5))
     node.goal_pending = True
+    node.nav_status = 'active'
     node.obstacle = 2
     node.now = node.target_time = node.scan_time = 1.1
     node.on_cmd_vel(NS(linear=NS(x=0.3), angular=NS(z=-0.2)))
     node.tick()
-    assert 'command_v=0.300 command_w=-0.200' in logger.info.call_args.args[0]
+    assert 'command_v=0.080 command_w=-0.200' in logger.info.call_args.args[0]
 
 
 @pytest.mark.parametrize('context_ok,race', [(False, False), (True, False), (True, True)])
@@ -529,3 +536,32 @@ def test_map_goal_uses_standoff_while_los_still_checks_the_person():
     pose, los = method(node)
     assert (pose.pose.position.x, pose.pose.position.y) == pytest.approx((10, 22))
     assert los and node.los_clear_wide  # Person at laser distance 2.82, radius 0.25.
+
+
+def test_node_relays_rotation_at_fixed_front_shelf_then_translation_and_expires():
+    node = make_node()
+    node.obstacle = 0.607
+    node.rotation_clear = True
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    handle = Mock(accepted=True)
+    node.goal_response(completed(handle), node.goals.generation)
+    for i in range(1, 20):
+        node.now = node.target_time = node.scan_time = 1+i*0.05
+        node.target = (3+0.35*i*0.05, 0.5)
+        node.on_cmd_vel(NS(linear=NS(x=0.4), angular=NS(z=0.8)))
+        node.tick()
+        cmd = node.publisher.publish.call_args.args[0]
+        assert cmd.linear.x == 0 and 0 < cmd.angular.z <= 1
+        assert node.supervisor.mode == 'NAV2'
+    handle.cancel_goal_async.assert_not_called()
+    node.obstacle = 1.0  # Planner turn has cleared the front sector.
+    node.now = node.target_time = node.scan_time = 2.0
+    node.on_cmd_vel(NS(linear=NS(x=0.4), angular=NS(z=0.2)))
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].linear.x > 0
+    node.now = node.target_time = node.scan_time = 2.25
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0  # Fresh target cannot renew old Nav2 velocity.

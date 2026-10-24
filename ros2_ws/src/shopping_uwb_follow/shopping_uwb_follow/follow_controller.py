@@ -146,3 +146,57 @@ class FollowController:
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))
         return self.v, self.w, state, reason
+
+
+def rotation_scan_clear(ranges, angle_min, angle_increment, range_min, range_max,
+                        base_in_scan, radius):
+    """Require a full scan to clear a disk around base_link, including margin.
+
+    Test the far intersection of each ray with the disk, rather than distances
+    to return endpoints: an occluder inside the disk cannot establish free space.
+    The scan origin must lie inside the disk. Missing/partial coverage fails shut.
+    """
+    from .follow_handoff import scan_valid
+
+    if (not scan_valid(ranges, angle_min, angle_increment, range_min, range_max)
+            or len(base_in_scan) != 3
+            or not all(math.isfinite(v) for v in (*base_in_scan, radius))
+            or radius <= math.hypot(*base_in_scan[:2])
+            or abs(angle_increment) > 0.05
+            or abs(angle_increment)*(len(ranges)-1) < 2*math.pi-abs(angle_increment)-1e-6):
+        return False
+    x, y = base_in_scan[:2]
+    for i, value in enumerate(ranges):
+        angle = angle_min+i*angle_increment
+        projection = x*math.cos(angle)+y*math.sin(angle)
+        cross = x*math.sin(angle)-y*math.cos(angle)
+        boundary = projection+math.sqrt(max(0.0, radius*radius-cross*cross))
+        if value < range_min or min(value, range_max) <= boundary:
+            return False
+    return True
+
+
+class NavigationGuard:
+    """Filter Nav2 commands without commanding an independent escape motion."""
+    def __init__(self, params):
+        self.p = params
+        self.v = self.w = 0.0
+
+    def step(self, command, obstacle, rotation_clear, dt, safe=True):
+        p = self.p
+        if (not safe or command is None or math.isnan(obstacle) or obstacle < 0
+                or not all(math.isfinite(v) for v in (*command, dt)) or dt <= 0):
+            self.v = self.w = 0.0
+            return self.v, self.w
+        dt = min(dt, 0.2)
+        blocked = obstacle <= p.obstacle_stop_distance
+        v = 0.0 if blocked else max(0.0, min(p.max_linear, command[0]))
+        w = (0.0 if blocked and not rotation_clear else
+             max(-p.max_angular, min(p.max_angular, command[1])))
+        # Stops bypass ramps. In particular no residual forward velocity is
+        # permitted at a shelf while a costmap-aware controller turns away.
+        self.v = (0.0 if v == 0 else min(p.max_linear, max(0.0,
+                  self.v+max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v)))))
+        self.w = (0.0 if w == 0 else
+                  self.w+max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w)))
+        return self.v, self.w

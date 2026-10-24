@@ -27,7 +27,8 @@ flowchart LR
     follow -->|NavigateToPose 交接與取消| nav
     follow -->|/follow/state /follow/handoff_goal| ui
     nav -->|/cmd_vel_nav| smooth[velocity_smoother]
-    smooth -->|/cmd_vel/nav| mux[cmd_vel_mux]
+    smooth -->|/cmd_vel/nav，僅 GUIDE| mux[cmd_vel_mux]
+    smooth -->|/cmd_vel/nav，FOLLOW 安全閘控| follow
     follow -->|/cmd_vel/follow| mux
     mux -->|/cmd_vel_mux/output| watchdog[獨立 cmd_vel_watchdog]
     watchdog -->|/cmd_vel| bridge
@@ -118,21 +119,23 @@ RViz 設定只顯示 `base_link` 下的 UWB 估測標記，沒有依賴 `sim_wor
 
 `follow_handoff.py` 不匯入 ROS，負責視線幾何與 DIRECT／NAV2 狀態；控制節點保留原本直接跟隨狀態名稱，導航持有控制權時發布 `NAV2_HANDOFF: 原因`；視線經遲滯確認受阻、尚未交接時發布 `BLOCKED_WAIT` 並輸出零速；短暫受阻仍發布 `FOLLOWING` 並減速。跟隨 launch 固定啟用人物，同時載入 `navigation.launch.py`，不啟動 `zone_navigator`。全流程使用相同 `use_sim_time`；map→odom 仍由所選 SLAM／定位來源單獨發布。
 
-有效且距離大於 `follow_distance + handoff_margin`（1.3 公尺）的目標，在 OBSTACLE_STOP 或遲滯確認視線遮擋後持續 `handoff_delay`（YAML 為 0.5 秒）才交接。LOS 檢查從雷射原點到人物的半寬 0.25 公尺走廊，至少包含最近方位射線；障礙距離小於人物距離減 `los_margin`（0.35 公尺，涵蓋人物半徑 0.25 公尺與估測餘量）才阻擋。正無限遠視為暢通，低於量測下限視為阻擋；空掃描、NaN、負值、超過有限上限或無效角度視為失效。節點以量測時間查詢 TF，將 base_link 目標轉到雷射框架，避免忽略雷射前移 0.18 公尺；map←base_link 不可用時不交接，導航中轉換失敗則取消。這些是平面轉換，適用目前地面模擬。
+有效且距離大於 `follow_distance + handoff_margin`（1.3 公尺）的目標，在 OBSTACLE_STOP 或遲滯確認視線遮擋後持續 `handoff_delay`（YAML 為 0.5 秒）才交接。LOS 檢查從雷射原點到人物的半寬 0.4 公尺走廊，至少包含最近方位射線；障礙距離小於人物距離減 `los_margin`（0.35 公尺，涵蓋人物半徑 0.25 公尺與估測餘量）才阻擋。正無限遠視為暢通，低於量測下限視為阻擋；空掃描、NaN、負值、超過有限上限或無效角度視為失效。節點以量測時間查詢 TF，將 base_link 目標轉到雷射框架，避免忽略雷射前移 0.18 公尺；map←base_link 不可用時不交接，導航中轉換失敗則取消。這些是平面轉換，適用目前地面模擬。
 
-NavigateToPose 目標為人物本身的 map 座標，朝向由車體指向人物。人物相對上次送出目標移動超過 0.4 公尺，且已經過 0.5 秒才更新；直接送出新的 NavigateToPose，由 bt_navigator 搶占執行中的目標，不取消、不等待停止。節點以世代編號追蹤目前目標，忽略已取代目標的接受／拒絕回覆、結果、取消確認與傳輸例外；這些回呼不得更改目前目標控制代碼、導航狀態、失敗冷卻或第一筆直接命令。舊目標延遲收到接受回覆時也不補送取消，以免干擾目前導航。`/follow/handoff_goal` 發布實際送出的 map PoseStamped。為容納人物占據的格子，共用 NavFn `tolerance` 從 0.3 提高為 0.8 公尺，讓規劃器尋找附近自由終點；未偏移目標。引導模式也使用此容差，受阻區域目標可能在 0.8 公尺內的其他位置結束，必須核對實際終點，不能只看成功回報。動態人物與終點容差的實際互動仍待模擬驗收。
+NavigateToPose 目標為人物前方保留 follow_distance（1.0 公尺）的 map 座標，朝向由車體指向人物。終點相對上次送出目標移動超過 0.4 公尺，且已經過 0.5 秒才更新；直接送出新的 NavigateToPose，由 bt_navigator 搶占執行中的目標，不取消、不等待停止。節點以世代編號追蹤目前目標，忽略已取代目標的接受／拒絕回覆、結果、取消確認與傳輸例外；這些回呼不得更改目前目標控制代碼、導航狀態、失敗冷卻或第一筆直接命令。舊目標延遲收到接受回覆時也不補送取消，以免干擾目前導航。`/follow/handoff_goal` 發布實際送出的 map PoseStamped。為容納人物占據的格子，共用 NavFn `tolerance` 從 0.3 提高為 0.8 公尺，讓規劃器尋找附近自由終點；跟隨已使用前述距離終點。引導模式也使用此容差，受阻區域目標可能在 0.8 公尺內的其他位置結束，必須核對實際終點，不能只看成功回報。動態人物與終點容差的實際互動仍待模擬驗收。
 
 `LosDebouncer` 使用節點時鐘，原始 LOS 連續受阻 `los_block_time=0.3` 秒才鎖定受阻；鎖定後必須在半寬加上 `los_clear_extra_width=0.10` 公尺的走廊連續暢通 `los_clear_time=0.6` 秒才解除。暢通確認也適用於未鎖定受阻的短暫抖動，避免接近人物時以單筆清空資料切回。時間倒退或非有限時間重設，安全事件也清除 LOS 計時。原始受阻但尚未確認時，直接線速度乘上 `los_uncertain_speed_factor=0.6`，尚不進入 BLOCKED_WAIT；前方緊急停止不經此延遲。
 
-側向減速放在不匯入 ROS 的 `follow_controller.py`：左右 30°～100°（`side_sector_min/max`，弧度）取最小橫向淨空，`side_slow_clearance=0.35` 公尺以下用 `side_min_speed_factor=0.4`，`side_free_clearance=0.75` 公尺以上用 1，中間線性插值；缺少側向讀值採最低倍率。此倍率與 LOS 倍率相乘，縮放線速度與上限，再套用原本加速度限制；角速度不因側向淨空額外放大。掃描失效仍立即停止。
+側向減速放在不匯入 ROS 的 `follow_controller.py`：左右 30°～100°（`side_sector_min/max`，弧度）取最小橫向淨空，`side_slow_clearance=0.35` 公尺以下用 `side_min_speed_factor=0.4`，`side_free_clearance=0.75` 公尺以上用 1，中間線性插值；缺少側向讀值採最低倍率。此倍率與 LOS 倍率取較小值，限制線速度上限，再套用原本加速度限制；角速度不因側向淨空額外放大。掃描失效仍立即停止。
 
-導航進入後至少保持 `min_nav_hold=1.5` 秒，目標更新不重設保持起點。保持後，LOS 須遲滯確認暢通，並符合「人物距離不超過 1.3 公尺」或「前方淨空大於 0.8 公尺持續 `resume_delay=0.5` 秒」才取消並切回 DIRECT。近距離路徑略過額外 resume_delay，仍保留 LOS 確認與最短導航保持。導航成功可直接結束，目標遺失／過期、過近、停用、雷射失效立即取消並發布零 Twist；導航拒絕、失敗或非預期取消則切回直接控制，冷卻 3 秒後才重新累計受阻時間。恢復 DIRECT 後須保持 `min_direct_hold=1.0` 秒；若 LOS 已連續確認受阻同樣長的時間，可提前交接，但仍須符合 handoff_delay。`route_around:=false` 不建立 ActionClient 或 TF listener，保留直接跟隨與側向減速。
+導航進入後至少保持 `min_nav_hold=1.5` 秒，目標更新不重設保持起點。返回 DIRECT 必須同時符合：LOS 經較寬走廊確認暢通、人物距離不超過 1.3 公尺、視線角度不超過 0.25 rad、前方淨空大於 0.8 公尺，並持續 `resume_delay=0.5` 秒。導航成功本身不切回，人物仍在遠處時依目標更新週期重新送出終點；新目標直接搶占，不取消。近停、遺失／過期、停用與雷射失效立即雙軸停止並離開導航；失敗／非預期取消另有 3 秒重試冷卻。恢復 DIRECT 後保持至少 1 秒，連續 LOS 阻塞的例外與 handoff_delay 保留。
 
-遲滯用穩定性換取恢復延遲：一般情況暢通確認再加 resume_delay 約需 1.1 秒，導航最短保持時間與此計時並行；近距離僅需 0.6 秒暢通確認，導航成功不等待。加寬走廊若仍擦到貨架，恢復可能更久。人物 map 目標與 NavFn 0.8 公尺容差保持原設定；取消排空時間也仍存在。直接速度 0.5 m/s 已等於 Nav2 平滑器上限且高於人物 0.35 m/s，不提高速度；比例追蹤即使沒有停車仍有約 0.5 公尺等速誤差。這些條件不保證距離一定縮短，需由下一輪 240 秒模擬比較切換率、停留時間、真實距離與停滯窗。
+`NavigationGuard` 為不匯入 ROS 的命令閘控。NAV2 速度必須在 0.2 秒內、有有效目標／雷射／map 轉換與活動中導航，才轉送至 follow 輸入；線／角速度與一般加速度沿用直接控制上限，禁止倒車。前方不超過 0.65 公尺立即歸零線速度；角速度只在完整 360° 雷射確認旋轉圓盤淨空時放行。圓盤半徑為 `max(車體外接半徑, robot_half_width)+0.05`，預設 0.45 公尺；使用 scan←base_link 的偏移與每條射線圓盤遠交點檢查自由空間，涵蓋前移雷射看向後方較長的旋轉範圍。缺角度、過疏掃描、失效資料、量測範圍不足或盤內回波都不允許旋轉。DIRECT 的障礙停止仍為完整零 Twist。這是本次任務指定的 Nav2 旋轉例外，不允許自行盲轉、倒車或在近停／遺失時脫困。
+
+前方 0.65 公尺是雷射原點距離，雷射位於 base_link 前方 0.18 公尺；正前方障礙對應車體前緣約 0.53 公尺餘裕。1.6 公尺走道中心至側架約 0.8 公尺，不需要為轉向直接降低停止值；保留此值，讓 Nav2 在旋轉淨空確認後改變朝向，再於前方清空時前進。人物恢復 0.35 m/s，低於巡航 0.5 m/s，仍高於窄處 0.2 m/s 與曲率最低 0.25 m/s，持續限速區間仍可能落後；需由完整模擬評估，不能以無障礙模型證明貨架繞行成功。
 
 `follow_metrics.state_statistics` 接受嚴格遞增的 `(t, state)`，計算每分鐘切換次數與每狀態的停留統計，最後區間僅到最後觀測時間。`scripts/follow_state_stats.py` 解析 `/follow/state` 的 `data: STATE: 原因`，支援同行時間戳；無時間戳時依指定取樣週期估計，預設 20 Hz，拒絕混用時鐘。比較前後版本時應使用相同紀錄方式，僅記錄變更事件時務必附時間戳。
 
-速度互斥以動作生命週期執行：NAV2 期間直接控制器不發布一般 `/cmd_vel/follow` 命令，由 Nav2 的 velocity_smoother 輸出；安全事件切回 DIRECT 後可立即發布零命令。取消回覆不代表已停止，須等終止結果；若仍在等待送出回覆，收到接受結果後補送取消。僅 NAV2→DIRECT 交接進入速度排空等待；確認目標終止後，若外部導航命令已安靜至少 0.3 秒，或最新外部命令符合 `|v| < 0.02 m/s` 且 `|w| < 0.05 rad/s`，便可恢復直接發布。終止確認後最多再等 2 秒，即使仍收到非零命令也恢復；此上限不允許略過目標終止確認。沒有收到命令時自交接開始計算安靜時間。節點以 `observed_cmd_vel_topic` 選擇觀察來源，仲裁模式設為 `/cmd_vel/nav`，可直接接收 Nav2 的零速；舊接線預設 `/cmd_vel`，Humble 回呼只有訊息，故以自身發布後 0.2 秒內的零命令近似排除自身訊息，沒有使用 GID 或新版回呼 API。排空判斷放在不匯入 ROS 的 `VelocityDrain`，安全事件在排空中仍立即發布零速。第一筆直接命令為零，控制器內部速度也歸零；目標更新不啟動此等待。傳輸例外而無法確定遠端是否仍執行時，保留控制權並記錄錯誤，禁止自行恢復直接移動；需操作者停止該流程並檢查動作服務。外層速度仲裁見下節；follow 執行時仍不得另送導航目標。只啟動一個 bringup，以模式請求切換鍵盤／引導／跟隨。
+速度互斥以動作生命週期執行：NAV2 期間不執行直接追逐命令，而將 Nav2 的 velocity_smoother／恢復行為速度經安全閘控後持續發布至 `/cmd_vel/follow`；安全事件切回 DIRECT 後可立即發布零命令。取消回覆不代表已停止，須等終止結果；若仍在等待送出回覆，收到接受結果後補送取消。僅 NAV2→DIRECT 交接進入速度排空等待；確認目標終止後，若外部導航命令已安靜至少 0.3 秒，或最新外部命令符合 `|v| < 0.02 m/s` 且 `|w| < 0.05 rad/s`，便可恢復直接發布。終止確認後最多再等 2 秒，即使仍收到非零命令也恢復；此上限不允許略過目標終止確認。沒有收到命令時自交接開始計算安靜時間。節點以 `observed_cmd_vel_topic` 選擇觀察來源，仲裁模式設為 `/cmd_vel/nav`，可直接接收 Nav2 的零速；舊接線預設 `/cmd_vel`，Humble 回呼只有訊息，故以自身發布後 0.2 秒內的零命令近似排除自身訊息，沒有使用 GID 或新版回呼 API。排空判斷放在不匯入 ROS 的 `VelocityDrain`，安全事件在排空中仍立即發布零速。第一筆直接命令為零，控制器內部速度也歸零；目標更新不啟動此等待。傳輸例外而無法確定遠端是否仍執行時，保留控制權並記錄錯誤，禁止自行恢復直接移動；需操作者停止該流程並檢查動作服務。外層速度仲裁見下節；follow 執行時仍不得另送導航目標。只啟動一個 bringup，以模式請求切換鍵盤／引導／跟隨。
 
 SDF 貨架止於 y=5.0，因此車體 `(2.4, 5.0)` 朝 +y、人物 `(1.0, 5.9)` 時走廊已清空；幾何測試直接讀取貨架碰撞盒，以接近末端的 `(2.4, 4.5)` 驗證走廊遮擋，並保留 y=5.0 的清空對照，未修改場景幾何。
 
@@ -150,7 +153,8 @@ flowchart LR
     manager -->|取消全部目標| cancel["NavigateToPose CancelGoal 服務"]
     manager -->|停用服務／啟用保留主題| follow[跟隨控制器]
     manager -->|模式許可| mux[速度仲裁]
-    nav[Nav2 velocity_smoother] -->|/cmd_vel/nav| mux
+    nav[Nav2 velocity_smoother] -->|/cmd_vel/nav，僅 GUIDE| mux
+    nav -->|/cmd_vel/nav，FOLLOW 安全閘控| follow
     follow -->|/cmd_vel/follow| mux
     keyboard[鍵盤] -->|/cmd_vel/teleop| mux
     mux -->|/cmd_vel_mux/output 20 Hz| watchdog
@@ -163,7 +167,7 @@ flowchart LR
 | --- | --- |
 | IDLE | 持續零速；所有新移動都需明確模式請求 |
 | GUIDE | nav |
-| FOLLOW | follow 優先，nav 次之，保留跟隨交接 Nav2 的流程 |
+| FOLLOW | 僅 follow；Nav2 經跟隨安全節點轉送，禁止原始 nav 逾時備援 |
 | TELEOP | teleop |
 | ESTOP | 鎖定零速，只有 reset 可返回 IDLE；false 急停訊息不解除 |
 
@@ -185,7 +189,7 @@ flowchart LR
 | 看門狗 `timeout` | 0.25 秒，預設每 0.05 秒檢查並持續發布零速 |
 | `initial_mode` | 節點及獨立 mode_mux launch 為 idle；guide／follow launch 分別為 guide／follow |
 | `manage_follow` | 節點預設 false；follow launch 設 true，要求跟隨停用確認 |
-| `use_mux` | guide／follow／navigation 預設 true；false 恢復原始直接速度接線 |
+| `use_mux` | guide／navigation 預設 true；false 恢復原始接線；follow 僅接受 true |
 | 跟隨 `observed_cmd_vel_topic` | 單獨執行為 /cmd_vel；仲裁接線為 /cmd_vel/nav |
 
 `use_mux:=true` 時，Nav2 velocity_smoother 的 `cmd_vel_smoothed` 與 behavior_server（spin／backup／drive_on_heading／assisted_teleop 恢復行為原本直接發布 `cmd_vel`）都以節點範圍重新映射導向 `/cmd_vel/nav`，controller_server 內部的 `cmd_vel_nav` 不變；因此 `/cmd_vel` 只有輸出看門狗一個發布者。
@@ -194,7 +198,7 @@ flowchart LR
 
 重啟後 `ModeManager` 與單獨啟動的仲裁節點一律從 IDLE 開始，沒有持久化移動狀態。guide／follow 的 `initial_mode` 為操作便利性明確例外，重新啟動相同 launch／保留相同參數會重新請求移動；驗收重啟安全時用 `initial_mode:=idle`，再以 `dev.sh mode MODE` 啟用。launch 不自動 respawn。只可有一個仲裁器與一個看門狗；若看門狗本身或橋接／模擬器也失效，本軟體鏈不能保證停止，未宣稱 Fortress 內建有已設定的命令逾時。`use_mux:=false` 沒有這層保護，須保持舊流程互斥。mapping 不啟動 Nav2，維持原本接線；需要保護時另外啟動 mode_mux 並把鍵盤改送 teleop 專用輸入。
 
-容器驗收由維護者執行：建置及 colcon test 後，分別以 guide／follow 確認 `/cmd_vel` 只有看門狗一個發布者、Nav2 平滑器只輸出 `/cmd_vel/nav`、DIRECT 與 NAV2_HANDOFF 都可行走；切 idle／teleop 時確認舊目標終止、跟隨停用且先有零命令。測試停止各來源、暫停仲裁程序、急停／reset、保留看門狗重啟仲裁節點，以及 `initial_mode:=idle`；量測各層逾時。再以 `use_mux:=false` 驗證舊接線與跟隨排空仍可用。這些尚未在本次工作執行，無 ROS 測試與靜態檢查不代表容器驗收。
+容器驗收由維護者執行：建置及 colcon test 後，分別以 guide／follow 確認 `/cmd_vel` 只有看門狗一個發布者、Nav2 平滑器只輸出 `/cmd_vel/nav`、DIRECT 與 NAV2_HANDOFF 都可行走；切 idle／teleop 時確認舊目標終止、跟隨停用且先有零命令。測試停止各來源、暫停仲裁程序、急停／reset、保留看門狗重啟仲裁節點，以及 `initial_mode:=idle`；量測各層逾時。follow 不再提供 `use_mux:=false`，避免共用速度主題造成轉送回授與多重最終發布者；引導舊接線可另外驗證。這些尚未在本次工作執行，無 ROS 測試與靜態檢查不代表容器驗收。
 
 ## 模擬設計決策
 

@@ -196,16 +196,16 @@ class HandoffSupervisor:
                 self.mode = 'DIRECT'
                 self.retry_after = now+self.p.retry_cooldown
                 reason = 'Navigation failed or map transform unavailable'
-            elif (nav_status == 'succeeded'
-                  or now-self.nav_since >= self.p.min_nav_hold
+            elif (now-self.nav_since >= self.p.min_nav_hold
                   and self.clear_since is not None
                   and now-self.clear_since >= self.p.resume_delay):
                 self.mode = 'DIRECT'
-                reason = ('Navigation succeeded' if nav_status == 'succeeded'
-                          else 'Close aligned direct path sustained')
-            elif (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
-                  and now-self.last_goal_time >= self.p.goal_update_period):
-                action, reason = 'update_goal', 'Person moved in map frame'
+                reason = 'Close aligned direct path sustained'
+            elif (now-self.last_goal_time >= self.p.goal_update_period
+                  and (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
+                       or nav_status == 'succeeded'
+                       and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin)):
+                action, reason = 'update_goal', 'Refresh moving standoff goal'
             else:
                 reason = 'Navigation owns velocity'
         else:

@@ -17,7 +17,8 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 from .follow_controller import (
-    FollowController, ControllerParams, front_obstacle_distance, side_clearance, side_speed_factor,
+    FollowController, ControllerParams, NavigationGuard, rotation_scan_clear,
+    front_obstacle_distance, side_clearance, side_speed_factor,
 )
 from .follow_handoff import (
     GoalBook, VelocityDrain, HandoffParams, HandoffSupervisor,
@@ -41,6 +42,8 @@ class FollowNode(Node):
         defaults = ControllerParams()
         params = ControllerParams(**{k: self.declare_parameter(k, v).value for k, v in vars(defaults).items()})
         self.control = FollowController(params)
+        self.nav_guard = NavigationGuard(params)
+        self.rotation_clear = False
         self.monitor_odom = self.declare_parameter('monitor_odom', False).value
         self.odom_time = None
         self.odom_pose = None
@@ -112,9 +115,9 @@ class FollowNode(Node):
         return resp
 
     def on_cmd_vel(self, msg):
-        # Humble rclpy callbacks carry no publisher GID. This node only publishes
-        # during NAV2/drain for safety zeros, so ignore zero twists shortly after
-        # our own publication; any other message is from Nav2's smoother.
+        # Default launch observes the separate Nav2 input, never our relay.
+        # The legacy shared-topic path cannot identify publisher GIDs in Humble;
+        # ignore zeros shortly after our own publication there.
         if self.supervisor.mode != 'NAV2' and not self.drain.active:
             return
         now = seconds(self)
@@ -154,6 +157,7 @@ class FollowNode(Node):
     def map_goal_and_los(self):
         """Use nonblocking TF lookups at the corresponding measurement times."""
         self.los_clear_wide = False
+        self.rotation_clear = False
         if self.target is None or self.scan is None:
             return None, False
         try:
@@ -163,6 +167,10 @@ class FollowNode(Node):
                 self.scan.header.frame_id, 'base_link', Time.from_msg(self.scan.header.stamp)))
         except TransformException:
             return None, False
+        self.rotation_clear = rotation_scan_clear(
+            self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
+            self.scan.range_min, self.scan.range_max, laser,
+            max(math.hypot(0.30, 0.25), self.robot_half_width)+0.05)
         point = transform_xy(standoff_target(self.target, self.control.p.follow_distance), robot)
         pose = PoseStamped()
         pose.header.frame_id = 'map'
@@ -304,6 +312,7 @@ class FollowNode(Node):
             target_velocity=(getattr(self, 'target_velocity', (0.0, 0.0))
                              if getattr(self, 'odom_time', None) is not None and 0 <= now-self.odom_time <= 0.15
                              else (0.0, 0.0)))
+        dt = now-self.last_time
         self.last_time = now
         if (not self.enabled and not self.busy()
                 and getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') != '/cmd_vel'):
@@ -344,6 +353,7 @@ class FollowNode(Node):
         waiting = self.busy() or not self.drain.ready(now)
         commanded_v = commanded_w = 0.0
         if decision.direct_publish and not waiting:
+            self.nav_guard.step(None, obstacle, False, dt)
             self.drain.reset()
             cmd = Twist()
             if not self.first_direct:
@@ -356,17 +366,25 @@ class FollowNode(Node):
             self.first_direct = False
         else:
             self.control.v = self.control.w = 0.0
-            # Safety stops bypass normal acceleration and cancellation latency.
-            if not valid or state in ('LOST', 'TOO_CLOSE', 'IDLE', 'OBSTACLE_STOP'):
-                self.publisher.publish(Twist())
-                self.last_own_publish = seconds(self)
-        if decision.mode == 'NAV2' and state == 'FOLLOWING':
-            state, reason = 'NAV2_HANDOFF', decision.reason
             command = getattr(self, 'last_nav_command', None)
-            if command is not None and 0 <= now-command[0] <= 0.5:
-                commanded_v, commanded_w = command[1:]
-        elif decision.mode == 'NAV2':
-            reason += '; Nav2 output masked by safety zero'
+            nav_command = (command[1:] if command is not None and 0 <= now-command[0] <= 0.2
+                           else None)
+            safe = (valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
+                    and decision.mode == 'NAV2' and self.nav_status == 'active'
+                    and pose is not None and not self.drain.active)
+            commanded_v, commanded_w = self.nav_guard.step(
+                nav_command, obstacle, self.rotation_clear, dt, safe=safe)
+            # Relay the guarded Nav2 command on the higher-priority follow input.
+            # Raw Nav2 must never bypass the front gate or command expiry.
+            cmd = Twist()
+            cmd.linear.x, cmd.angular.z = commanded_v, commanded_w
+            self.publisher.publish(cmd)
+            self.last_own_publish = seconds(self)
+        if decision.mode == 'NAV2' and valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE'):
+            state = 'NAV2_HANDOFF'
+            reason = (decision.reason if obstacle > p.obstacle_stop_distance else
+                      'Forward blocked; rotation allowed' if self.rotation_clear else
+                      'Forward blocked; rotation clearance unavailable')
         elif waiting:
             reason += '; waiting for navigation stop'
         self.diagnose(now, state, commanded_v, commanded_w, reason, factor, obstacle, age)
@@ -385,7 +403,8 @@ class FollowNode(Node):
             f'bearing={bearing:.3f}rad command_v={v:.3f} command_w={w:.3f} cap_factor={factor:.3f} '
             f'front={obstacle:.3f}m target_age={age:.3f}s '
             f'nav_status={self.nav_status} nav_pending={self.goal_pending} '
-            f'los_blocked={self.supervisor.los.blocked} drain={self.drain.active} limit={reason}')
+            f'los_blocked={self.supervisor.los.blocked} drain={self.drain.active} '
+            f'rotation_clear={self.rotation_clear} limit={reason}')
 
     def stop_before_shutdown(self):
         # SIGINT may already have invalidated the context. The independent

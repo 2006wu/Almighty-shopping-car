@@ -115,7 +115,7 @@ def test_clearance_threshold_and_sustained_close_resume():
     assert tick(s, 3, los_clear=True, front_clearance=0.8).mode == 'NAV2'
     assert tick(s, 3.1, los_clear=True, target=(1.3, 0), front_clearance=1).mode == 'NAV2'
     assert tick(s, 3.61, los_clear=True, target=(1.3, 0), front_clearance=1).action == 'cancel_goal'
-    assert tick(navigating(), 2, nav_status='succeeded').action == 'cancel_goal'
+    assert tick(navigating(), 2, nav_status='succeeded').action == 'update_goal'
 
 
 def test_goal_updates_use_map_displacement_and_rate_limit():
@@ -321,8 +321,10 @@ def test_configured_safety_envelope_and_speed_budget():
     assert follow['robot_half_width'] >= math.hypot(0.30, 0.25)
     controller = nav['controller_server']['ros__parameters']['FollowPath']
     smoother = nav['velocity_smoother']['ros__parameters']
-    assert person['speed'] < follow['max_linear']*follow['side_min_speed_factor']
-    assert person['speed'] < controller['regulated_linear_scaling_min_speed']
+    assert person['speed'] == 0.35
+    # A sustained narrow/turn cap can still cause lag at a realistic pace.
+    assert follow['max_linear']*follow['side_min_speed_factor'] < person['speed']
+    assert controller['regulated_linear_scaling_min_speed'] < person['speed']
     assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
     assert smoother['max_velocity'][0] == follow['max_linear']
     assert smoother['max_accel'][0] == follow['max_linear_accel']
