@@ -333,3 +333,18 @@ def test_pedestrian_truth_gaps_are_counted_without_extrapolation():
 def test_invalid_pedestrian_truth_is_rejected(records):
     with pytest.raises(ValueError):
         convert_records(records)
+
+
+def test_guard_triggers_use_simulation_time_and_do_not_repeat():
+    records = [state('/safety/obstacle_state', 100+i,
+                     json.dumps(dict(t=t, state=s)))
+               for i, (t, s) in enumerate(((0, 'CLEAR'), (.1, 'STOP'),
+                                           (.2, 'STOP'), (.3, 'STALE')))]
+    records += [command(.15), robot(.25)]
+    rows, _ = convert_records(records)
+    triggers = [r for r in rows if r['type'] == 'trigger']
+    assert [(r['t'], r['event']) for r in triggers] == [
+        (.1, 'obstacle_guard_stop'), (.3, 'obstacle_guard_stale')]
+    report = evaluate_log(rows, [])
+    assert report['stop']['events'][0]['commanded_latency'] == pytest.approx(.05)
+    assert report['stop']['commanded_pending'] == 1

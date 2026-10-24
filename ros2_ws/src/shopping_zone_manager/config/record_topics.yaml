@@ -11,3 +11,7 @@ topics:
   - /shopping/zone_status
   - /mode_manager/state
   - /sim/fault_status
+  - /safety/obstacle_state
+  - /cmd_vel_mux/output
+  - /cmd_vel_guard/output
+  - /cmd_vel_collision/output

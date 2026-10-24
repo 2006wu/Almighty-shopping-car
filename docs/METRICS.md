@@ -220,3 +220,11 @@ Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非�
 `eval-bag` 的固定 `--map-world-transform 0 0 0` 與 `loc-check` 直接比較真值，都假設標準地圖的 map 與 Gazebo `sim_world` 原點、朝向一致。出生姿態不是 map→world 轉換：`alt_start` 仍使用同一標準地圖，EKF 初始化在世界中的 `(-2.4,0,π/2)`，AMCL 及定位工具也使用此 map 姿態。新建圖或自訂地圖須先核對座標；不一致時手動呼叫 `bag_to_eval --map-world-transform X Y YAW`，`loc-check` 目前沒有自訂轉換功能，不可直接用於該地圖。
 
 導航案例每目標須在 90 秒內 SUCCEEDED，且有真值核對最終位置；遭行人擋住時需觀察減速、等待或安全繞行與行人離開後恢復。`follow_stop_go` 起始人物中心距離 0.58 公尺，低於既有 0.60 公尺過近門檻且高於矩形前緣加人物半徑的 0.55 公尺接觸距離；應記錄 TOO_CLOSE 與零 Twist，再觀察人物離開後恢復。初始已停不能代替行進中的煞停驗收，須另執行既有 `fault-check`；障礙、過近及急停驗收均須檢查 linear 與 angular。未調整控制器，既有行為若未達門檻應記為失敗。
+
+## 障礙防護觀測（階段 4）
+
+預設錄製清單新增 `/safety/obstacle_state` 與 mux／guard／collision_monitor 的中間速度。bag_converter 取 guard JSON 內的模擬時間 `t`，在進入 STOP／STALE 時產生 `obstacle_guard_stop`／`obstacle_guard_stale` trigger，重複狀態不重開事件，沿用本文件 `stop_metrics` 的首次零命令／真值停止定義。同時出現的其他保護事件沿用既有合併規則。啟動即 STALE 也會產生事件；須保留它並另判讀是否有移動基線，不能拿啟動零速作為障礙停止驗收。
+
+狀態事件的延遲起點是 guard 偵測並發布狀態的模擬時間，不包含故障命令傳送到偵測的延遲。`scripts/fault_check.py --suite obstacle` 則以送出故障命令前的模擬時間開始計算，且要求移動基線、持續停止與恢復；與本文件「首次停止」統計不可混稱同一判準。減速列檢查 guard SLOW 比例與命令仍在移動，沒有自動辨識真值減速度。
+
+`/safety/obstacle_state.swept_clearance` 是雷射回波到要求速度掃掠範圍的保守距離，用於診斷；不取代本文件的真值矩形最小間距。既有 `clearance_metrics` 仍以世界 collision 與真值位姿計算，沿用原有錄製／轉換鏈路。`lidar_front` 假障礙沒有新增 Gazebo collision，因此真值最小間距不會包含它；不能用假障礙試驗宣稱通過實際障礙距離驗收。完整啟動、故障與 headless 程序見 [OBSTACLE_SAFETY.md](OBSTACLE_SAFETY.md)。

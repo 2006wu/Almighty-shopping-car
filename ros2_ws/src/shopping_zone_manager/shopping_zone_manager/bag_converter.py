@@ -1,6 +1,7 @@
 """Convert plain simulation records to eval_report rows without ROS dependencies."""
 from bisect import bisect_left
 import math
+import json
 
 from .eval_metrics import finite
 
@@ -138,6 +139,13 @@ def convert_records(records, zones=(), map_world_transform=None, max_skew=0.15, 
         emit('state', t, state=state)
         if state != previous and state in ('LOST', 'TOO_CLOSE', 'OBSTACLE_STOP'):
             emit('trigger', t, event=state.lower())
+        previous = state
+    previous = None
+    for _, msg in streams.get('/safety/obstacle_state', []):
+        data = json.loads(msg['data'])
+        state, stamp = data['state'], finite(data['t'])
+        if state != previous and state in ('STOP', 'STALE'):
+            emit('trigger', stamp, event='obstacle_guard_'+state.lower())
         previous = state
     previous = None
     for t, msg in streams.get('/mode_manager/state', []):

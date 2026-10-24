@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from shopping_zone_manager.mode_control import ModeManager, VelocityMux, VelocityLimiter, OutputWatchdog
+from shopping_zone_manager.mode_control import ModeManager, VelocityMux, VelocityLimiter, SafetyVelocityLimiter, OutputWatchdog
 
 SRC = Path(__file__).resolve().parents[1]/'ros2_ws/src/shopping_zone_manager/shopping_zone_manager'
 
@@ -139,6 +139,7 @@ def test_watchdog_emergency_latch_survives_commands_until_explicit_reset():
     cls, clock = make_class('output_watchdog_node.py', 'WatchdogNode')
     node = cls.__new__(cls)
     node.watchdog, node.publisher, node.latched = OutputWatchdog(), Mock(), False
+    node.limiter = SafetyVelocityLimiter()
     moving = twist()
     moving.linear.x = 0.4
     node.receive(moving)
@@ -150,10 +151,11 @@ def test_watchdog_emergency_latch_survives_commands_until_explicit_reset():
     node.request(NS(data='reset'))
     node.tick()
     assert node.publisher.publish.call_args.args[0].linear.x == 0
+    clock.now = 0.1
     node.receive(moving)
     node.tick()
-    assert node.publisher.publish.call_args.args[0].linear.x == 0.4
-    clock.now = 0.25
+    assert 0 < node.publisher.publish.call_args.args[0].linear.x <= 0.06
+    clock.now = 0.36
     node.tick()
     assert node.publisher.publish.call_args.args[0].linear.x == 0
 

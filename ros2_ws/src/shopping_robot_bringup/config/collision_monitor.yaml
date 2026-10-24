@@ -1,0 +1,26 @@
+collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel_guard/output
+    cmd_vel_out_topic: /cmd_vel_collision/output
+    transform_tolerance: 0.1
+    source_timeout: 0.5
+    base_shift_correction: true
+    stop_pub_timeout: 1.0
+    polygons: [FootprintStop]
+    FootprintStop:
+      type: polygon
+      # Humble uses a flat numeric array and max_points (not min_points).
+      points: [0.40, 0.35, 0.40, -0.35, -0.40, -0.35, -0.40, 0.35]
+      action_type: stop
+      max_points: 1
+      visualize: true
+      polygon_pub_topic: /safety/collision_polygon
+      enabled: true
+    observation_sources: [scan]
+    scan:
+      type: scan
+      topic: /scan
+      enabled: true
