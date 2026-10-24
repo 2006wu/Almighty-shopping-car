@@ -762,3 +762,13 @@
 | 容器 SDF 摩擦設定與實際接觸模型 | 待驗證 |
 | 提交格網的六區 AMCL 定位重測與跨次穩定性 | 待驗證 |
 | Nav2／跟隨回歸及選用比較建圖 | 待驗證 |
+
+### 審查驗證（2026-10-24 14:30 臺北時間，盒內 Linux amd64 Docker）
+
+| 項目 | 結果 |
+| --- | --- |
+| 盒內 pytest／`check_static.py` | 683 passed／PASS（rebase 至 develop 496685d 後） |
+| 容器 colcon build + test | 552 tests，0 errors，0 failures，5 skipped |
+| `yaw-check`（plain sim、EKF） | 原地旋轉比值：0.2→1.187、0.4→1.441、0.6→1.382、0.8→1.385 rad/s（平均 1.349）；EKF 與真值一致。弧線兩列因淨空不足中止（工具正確停車並發布零速）。擬合 `fortress_command_factor` ≈ 1.48，**未套用**，xacro 仍為 2.0（低速起轉非線性，需多速度確認） |
+| AMCL 六區 `loc-check`（map_server、新 likelihood_field 參數） | **6/6 PASS**：drinks 0.031 m、snacks **0.096 m**（原 0.168 m 失敗）、produce 0.033 m、household 0.057 m、checkout 0.002 m、entrance 0.008 m；航向誤差最大 2.07° |
+| 未驗證 | Mac arm64、Gazebo GUI、`map-geometry-check` 實際格網比較、yaw 弧線列、AMCL 重複多次的穩定度 |
