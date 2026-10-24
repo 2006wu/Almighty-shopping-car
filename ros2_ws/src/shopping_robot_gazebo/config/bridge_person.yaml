@@ -1,7 +1,7 @@
 # Follow-only observer: source timestamps and explicit parent/child frames.
 # Keep this separate from /tf and the SceneBroadcaster /simulation/poses bridge.
 - ros_topic_name: /simulation/person_pose
-  gz_topic_name: /world/supermarket/model/person/pose
+  gz_topic_name: /model/person/pose
   ros_type_name: tf2_msgs/msg/TFMessage
   gz_type_name: ignition.msgs.Pose_V
   direction: GZ_TO_ROS

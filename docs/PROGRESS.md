@@ -676,3 +676,15 @@
 | 近距停止、持續停止與違規情境 | 待驗證 |
 | UWB 缺口後重新取得與未涵蓋判定 | 待驗證 |
 | 預設 EKF／ground_truth 模式與 TF 唯一來源回歸 | 待驗證 |
+
+### 本輪審查驗證（2026-10-24 08:30 臺北時間，盒內 Linux amd64）
+
+| 項目 | 結果 |
+| --- | --- |
+| 盒內 pytest | 653 passed |
+| `check_static.py` | 通過 |
+| 容器 colcon build + test | 552 tests，0 errors，0 failures，5 skipped（修正測試路徑：容器內 repo 根目錄不在 `parents[4]`，改以 `src` 推算，dev.sh 不存在時 skip） |
+| 修正：人物模型位姿主題 | Fortress `PosePublisher` 發布於 `/model/person/pose`（非 `/world/supermarket/model/person/pose`），已改 bridge_person.yaml、測試與文件；修正後 model_coverage 由 0 筆變 1765 筆 |
+| `person-sync-check --duration 60`（follow 模擬） | truth_vs_path PASS（誤差 0）、person/model coverage PASS；**model_vs_path / model_vs_truth FAIL**：Gazebo 模型平均落後 0.105 m、延遲 0.30 s（補償延遲後 RMSE 0.029 m）。這是模擬中模型驅動的真實延遲，工具判定正確，列為待修項目（見 ROADMAP） |
+| `follow-eval` | 濾波延遲 0.07 s PASS、重新取得 0.049 s PASS、近距停止 NOT_COVERED、**tracking FAIL**（平均距離 3.35 m，目標 1.0 m，與 10/23 的 3.02 m 一致）：是跟隨控制器現況，非工具錯誤 |
+| 未驗證 | Mac arm64、Gazebo GUI、實車（只做模擬） |

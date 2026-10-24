@@ -270,7 +270,7 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 
 `shopping_uwb_follow.evaluation_metrics` 是不匯入 ROS 的純 Python 指標層；`evaluation_node` 提供 `person_sync_check` 與 `follow_eval` 兩個唯讀命令入口，訂閱回呼採 Humble 的單一 msg 引數。工具預設強制模擬時鐘，記錄一個有限時間窗，檢查來源時間、框架、0.25 秒資料覆蓋缺口，輸出表格、JSON 與結束碼。控制器、速度命令和調參維持原樣；ROADMAP 不自動勾選。
 
-人物路徑仍只來自 Gazebo 套件的 `config/person_path.yaml`。世界 SceneBroadcaster 的 `/simulation/poses` 保留給既有 UWB 模擬；其 Pose_V 外層時間不會經 Humble TFMessage 轉換保留，因此人物模型額外載入 Fortress 唯讀 PosePublisher，發布各筆帶時間／父子框架的 Pose_V。follow launch 專用 `bridge_person.yaml` 將 `/world/supermarket/model/person/pose` 單向接至 `/simulation/person_pose`，沒有接入 `/tf`。預期 `supermarket → person` 的平面位置與人物真值 `sim_world` 使用同一世界原點，不能用估測 `odom` 取代。未變更真值、EKF 或車體 TF 的發布權限。
+人物路徑仍只來自 Gazebo 套件的 `config/person_path.yaml`。世界 SceneBroadcaster 的 `/simulation/poses` 保留給既有 UWB 模擬；其 Pose_V 外層時間不會經 Humble TFMessage 轉換保留，因此人物模型額外載入 Fortress 唯讀 PosePublisher，發布各筆帶時間／父子框架的 Pose_V。follow launch 專用 `bridge_person.yaml` 將 `/model/person/pose` 單向接至 `/simulation/person_pose`，沒有接入 `/tf`。預期 `supermarket → person` 的平面位置與人物真值 `sim_world` 使用同一世界原點，不能用估測 `odom` 取代。未變更真值、EKF 或車體 TF 的發布權限。
 
 同步檢查同時比較幾何、UWB 真值與解析路徑；預設平均偏差 <0.05 m、延遲絕對值 <0.1 s。跟隨評估從車體真值姿態轉換人物真實相對位置，搜尋 ±0.5 秒、0.01 秒格距的最佳位移；只對各候選皆可插值的共同樣本計算，不跨大缺口或外插。另按解析路徑航向率分直線／轉彎、統計真實距離與估測誤差，按 YAML 停止距離檢查近停後 0.5 秒內是否達到 ≤0.03 m/s 與 ≤0.05 rad/s 並持續停止，以及 UWB stale／LOST 後新鮮估測至 FOLLOWING 的時間（≤2 秒）。濾波延遲門檻為絕對值 <0.3 秒，分段距離偏差 RMSE <1.5 m。
 

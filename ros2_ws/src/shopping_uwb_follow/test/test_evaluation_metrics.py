@@ -17,8 +17,9 @@ from shopping_uwb_follow.evaluation_metrics import (
 )
 from shopping_uwb_follow.evaluation_node import parser, result_code
 
-ROOT = Path(__file__).resolve().parents[4]
-SRC = ROOT/'ros2_ws/src'
+# Package-relative so the test also runs from colcon (/ws/src) where the repo root is absent.
+SRC = Path(__file__).resolve().parents[2]
+ROOT = SRC.parents[1]
 PATH = {'speed': 1.0, 'waypoints': [[0, 0], [4, 0], [4, 4], [0, 4]]}
 
 
@@ -173,7 +174,12 @@ def test_cli_entry_points_and_dev_forwarding():
         entry = next(e for e in entries if e.startswith(command+' = '))
         module, function = entry.split(' = ')[1].split(':')
         assert callable(getattr(importlib.import_module(module), function))
-    dev = (ROOT/'scripts/dev.sh').read_text()
+    dev_path = ROOT/'scripts/dev.sh'
+    if not dev_path.exists():
+        dev_path = Path('/repo/scripts/dev.sh')
+    if not dev_path.exists():
+        pytest.skip('repository scripts are not mounted')
+    dev = dev_path.read_text()
     for command, executable in [('person-sync-check', 'person_sync_check'), ('follow-eval', 'follow_eval')]:
         assert f'{command}) run ros2 run shopping_uwb_follow {executable} "$@" --ros-args -p use_sim_time:=true ;;' in dev
     for mode in ('sync', 'follow'):
@@ -206,7 +212,7 @@ def test_pure_modules_and_humble_callback_signatures():
 def test_follow_only_bridge_and_fortress_observer_contract():
     config = yaml.safe_load((SRC/'shopping_robot_gazebo/config/bridge_person.yaml').read_text())
     assert config == [{'ros_topic_name': '/simulation/person_pose',
-                       'gz_topic_name': '/world/supermarket/model/person/pose',
+                       'gz_topic_name': '/model/person/pose',
                        'ros_type_name': 'tf2_msgs/msg/TFMessage',
                        'gz_type_name': 'ignition.msgs.Pose_V', 'direction': 'GZ_TO_ROS'}]
     world = ET.parse(SRC/'shopping_robot_gazebo/worlds/supermarket.sdf').getroot()
