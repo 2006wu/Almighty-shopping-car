@@ -1,0 +1,36 @@
+FROM ros:humble-ros-base-jammy
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG ROS_APT_MIRROR=
+COPY docker/configure-ros-mirror.py /usr/local/bin/configure-ros-mirror.py
+
+# Official host tooling builds natively for the host architecture (no board SDK).
+RUN python3 /usr/local/bin/configure-ros-mirror.py "$ROS_APT_MIRROR" \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      git build-essential cmake python3-colcon-common-extensions \
+      python3-rosdep python3-vcstool python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /uros_ws
+RUN git clone --depth 1 --branch humble https://github.com/micro-ROS/micro_ros_setup.git src/micro_ros_setup \
+    && source /opt/ros/humble/setup.bash \
+    && rosdep update --rosdistro humble \
+    && apt-get update \
+    && rosdep install --from-paths src --ignore-src -y --rosdistro humble \
+    && colcon build --packages-select micro_ros_setup \
+    && source install/local_setup.bash \
+    && ros2 run micro_ros_setup create_firmware_ws.sh host
+
+# The host flow builds packages from /uros_ws/src. Copy the external app there;
+# unlike adding an app to micro-ROS-demos, this ament package needs no demo edits.
+COPY firmware/sim_client/ src/uros/shopping_microros_client/
+COPY ros2_ws/src/shopping_mcu_bridge/config/interface.yaml /tmp/interface.yaml
+COPY ros2_ws/src/shopping_robot_description/urdf/shopping_robot.urdf.xacro /tmp/robot.xacro
+RUN python3 src/uros/shopping_microros_client/generate_contract.py \
+      /tmp/interface.yaml /tmp/robot.xacro src/uros/shopping_microros_client/contract.h \
+    && source /opt/ros/humble/setup.bash \
+    && source install/local_setup.bash \
+    && ros2 run micro_ros_setup build_firmware.sh
+
+# Force XRCE middleware: this process must never become a plain DDS client.
+ENV RMW_IMPLEMENTATION=rmw_microxrcedds
+COPY docker/microros-client-entrypoint /usr/local/bin/microros-client-entrypoint
+ENTRYPOINT ["/bin/bash", "/usr/local/bin/microros-client-entrypoint"]

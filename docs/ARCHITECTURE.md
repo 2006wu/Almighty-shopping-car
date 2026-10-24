@@ -1,6 +1,8 @@
 # 系統架構
 
-運算容器處理 Gazebo Fortress、感測器橋接、TF、SLAM、Nav2、區域導航及 UWB 跟隨；顯示容器只執行 Xvfb、openbox、VNC／noVNC 與按需啟動的 RViz。兩者在相同橋接網路使用 Fast DDS UDPv4，相同領域編號；不依賴跨容器共享記憶體。
+預設運算容器處理 Gazebo Fortress、感測器橋接、TF、SLAM、Nav2、區域導航及 UWB 跟隨；顯示容器執行 Xvfb、openbox、VNC／noVNC 與按需啟動的 RViz。顯示與運算共用網路命名空間、Fast DDS UDPv4-only 設定與領域編號，不依賴跨容器共享記憶體。下圖是預設單運算容器的邏輯關係。
+
+選用 `split` profile 時，相同節點定義透過角色開關拆為 `sim`（Gazebo、模型與模擬感測／MCU）、`localization`（EKF 與 SLAM／AMCL）、`navigation`（Nav2／BT）、`app`（購物／跟隨與 mux／watchdog）；`compute` 保持閒置，作為所有服務共用的網路命名空間與操作工具入口。`display` 沿用既有服務；`comm` profile 保留 micro-ROS agent／XRCE 模擬客戶端，`record` profile 提供 rosbag／評估工具。角色容器重用同一運算映像與安裝卷，主題名稱不變；`use_sim_time=true`、TF 唯一來源與 watchdog 唯一發布 `/cmd_vel` 的限制不變。跨容器主題、啟動順序、Mac／Linux 操作及 XRCE 壁鐘限制見 [容器操作說明](CONTAINERS.md)。
 
 ```mermaid
 flowchart LR

@@ -189,7 +189,10 @@ def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack
     expected = {'mcu_comm', 'fault_injection', 'fault_schedule', 'use_sim_time',
                 'obstacle_guard', 'collision_monitor', 'use_mux', 'initial_mode',
                 'odom_source', 'headless', 'nav2_stack', 'slam_mode', 'map', 'scenario',
-                'route_around' if name == 'follow' else 'person'}
+                'route_around' if name == 'follow' else 'person',
+                # Container-split role switches.
+                'start_sim', 'start_navigation', 'start_app', 'start_nav_localization',
+                'start_sim_localization', 'mcu_transport'} | ({'start_uwb_sim'} if name == 'follow' else set())
     assert set(declarations) == expected
     assert declarations['nav2_stack'].default_value == 'apt'
     assert set(declarations['nav2_stack'].choices) == {'apt', 'fork', 'auto'}

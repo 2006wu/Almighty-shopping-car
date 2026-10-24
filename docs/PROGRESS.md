@@ -870,6 +870,88 @@
 ### 結論與下一步
 
 - fork 整合（建置、連結、lifecycle、BT、Shrink safe 模式）可用，但 **gentle TEB 在 1.6 m 走道與貨架轉角仍常判定阻擋**：clearance 以外接圓（0.391 m）計算，0.60×0.50 m 矩形車體在走道中央只剩約 0.37 m。已交給 fork 任務 t23（opt-in 依朝向的矩形 footprint clearance＋恢復遲滯，Eurobot 預設不變）。完成後以 `nav2_stack:=fork` 重跑 nav-check、loc-check 與 nav-compare，通過再考慮把預設改回 `auto`。
+| 項目 | 結果 |
+| --- | --- |
+| 盒內 pytest／`check_static.py` | 755 passed／PASS（rebase 至 develop 3346718 後） |
+| 容器 colcon build + test | 624 tests，0 errors，0 failures，5 skipped。修正：套件測試在容器（`/ws/src`）找不到 repo 根目錄，37 項失敗 → 改為找不到 `docs/` 時使用 `/repo` |
+| sim_ros `comm-sim` + `comm-check` | 10/10 PASS。修正：首次執行因 DDS discovery 未完成，隔離檢查誤判 FAIL；改為最多輪詢 10 秒並在失敗時記錄發布／訂閱者 |
+| serial_loopback `comm-sim` + `comm-check` | 10/10 PASS |
+| `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
+| 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
+
+## 2026-10-24：Linux rclc 客戶端與 micro-ROS agent 端到端驗收流程
+
+### 本次修改
+
+- 新增 `firmware/sim_client`，以 C／rclc、`rmw_microxrcedds` 實作 Linux 模擬客戶端，透過 UDP4 agent 發布 heartbeat、wheel 與 status，訂閱 command 與 PC heartbeat；沒有實體裝置、馬達或板卡 SDK。
+- 純 C 模型與 ROS 邊界分離，包含三筆遞增心跳恢復、UInt32 回繞、命令 0.3 秒逾時、PC 心跳 0.5 秒逾時立即零速、拒絕非有限／非平面輸入、預設不倒車、一階輪速與加速度限制。由 `interface.yaml` 與 description xacro 產生契約 header，Docker 建置時重新產生。
+- 新增基於 `ros:humble-ros-base-jammy` 的客戶端 Dockerfile，使用官方 `micro_ros_setup` humble 分支的 host 建立／建置流程，將獨立 ament C 套件複製到工具工作區 `src/uros`。新增 opt-in `comm` profile 客戶端服務，以 agent hostname 解析 IPv4，無 host port、devices、privileged 或固定架構。
+- 新增 `comm-e2e-up`／`comm-e2e-check`；前者建置／啟動 agent、client 後，在前景執行 standalone `transport:=agent` 的既有 mux／watchdog／monitor，不啟動 Python 韌體。watchdog 維持唯一 `/cmd_vel` 發布者。`comm-down` 同時停止 client 與 agent。
+- 新增 ROS 驗收器，保留最長 10 秒 DDS discovery 等待，檢查 graph 隔離、兩向 heartbeat、輪速頻率、teleop 經 mux 抵達、命令逾時及恢復、PC 心跳真正停止發布後的 LINK_LOST／零速，以及心跳恢復仍維持 ESTOP。執行中持續重查隔離；失敗後請求 ESTOP 並嘗試清除心跳故障。
+- PC monitor 的心跳故障參數僅在 standalone agent 模式明確啟用模擬故障時生效，一般預設不啟用。新增純邏輯、實際 C 編譯執行、安全清理與 wiring 測試；repo 檔案測試依祖先 repo、`/repo`、skip 的順序處理 colcon 掛載位置。
+- 更新 README、micro-ROS 入門、MCU 介面子集與客戶端說明，補齊 rosserial 對照、STM32 移植責任、啟停及維護者驗收指令。未勾選 ROADMAP，未提交或推送。
+
+### 自行檢查（執行紀錄，非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：764 項通過；1 筆既有 xacro／Python 棄用警告。測試包含以系統 C 編譯器實際建置／執行純模型，未編譯需要 ROS 的 `main.c`。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；YAML、XML／SDF／xacro、Python、Bash 與兩／三錨點、ekf／ground_truth 展開一致性檢查。
+- `git diff --check`：通過。`dev.sh` 分派測試使用暫存假 Docker 指令記錄參數，沒有呼叫 Docker。
+
+### 限制與下一步
+
+- 本環境沒有 ROS，未執行 Docker、colcon、XRCE session 或 DDS rate 驗收；沒有安裝套件或建立虛擬環境。Docker 映像、Humble C API 完整編譯、agent 連線／重啟與兩種原生架構仍須維護者實測，靜態與純邏輯檢查不可視為通過容器驗收。
+- Linux client 是有限子集，沒有 encoder、IMU、MCU 按鈕急停／reset；現有 Python 完整模擬仍保留。只支援獨立壁鐘時間，不接 Gazebo／EKF、不操作硬體，不能作為完整板端安全韌體。
+- Linux 失敗重試依 Compose 程序重啟，重啟清除舊命令；STM32 仍需 RTOS transport、時鐘、記憶體與獨立安全控制／重連設計。heartbeat 故障若遇強制 kill，需重啟前景 launch 清除殘留參數。
+- 下一步：依 `docs/MICROROS_GUIDE.md` 在容器執行 colcon build/test、`comm-e2e-up` 與 `comm-e2e-check`，回報完整建置、agent／client 日誌及七項驗收結果；再於 amd64／arm64 原生主機驗收。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 契約 header 與純 C 安全模型 | 待驗證 |
+| pytest、靜態檢查及 colcon 掛載路徑 | 待驗證 |
+| Humble host 映像與 C／rclc 建置 | 待驗證 |
+| agent／client XRCE session、DDS 頻率及重連 | 待驗證 |
+| mux／watchdog 唯一速度發布與 graph 拒絕注入 | 待驗證 |
+| 命令逾時、PC heartbeat 失聯及 ESTOP 恢復 | 待驗證 |
+| amd64／arm64 原生執行及無裝置預設 | 待驗證 |
+
+## 2026-10-24：t24 依角色拆分模擬容器
+
+### 本次修改
+
+- 新增 `split` profile 的 sim、localization、navigation、app，以及 `record` profile；保留預設 compute／display 與既有 comm agent／XRCE 客戶端服務名稱。角色與工具容器透過 YAML anchors 共用原生架構運算映像、工作區與 Nav2 underlay 卷，補齊 rosbag2 工具依賴。
+- 所有服務共用 compute 網路命名空間與相同 domain；DDS 參與者共用 UDPv4-only profile，XRCE 客戶端改以迴送位址連 agent。沒有新增 devices、privileged 或固定 platform；serial 範本額外要求明確設定 `MICROROS_SERIAL_DEVICE`，仍不掛載裝置。
+- 新增 bringup 的四個角色入口與共用角色 launch，透過既有 guide／follow／Gazebo／navigation launch 的預設相容開關重用節點定義。sim 保留模擬感測與 MCU；EKF 與 SLAM／AMCL 移至 localization；Nav2 獨立；app 保留唯一 watchdog 與 mux。拆分固定模擬時間與 mux，維持 TF 唯一來源、apt／fork／auto 選擇及 apt 隔離重新啟動的角色參數。
+- 新增 `split-up [guide|follow] [ARGS...]`、`split-down`、`split-status`、`split-logs SERVICE`；啟動前重建同一專案的服務，避免舊單容器 launch 殘留。參數不經 eval，支援空白並拒絕換行及未開放參數。Gazebo 健康檢查使用有逾時的 `ign topic -l`，確認世界時鐘主題後才啟動其他角色。
+- 新增離線測試，涵蓋 Compose profiles／映像／DDS／無裝置限制、十二組模式與里程計來源的節點歸屬、定位與導航 include 開關、apt 重新啟動參數、命令派送、字面參數與健康檢查。同步調整既有 XRCE 網路契約測試；套件測試仍保留 repo root／`/repo`／skip 的既有處理。
+- 新增 `docs/CONTAINERS.md` 的角色表、主題圖、Mac／Linux 操作、DDS 排錯、選用 profiles 與維護者驗收命令；更新 README、架構與 micro-ROS 網路／serial 說明。未勾選 ROADMAP，未提交或推送。
+
+### 自行檢查紀錄（不代替審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：803 passed、1 skipped；另有既有 xacro DeprecationWarning。跳過項目為未初始化的私有 Nav2 fork 原始碼契約檢查。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；18 個 YAML／RViz、14 個 XML／SDF／xacro、120 個 Python、7 個 Bash，並完成兩／三錨點及 ekf／ground_truth xacro 展開與錨點設定比對。
+- `git diff --check`：通過。命令派送測試使用假 Docker 執行檔，沒有執行 Docker、安裝套件或建立虛擬環境。
+
+### 限制與下一步
+
+- 本環境沒有 ROS，未執行 Compose 實際解析、映像建置、colcon、DDS、Gazebo、Nav2 或硬體驗收；靜態結果不代表容器整合通過。維護者請依 `docs/CONTAINERS.md` 的完整指令建置、執行 `split-up guide headless:=true`、對拆分堆疊執行 `nav-check`，最後 `split-down`，回報錯誤後再修正。
+- Gazebo 健康僅代表 transport 已列出世界時鐘主題，不保證 ROS 時鐘、模型、感測器、TF、定位與 Nav2 lifecycle 已就緒。app 延用既有 steady timer 重試及零速等待機制；連線異常觸發的 ESTOP 仍須明確解除。
+- XRCE C 模擬客戶端保留既有壁鐘 wheel telemetry，獨立 comm-e2e 流程仍使用壁鐘；不當作 Gazebo EKF 輸入。預設 split 使用 Python 模擬韌體；替換為 agent 的時間戳與整合尚待驗收，不能同時開啟兩個韌體發布者。
+- `split-up`／`split-down` 會停止同一專案的選用通訊與錄製工作；先正常結束錄製，再切換模式。Mac 日常使用預設單容器；拆分驗收先保持 headless 並不啟用額外 profiles。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 離線 pytest、靜態語法與模型檢查 | 待驗證 |
+| Mac arm64／Linux 原生映像、Compose 與 colcon | 待驗證 |
+| split 啟動順序、Gazebo transport、ROS 時鐘與 DDS | 待驗證 |
+| EKF／ground_truth、SLAM／AMCL TF 唯一來源 | 待驗證 |
+| guide／follow、Nav2 apt／fork 與晚啟動容忍 | 待驗證 |
+| watchdog 唯一發布者、急停與失聯零速 | 待驗證 |
+| 單容器與 micro-ROS e2e 相容性 | 待驗證 |
+| noVNC／RViz、record 與停止清理 | 待驗證 |
 
 ### 審查追加（2026-10-24 15:50 臺北時間）
 
@@ -1152,3 +1234,9 @@
 | 真實驅動、實體感測器、arm64 | 未驗證（僅模擬；未連接任何硬體） |
 
 - 合併 develop 時 sim.launch.py 保留分源 bridge（lidar／imu／base 各自受 `use_real_*` 控制）並接上情境出生姿態與行人；測試替身新增 `pedestrian_actions`。
+
+## 2026-10-24 container-split review (merge to develop)
+- t42 (pre-hw tree cf88ae5): colcon test 667/0; split guide nav-check 5/5; XRCE comm-e2e 7/7.
+- Re-merged develop after hw-interfaces (#19): sim.launch.py keeps split's start_sim/start_localization GroupActions and adds hw's validate_sources, per-source lidar/imu/base bridges and wheel_odom_noise simulate_* flags. tests/test_hardware_launch.py now flattens GroupAction. pytest 972 passed.
+- NOT verified: Gazebo sim on the post-hw merged tree (70046eb+) — run guide nav-check + comm-e2e again next session.
+- Supersedes codex/microros-agent-e2e.

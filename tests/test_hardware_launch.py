@@ -12,7 +12,17 @@ def sim_actions():
     env.update(os=os, UnlessCondition=action('UnlessCondition'),
                LaunchConfigurationEquals=action('LaunchConfigurationEquals'),
                ExecuteProcess=action('ExecuteProcess'), SetEnvironmentVariable=action('SetEnvironmentVariable'))
-    return env['generate_launch_description']()
+    env.setdefault('GroupAction', action('GroupAction'))
+    return list(_flatten(env['generate_launch_description']()))
+
+
+def _flatten(items):
+    # Container split wraps simulator nodes in GroupAction(start_sim/start_localization).
+    for item in items:
+        if getattr(item, 'kind', None) == 'GroupAction':
+            yield from _flatten(item.actions if hasattr(item, 'actions') else item.kwargs.get('actions', []))
+        else:
+            yield item
 
 
 @pytest.mark.parametrize('flags', list(itertools.product(('false', 'true'), repeat=4)))

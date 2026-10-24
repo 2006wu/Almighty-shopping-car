@@ -8,6 +8,12 @@
 
 目標展示為 **12 × 10 公尺的小型模擬商店**，配置恰好四排貨架、三條貨架間走道（各寬 1.6 公尺）、入口與結帳區，另有四個不對稱地標（端架、柱子、冷藏櫃、展示台），避免 SLAM 把相同的走道互相誤認。這是畢業專題的模擬展示場景。機器人出生姿態為世界座標 `(x, y, z, yaw) = (0, 0, 0.02, 0)`，朝向正 x；地面穩定後 base_footprint 接近 z = 0。以此初始原點建立 `odom`／`map`，六個區域目標使用與世界相同的平面座標，既有外部地圖須先對齊，不能直接套用。
 
+## 選用角色容器
+
+預設維持 `compute`＋`display`。要驗證容器拆分，先執行 `./scripts/dev.sh build compute display`、`./scripts/dev.sh colcon-build`，再執行 `./scripts/dev.sh split-up guide headless:=true`；用 `split-status` 查看狀態、`split-logs navigation` 看日誌、`nav-check --case-timeout 180` 檢查導航，最後 `split-down`。也支援 `split-up follow`，沿用 `nav2_stack:=apt|auto|fork`。
+
+`split` 分別啟動 sim、localization、navigation、app 與既有 display；comm、record 另外明確選用。所有服務共用 compute 網路命名空間與 UDP-only DDS，適用 Mac arm64／Linux。`split-up` 會先停止同一專案的既有服務，避免重複控制節點；切換前先結束錄製工作。Mac 日常開發優先使用預設單容器模式，驗證拆分時保持 headless、暫不啟用額外 profiles。角色表、主題流向、限制與完整維護者驗收命令見 [容器操作說明](docs/CONTAINERS.md)。
+
 ## 2027 年 1 月在 Mac 上執行
 
 先安裝並啟動 Docker Desktop，確認 `docker compose version` 可用，並預留足夠記憶體供 Gazebo 軟體繪圖。以下指令可以直接在 fish 執行；腳本會由 Bash 解譯，不必修改 fish 設定，也不需在 macOS 安裝 ROS。
@@ -442,6 +448,8 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 工具重用 nav-check 的 `ZoneNavigator(enable_interfaces=False)` 與區域清單，先確認執行中的 controller profile 符合 `--stack`，逐一記錄 action 結果、模擬時間、真值軌跡折線長度及終點平面距離誤差，輸出並列表。真值只接受 `/sim/ground_truth_odom` 的 `sim_world`，不退回 EKF odom；缺值、倒退或超過 0.5 模擬秒的取樣缺口會報錯。時間涵蓋送目標前最近一筆至結果後第一筆真值；失敗／逾時也保留結果，逾時會等待取消確認，無法確認則停止後續目標。`SUCCEEDED` 表示 action 成功，未額外保證終點誤差門檻；需一起檢視 error 欄。不同電腦負載、定位漂移與規劃隨機性仍會影響結果，建議重複多輪。JSON 預設例子存入忽略版控的 `output/`。
 
 完整回歸請在各自獨立的模擬場次執行 `dev.sh nav-check --tolerance-check`、`dev.sh loc-check`、mapping 加 map-tour，以及 `dev.sh follow nav2_stack:=fork fault_injection:=true` 加 `dev.sh fault-check`。Nav2 underlay 的 ABI 檢查與限制見架構文件；本機 Python／靜態 PASS 不代表容器或 Gazebo 通過。
+`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 停止 client 與 agent；一般 `dev.sh up` 不受影響。Python 模擬韌體直接使用 DDS，**不經過 agent**。另以 `./scripts/dev.sh comm-e2e-up` 建置／啟動真正 C／rclc Linux XRCE client、agent 與前景 standalone mux／watchdog／monitor；第二終端執行 `./scripts/dev.sh comm-e2e-check`，驗證心跳、輪速、命令逾時與 PC 心跳失聯。C client 只模擬輪子，沒有裝置連線；本次尚未執行 Docker／ROS 驗收。測試前須停止 Gazebo 及其他韌體，結束後 Ctrl-C 前景 launch 再執行 `comm-down`。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+
 
 ## 模擬情境
 
