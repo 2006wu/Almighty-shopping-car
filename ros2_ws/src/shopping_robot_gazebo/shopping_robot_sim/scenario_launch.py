@@ -60,7 +60,10 @@ def pedestrian_actions(context):
     time = LaunchConfiguration('use_sim_time')
     # Only longstanding Humble Twist topic conversion is required.
     arguments = [f"/model/{p['name']}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist" for p in people]
+    pose_topics = [f"/model/{p['name']}/pose" for p in people]
+    arguments += [topic+'@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V' for topic in pose_topics]
     return [Node(package='ros_gz_bridge', executable='parameter_bridge', name='pedestrian_bridge',
-                 arguments=arguments, parameters=[{'use_sim_time': time}], output='screen'),
+                 arguments=arguments, remappings=[(topic, '/simulation/pedestrian_poses') for topic in pose_topics],
+                 parameters=[{'use_sim_time': time}], output='screen'),
             Node(package='shopping_robot_gazebo', executable='pedestrian_mover',
                  parameters=[{'scenario_file': file, 'use_sim_time': time}], output='screen')]

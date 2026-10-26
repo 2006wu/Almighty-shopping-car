@@ -293,3 +293,26 @@ def test_live_collector_with_fake_humble_callbacks(monkeypatch, tmp_path, bad_pa
     assert report['end_sim_s']-report['start_sim_s'] == 5
     assert code == (1 if bad_parent or zero_stamp else 0)
     assert report['status'] == ('FAIL' if code else 'PASS')
+
+
+@pytest.mark.parametrize('safe_state', ['TOO_CLOSE', 'OBSTACLE_STOP', 'BLOCKED_WAIT', 'NAV2_HANDOFF'])
+def test_reacquisition_preserves_safety_hold_and_separate_motion_time(safe_state):
+    targets = [i/10 for i in range(70) if not 1 <= i/10 < 2]
+    states = [(i/10, 'FOLLOWING' if i < 14 or i >= 60 else
+               'LOST' if i < 21 else safe_state) for i in range(70)]
+    event = reacquire_events(targets, states, 7, recognized_states=('FOLLOWING', safe_state))[0]
+    assert event['tracking_state'] == safe_state
+    assert event['tracking_s'] == 2.1
+    assert event['following_s'] == 6
+    assert event['reacquire_s'] == pytest.approx(.1)
+    assert event_row('target_reacquire', [event], 2)['status'] == 'PASS'
+    motion_event = reacquire_events(targets, states, 7)[0]
+    assert event_row('reacquire', [motion_event], 2)['status'] == 'FAIL'
+
+
+def test_disabled_or_stale_target_never_certifies_reacquisition():
+    targets = [0, .1, 2]
+    states = [(i/10, 'LOST' if 2 <= i <= 22 else 'IDLE') for i in range(70)]
+    event = reacquire_events(targets, states, 7)[0]
+    assert event['tracking_s'] is None
+    assert event['status'] == 'NOT_COVERED'

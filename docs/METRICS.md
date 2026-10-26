@@ -262,3 +262,9 @@ Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非�
 ros2 run shopping_zone_manager eval_verify guide1
 ros2 run shopping_zone_manager eval_summary guide1 guide2 --output /repo/bags/guide-summary
 ```
+
+## 即時跟隨評估的目標辨識與移動恢復
+
+`follow-eval` schema 2 保留原 `reacquire`：新鮮估測至 FOLLOWING 的 2 秒門檻不變。另增 `target_reacquire`，允許 FOLLOWING、TOO_CLOSE、OBSTACLE_STOP、BLOCKED_WAIT、NAV2_HANDOFF 表示已辨識到仍新鮮的目標；IDLE／LOST 不算成功。兩者分開列出 `tracking_s`／`tracking_state` 與 `following_s`，不能將持續安全停車當作恢復移動，也不能用新指標覆蓋原門檻失敗。原離線 `state_metrics` 的定義保持不變。
+
+過近停止仍檢查真值速度／角速度。腳本人沿指定路徑穿入已停止車體時，零命令不保證外力下真值完全不動；此時須保留真值失敗、命令與幾何接觸證據，不能放寬速度門檻或移除碰撞來通過。本次 stop-go／turns 的原始輪次即觀察到零命令期間的接觸微動。

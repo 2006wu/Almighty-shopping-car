@@ -1,7 +1,10 @@
 """Humble mode manager and mux; the independent watchdog owns /cmd_vel."""
 import time
 
+import signal
+
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
@@ -160,12 +163,15 @@ class ModeMuxNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     node = ModeMuxNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.output.publish(Twist())
         node.follow_enable.publish(Bool(data=False))
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()

@@ -109,4 +109,4 @@ docker compose -f docker/docker-compose.yaml --profile record run --rm record py
 - app 保持零速時，看 `split-logs app` 與 `split-logs navigation`，確認取消服務與 `/follow/enable` 就緒。若啟動期間通訊監測已觸發 ESTOP，先修復連線，再明確 `dev.sh reset`、`dev.sh mode guide`（或 `follow`）；不自動解除急停。
 - 無法開 noVNC 時，查 display 健康狀態及主機 6080／5910 是否被占用；只有 compute 發布這兩個 port。不要讓多個 Compose 專案共用同一組主機 port。
 
-本次僅完成離線 pytest 與語法／模型靜態檢查，尚未執行 Docker、colcon、DDS 或模擬驗收；上述維護者指令才是容器整合驗收程序。
+本文件最初版本僅做離線檢查；2026-10-26 已在 Mac arm64 原生 Docker 完成映像、colcon、DDS 與多項模擬實測。實際完成範圍及未完成項目見 [arm64 驗收](VALIDATION_ARM64.md)，SLAM 的畫面與建圖流程見 [SLAM 操作說明](SLAM.md)。Linux amd64 仍須對本次修改重新回歸。

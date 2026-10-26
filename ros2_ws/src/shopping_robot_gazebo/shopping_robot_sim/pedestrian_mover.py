@@ -3,7 +3,10 @@
 import math
 from pathlib import Path
 
+import signal
+
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, PoseArray, Twist
 from tf2_msgs.msg import TFMessage
@@ -20,20 +23,28 @@ class PedestrianMover(Node):
         self.publishers_by_name = {p['name']: self.create_publisher(
             Twist, f"/model/{p['name']}/cmd_vel", 10) for p in self.people}
         self.truth = self.create_publisher(PoseArray, '/sim/pedestrians', 10)
-        self.create_subscription(TFMessage, '/simulation/poses', self.on_poses, 10)
+        self.create_subscription(TFMessage, '/simulation/pedestrian_poses', self.on_poses, 10)
         self.last = None
+        self.measured = {}
         self.create_timer(0.1, self.watchdog)
 
     def on_poses(self, message):
         # Preserve simulator time; never label planned positions as ground truth.
-        transforms = {t.child_frame_id: t for t in message.transforms}
-        if not all(p['name'] in transforms for p in self.people):
+        names = {p['name'] for p in self.people}
+        for transform in message.transforms:
+            stamp = transform.header.stamp
+            now = stamp.sec+stamp.nanosec*1e-9
+            if transform.child_frame_id in names and now > 0:
+                self.measured[transform.child_frame_id] = (now, transform)
+        if not names <= self.measured.keys():
             return
-        stamp = transforms[self.people[0]['name']].header.stamp
-        now = stamp.sec+stamp.nanosec*1e-9
-        if now <= 0 or (self.last is not None and now <= self.last):
+        now = min(self.measured[name][0] for name in names)
+        latest = max(self.measured[name][0] for name in names)
+        if latest-now > 0.1 or (self.last is not None and now <= self.last):
             return
         self.last = now
+        transforms = {name: self.measured[name][1] for name in names}
+        stamp = min(self.measured.values(), key=lambda item: item[0])[1].header.stamp
         array = PoseArray()
         array.header.frame_id = 'sim_world'
         array.header.stamp = stamp
@@ -63,14 +74,17 @@ class PedestrianMover(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     node = PedestrianMover()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.stop()
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

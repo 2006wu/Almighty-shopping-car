@@ -1240,3 +1240,46 @@
 - Re-merged develop after hw-interfaces (#19): sim.launch.py keeps split's start_sim/start_localization GroupActions and adds hw's validate_sources, per-source lidar/imu/base bridges and wheel_odom_noise simulate_* flags. tests/test_hardware_launch.py now flattens GroupAction. pytest 972 passed.
 - NOT verified: Gazebo sim on the post-hw merged tree (70046eb+) — run guide nav-check + comm-e2e again next session.
 - Supersedes codex/microros-agent-e2e.
+
+## 2026-10-26：Mac Apple Silicon 原生容器、SLAM 與整合回歸
+
+### 本次修改
+
+- 切至 `develop`，以 macOS arm64／Docker Desktop 的 Linux arm64 引擎原生建置三個映像，沒有固定 platform。Nav2 私有子模組固定 `bf60ee0`，未修改私有原始碼。使用者後續授權提交／推送，並要求不開 PR；本次整理於 `codex/mac-arm64-slam`，不合併 develop。
+- `dev.sh` 從任意目錄載入根 `.env`，依服務第 1 個實例查詢實際連接埠；本機使用 noVNC 6081／VNC 5970。6080 不由本專案接管。早先舊 display 曾短暫停止後恢復；晚間 Docker Desktop 已關閉，重啟後原容器已不存在，僅重建本專案 compute／display。
+- 修正 Bash 3.2 空陣列 nounset、apt 隔離啟動的空 `map:=`、comm-e2e-up 意外重建 compute 網路命名空間，以及 15 個長駐 Python 節點中斷時 context 提早關閉問題。
+- 服務專用 Fast DDS writer 的 max blocking time 改為 3 秒，緩解一次 lifecycle configure 回應遺失；一般 topic 仍為 0.1 秒。這是上游競態的緩解，不能保證根治。
+- 跟隨遇前方障礙改為完整零 Twist；安全層完整旋轉圓盤通過後保留要求角速度，避免摩擦門檻造成停滯。平移／曲線的縮速與所有 STOP／STALE 保護保留。
+- 人物模型改用持續非同步 SetEntityPose 服務連線。跟隨交接在遠距離時由 Nav2 持有，接近才回到 DIRECT；有新鮮 guard 狀態時由該層負責側向淨空縮速。apt follow 明確傳入 RPP 0.5 m/s，guide 維持 0.4；目標 map 轉換只容許重用不超過 0.2 秒且不刷新來源時間的配對結果，避免 TF 短暫未到導致取消重試。
+- 故障檢查改用平面真值速度，0.9 m 減速案例要求平移基線與恢復，不能以純旋轉冒充。
+- 依使用者建議，apt 全域規劃器改用 Humble Smac2D；保留原 0.8 m 搜尋容差。fork 保留原生建置的 NavFn。不可達目標檢查同步支援兩種格網規劃器。
+- 動態情境發現世界 SceneBroadcaster 沒有個別時間戳，行人因此不動；補各模型的 Fortress PosePublisher、模型專屬 pose topic 橋接及有界時間差合併。初次誤用不支援的 topic override 已修正，Fortress 6.18 另須同時設定 `publish_nested_model_pose=true`，否則只收到空 Pose_V；修正後三種動態情境的時間戳、移動與雷射可見性實測通過。
+- SLAM 增加 map 固定座標的俯視 RViz 設定、雷射／機器人／規劃路徑／位姿圖顯示及可選設定檔。重載前檢查位姿圖兩檔與有限出生姿態。
+- save-map 改與 map-tour 共用服務結果碼及四個有更新的非空檔案檢查；先完成暫存整組再替換目的檔，負例會保留原圖。實測 localization 序列化服務回覆成功卻未寫圖，新檢查正確以失敗回報，並防止舊圖冒充新輸出。新增 [SLAM 操作說明](SLAM.md)。暫存儲存成功，localization 負例也確認原四檔 SHA-256 不變、暫存清除。
+
+### 自行檢查
+
+- 三種 arm64 原生映像；fork 18 套件建置及 110 項動態連結檢查通過。最後完整檢查為 pytest 1035 passed、colcon 721 tests／0 errors／0 failures／5 skipped；靜態檢查與 git diff --check PASS。
+- noVNC／RViz 實際登入顯示；即時時鐘、雷射、IMU、里程計、TF、Nav2 lifecycle 與唯一 watchdog 14 項檢查通過。SIGINT／SIGTERM 都確認 watchdog 先送零速、結束碼 0。
+- 原 NavFn／AMCL guide nav-check 6/6；AMCL 六區定位最大 0.1029 m／2.0044°。建圖巡航 17/17；第一份新位姿圖冷啟動重測六區定位最大 0.0184 m／0.459°。第一輪 lifecycle 未就緒的失敗紀錄保留。
+- Smac2D 的第二份新圖 `arm64_smac_slam` 亦完成 17/17 航點，四檔保存；重載定位六區全部 PASS，位置 RMSE 0.02049 m，最大 0.03130 m／0.41884°。RViz 實際顯示建圖，並量測 SDF／格網幾何；缺少外牆面不能推論全圖誤差。
+- 人物同步重測平均 0.0096 m／0.03 s；原 NavFn 跟隨最終 120 模擬秒直線／轉彎距離誤差 RMSE 1.121／1.200 m、濾波延遲 0.08 s。未出現過近／重取得事件，整體 NOT_COVERED，尚須對應情境及 Smac 重測。
+- guard＋collision_monitor 的障礙故障 4/4、跟隨故障 7/7；模式切換及急停／重設 15/15。MCU Python 10/10、PTY serial 10/10、C／XRCE 7/7，均為模擬。
+- bag 轉換／重跑／彙整成功；晚錄導航的負例遭拒。loc-check 直接送 action，該 bag 沒有購物狀態 episode，不能由它宣稱導航成功率。Smac alt_start 兩個 action 成功，但入口真值 yaw 0.558 rad 未達情境建議；動態情境初輪停滯，保留失敗紀錄。
+
+### 限制與下一步
+
+- Smac2D stop-go 直線 RMSE 0.341 m、五次過近停止 PASS；turns 直線／轉彎 RMSE 1.227／1.366 m，人物同步兩情境均 PASS。turns 接觸時真值微動仍 FAIL，命令確認為零；不放寬門檻或移除碰撞。過近解除遲滯及大角度原地對準已補純邏輯測試。
+- 三種動態行人的實際來源／移動／雷射驗證通過；aisle_crossing 仍逾時，narrow_pass 的 household 雖 action 成功但真值誤差 1.878 m，checkout_queue 入口 yaw 0.439 rad 未達建議，均明列未通過。後續應分析 AMCL 動態遮擋與代價地圖／路徑／guard 的交互作用；不可用真值修正控制器來掩蓋定位問題。
+- 拆分容器的 14 項即時檢查及 nav-check 6/6 PASS，終點真值誤差 0.139 m。fork 導航與 yaw-check 本輪未重做功能回歸，既有建置及純測試不能取代實測。
+- 使用者會另外測 Linux；本次沒有新的 Linux amd64 原生結果，不能將歷史結果視為本次修改已通過。沒有連接硬體。完整證據索引見 [arm64 驗收](VALIDATION_ARM64.md)，日誌／bag 為忽略版控的本機產物。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| arm64 原生映像與套件建置 | 待驗證 |
+| 環境變數與實際連接埠 | 待驗證 |
+| SLAM 建圖、儲存與重載定位 | 待驗證 |
+| 模擬功能與安全回歸 | 待驗證 |
+| Linux amd64 相容性 | 待驗證 |

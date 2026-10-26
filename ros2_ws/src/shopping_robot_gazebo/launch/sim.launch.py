@@ -80,5 +80,6 @@ def generate_launch_description():
         ]),
         GroupAction(condition=IfCondition(LaunchConfiguration('start_sim')), actions=[
             Node(package='tf2_ros', executable='static_transform_publisher', condition=LaunchConfigurationEquals('odom_source', 'ground_truth'), arguments=['0', '0', '0', '0', '0', '0', 'odom', 'sim_world'], parameters=[{'use_sim_time': time}]),
+            Node(package='ros_gz_bridge', executable='parameter_bridge', name='person_pose_service_bridge', condition=IfCondition(LaunchConfiguration('person')), arguments=['/world/supermarket/set_pose@ros_gz_interfaces/srv/SetEntityPose'], parameters=[{'use_sim_time': time}], output='screen'),
             Node(package='shopping_uwb_follow', executable='person_path_node', condition=IfCondition(LaunchConfiguration('person')), parameters=[{'use_sim_time': time, 'person_path': LaunchConfiguration('scenario_person_path')}], output='screen')
         ])])

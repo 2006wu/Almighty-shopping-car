@@ -99,7 +99,7 @@ def test_immediate_cancel(kwargs):
 
 def test_clear_resume_delay_resets_with_obstruction():
     s = navigating()
-    clear = dict(los_clear=True, front_clearance=1.0)
+    clear = dict(los_clear=True, front_clearance=1.0, target=(1.3, 0))
     assert tick(s, 2, **clear).mode == 'NAV2'
     assert tick(s, 2.49, **clear).mode == 'NAV2'
     tick(s, 2.5)
@@ -113,7 +113,7 @@ def test_clearance_threshold_and_immediate_close_resume():
     s = navigating()
     tick(s, 2, los_clear=True, front_clearance=0.8)
     assert tick(s, 3, los_clear=True, front_clearance=0.8).mode == 'NAV2'
-    assert tick(s, 3.1, los_clear=True, target=(1.3, 0)).action == 'cancel_goal'
+    assert tick(s, 3.1, los_clear=True, target=(1.0, 0)).action == 'cancel_goal'
     assert tick(navigating(), 2, nav_status='succeeded').action == 'cancel_goal'
 
 

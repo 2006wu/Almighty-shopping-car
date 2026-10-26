@@ -157,11 +157,12 @@ def test_dev_commands_dispatch_without_running_docker(repo, tmp_path):
     for command in ('comm-e2e-up', 'comm-e2e-check', 'comm-down'):
         subprocess.run(['bash', str(repo/'scripts/dev.sh'), command], env=env, check=True)
     calls = log.read_text().splitlines()
-    assert len(calls) == 4
-    assert '--profile comm up -d --build microros_agent microros_client' in calls[0]
-    assert 'comm.launch.py standalone:=true transport:=agent use_sim_time:=false' in calls[1]
-    assert 'ros2 run shopping_mcu_bridge agent_check' in calls[2]
-    assert 'stop microros_client microros_agent' in calls[3]
+    assert len(calls) == 5
+    assert calls[0].endswith('--profile comm build microros_client')
+    assert '--profile comm up -d --no-build microros_agent microros_client' in calls[1]
+    assert 'comm.launch.py standalone:=true transport:=agent use_sim_time:=false' in calls[2]
+    assert 'ros2 run shopping_mcu_bridge agent_check' in calls[3]
+    assert 'stop microros_client microros_agent' in calls[4]
 
 
 def test_monitor_fault_is_opt_in_and_does_not_disable_stop_requests():

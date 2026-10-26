@@ -164,3 +164,17 @@ def test_phantom_front_preserves_stamp_and_other_rays():
 def test_invalid_phantom_distance(command):
     with pytest.raises(ValueError):
         parse_command(command)
+
+
+def test_translation_baseline_excludes_in_place_rotation():
+    from shopping_robot_sim.fault_check import moving
+    turning = Sample(0, 0, .2)
+    assert moving(turning) and not moving(turning, translation_only=True)
+    assert moving(Sample(0, .1, 0), translation_only=True)
+
+
+def test_stop_check_detects_truth_motion_along_either_planar_axis():
+    from shopping_robot_sim.fault_check import planar_sample
+    for vx, vy in ((.1, 0), (0, .1), (0, -.1)):
+        samples = [planar_sample(i*.1, vx, vy, 0) for i in range(41)]
+        assert stop_latency(samples, 0, 4, .8) is None

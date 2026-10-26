@@ -5,7 +5,7 @@ import pytest
 import yaml
 
 from shopping_zone_manager.nav_check_logic import (
-    final_position_detail, navfn_tolerance, outside_distance, store_bounds,
+    final_position_detail, planner_tolerance, outside_distance, store_bounds,
     unreachable_clearances,
 )
 from shopping_zone_manager.zones import Zone
@@ -20,24 +20,26 @@ ZONE = Zone('drinks', (), -2.4, 2.0, 0.0, 'map')
 def test_unreachable_goal_with_current_world_and_planner():
     bounds = store_bounds(WORLD)
     assert bounds == pytest.approx((-6.1, -3.1, 6.1, 7.1))
-    tolerance = navfn_tolerance(CONFIG)
+    tolerance = planner_tolerance(CONFIG)
     distances = unreachable_clearances(50, 50, tolerance, bounds, (-10, -10, 10, 10))
     assert min(distances) > tolerance + 1
     # The bounding rectangle encloses every cell, including free and unknown cells.
     assert outside_distance(50, 50, (-10, -10, 10, 10)) == pytest.approx(40 * 2**0.5)
 
 
+@pytest.mark.parametrize('plugin', ['nav2_navfn_planner/NavfnPlanner', 'nav2_smac_planner/SmacPlanner2D'])
 @pytest.mark.parametrize('tolerance', [0.3, 0.8, 2.0])
-def test_tolerance_is_loaded_from_selected_navfn_plugin(tmp_path, tolerance):
+def test_tolerance_is_loaded_from_selected_grid_plugin(tmp_path, tolerance, plugin):
     config = yaml.safe_load(CONFIG.read_text())
     params = config['planner_server']['ros__parameters']
     params['planner_plugins'] = ['RenamedPlanner']
     params['RenamedPlanner'] = params.pop('GridBased')
     params['RenamedPlanner']['tolerance'] = tolerance
+    params['RenamedPlanner']['plugin'] = plugin
     path = tmp_path / 'params.yaml'
     path.write_text(yaml.safe_dump(config))
-    assert navfn_tolerance(path) == tolerance
-    unreachable_clearances(50, 50, navfn_tolerance(path), store_bounds(WORLD), (-8, -8, 8, 8))
+    assert planner_tolerance(path) == tolerance
+    unreachable_clearances(50, 50, planner_tolerance(path), store_bounds(WORLD), (-8, -8, 8, 8))
 
 
 @pytest.mark.parametrize('tolerance', [-1, float('nan'), float('inf')])
@@ -47,7 +49,7 @@ def test_invalid_planner_tolerance(tmp_path, tolerance):
     path = tmp_path / 'params.yaml'
     path.write_text(yaml.safe_dump(config))
     with pytest.raises(ValueError):
-        navfn_tolerance(path)
+        planner_tolerance(path)
 
 
 @pytest.mark.parametrize('bounds', [(-6, -3, 6, 7), (-100, -100, 100, 100),

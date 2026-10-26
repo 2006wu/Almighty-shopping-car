@@ -14,15 +14,17 @@
 
 `split` 分別啟動 sim、localization、navigation、app 與既有 display；comm、record 另外明確選用。所有服務共用 compute 網路命名空間與 UDP-only DDS，適用 Mac arm64／Linux。`split-up` 會先停止同一專案的既有服務，避免重複控制節點；切換前先結束錄製工作。Mac 日常開發優先使用預設單容器模式，驗證拆分時保持 headless、暫不啟用額外 profiles。角色表、主題流向、限制與完整維護者驗收命令見 [容器操作說明](docs/CONTAINERS.md)。
 
-## 2027 年 1 月在 Mac 上執行
+## 在 Mac Apple Silicon 與 Linux 上執行
 
 先安裝並啟動 Docker Desktop，確認 `docker compose version` 可用，並預留足夠記憶體供 Gazebo 軟體繪圖。以下指令可以直接在 fish 執行；腳本會由 Bash 解譯，不必修改 fish 設定，也不需在 macOS 安裝 ROS。
 
 ```fish
 git clone https://github.com/2006wu/Almighty-shopping-car.git
 cd Almighty-shopping-car
+git switch develop
+cp .env.example .env
 set -gx VNC_PASSWORD myshop42
-./scripts/dev.sh build
+./scripts/dev.sh build compute display
 ./scripts/dev.sh colcon-build
 ./scripts/dev.sh test
 ./scripts/dev.sh up
@@ -38,6 +40,8 @@ set -gx VNC_PASSWORD myshop42
 ```
 
 瀏覽器開啟 <http://localhost:6080/vnc.html>，輸入相同 VNC 密碼。RViz 預設固定座標為 `odom`，純跟隨也可顯示；使用 Nav2 時請在 Global Options 將 Fixed Frame 切成 `map`。
+
+若連接埠已有其他專案使用，修改根目錄 `.env` 的 `NOVNC_HOST_PORT` 與 `VNC_HOST_PORT`，例如 `6081`／`5970`，再執行 `dev.sh up`。`dev.sh` 從任何工作目錄都會載入這份檔案；服務啟動後，`dev.sh novnc` 顯示實際連接位址。Linux Bash 使用相同指令，將 `set -gx VNC_PASSWORD myshop42` 改為 `export VNC_PASSWORD=myshop42`。一般開發不需建置選用的 micro-ROS C client，只有 `comm-e2e-up` 才會啟用。
 
 ### 自動建圖與離線定位檢查
 
@@ -248,7 +252,7 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 
 ## 安全與驗證狀態
 
-所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。直接跟隨時，前方有效障礙讀值不超過 0.65 公尺，`OBSTACLE_STOP` 立即輸出完整零 Twist，包含角速度；障礙解除後再依加速度限制恢復。啟用繞行時仍可交由 Nav2 規劃，輸出經障礙安全層與 watchdog。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
@@ -355,7 +359,7 @@ ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eva
 | 濾波延遲 | 相對位置向量最佳時間位移，絕對值 <0.3 s；`--latency-limit` 可改 |
 | 直線／轉彎追蹤 | 共用人物路徑在前後各 0.5 s 的航向變化率 >0.3 rad/s 視為轉彎；各類至少 10 筆真值，真實距離減 `follow_distance` 的 RMSE <1.5 m（`--tracking-limit`）；另列距離及估測位置誤差統計 |
 | 近距停止 | 真實距離嚴格小於 YAML 的 `stop_distance`；0.5 s（`--stop-deadline`）後平面速度須 ≤0.03 m/s、角速度絕對值須 ≤0.05 rad/s，並維持到離開近距區間；列出所有違規時間 |
-| 重新取得 | 估測來源時間缺口超過 YAML 的 `lost_timeout` 或狀態進入 LOST，從下一筆新鮮估測到 `/follow/state` 回到 FOLLOWING 須 ≤2 s（`--reacquire-limit`）；另列遺失至恢復的總時間，NAV2_HANDOFF 不當作 FOLLOWING |
+| 重新取得 | 估測來源時間缺口超過 YAML 的 `lost_timeout` 或狀態進入 LOST，從下一筆新鮮估測到 `/follow/state` 回到 FOLLOWING 須 ≤2 s（`--reacquire-limit`）；另列遺失至恢復的總時間，NAV2_HANDOFF 不當作 FOLLOWING；schema 2 另列 `target_reacquire`，描述已辨識目標但仍安全停車／交接的時間，不取代本門檻 |
 
 停止距離、期望跟隨距離和 stale 門檻讀取安裝的 `shopping_uwb_follow/config/uwb_follow.yaml`；若模擬使用自訂設定，量測時也須指定相同的 `--follow-params`。`--person-path` 只供指定模擬已使用的同一份路徑，不能用另一條路徑作為真值。JSON 會記錄設定內容、門檻、來源路徑與各項結果。
 
@@ -467,3 +471,5 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
 
 情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設仍為 `apt`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
+
+SLAM 建圖、專用 RViz 視圖、四檔儲存與重載定位的完整操作見 [SLAM 操作說明](docs/SLAM.md)；Mac arm64 的本次實測記錄見 [驗收報告](docs/VALIDATION_ARM64.md)。
