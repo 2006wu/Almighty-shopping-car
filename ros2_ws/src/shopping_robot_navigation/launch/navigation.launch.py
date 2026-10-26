@@ -63,10 +63,12 @@ def start(context):
     navigation = IncludeLaunchDescription(PythonLaunchDescriptionSource(nav+'navigation_launch.py'), launch_arguments=common.items())
     # Override the smoother output and the behavior_server recoveries (spin/backup/drive_on_heading/
     # assisted_teleop publish cmd_vel directly); preserve Nav2's internal cmd_vel_nav. The node-scoped
-    # rules match behavior_server and the fork BT client, preserving the controller-to-smoother link.
+    # rules match behavior_server and both fork BT clients (StopController publishes
+    # /cmd_vel from each navigator's client node), preserving the controller-to-smoother link.
     remaps = [SetRemap(src='cmd_vel_smoothed', dst='/cmd_vel/nav'),
               SetRemap(src='behavior_server:cmd_vel', dst='/cmd_vel/nav'),
-              SetRemap(src='bt_navigator_navigate_to_pose_rclcpp_node:/cmd_vel', dst='/cmd_vel/nav')] if LaunchConfiguration('use_mux').perform(context).lower() == 'true' else []
+              SetRemap(src='bt_navigator_navigate_to_pose_rclcpp_node:/cmd_vel', dst='/cmd_vel/nav'),
+              SetRemap(src='bt_navigator_navigate_through_poses_rclcpp_node:/cmd_vel', dst='/cmd_vel/nav')] if LaunchConfiguration('use_mux').perform(context).lower() == 'true' else []
     actions.append(GroupAction(condition=IfCondition(LaunchConfiguration('start_navigation')), actions=[*remaps, navigation]))
     return actions
 

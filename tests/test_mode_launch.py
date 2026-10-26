@@ -109,7 +109,8 @@ def test_nav2_velocity_outputs_are_remapped(enabled, monkeypatch):
     remaps = [a for a in group.actions if a.kind == 'SetRemap']
     assert [(a.src, a.dst) for a in remaps] == (
         [('cmd_vel_smoothed', '/cmd_vel/nav'), ('behavior_server:cmd_vel', '/cmd_vel/nav'),
-         ('bt_navigator_navigate_to_pose_rclcpp_node:/cmd_vel', '/cmd_vel/nav')] if enabled == 'true' else [])
+         ('bt_navigator_navigate_to_pose_rclcpp_node:/cmd_vel', '/cmd_vel/nav'),
+         ('bt_navigator_navigate_through_poses_rclcpp_node:/cmd_vel', '/cmd_vel/nav')] if enabled == 'true' else [])
     include = group.actions[-1]
     assert include.args[0].endswith('/nav2_bringup/launch/navigation_launch.py')
     assert dict(include.launch_arguments)['use_composition'] == 'False'
