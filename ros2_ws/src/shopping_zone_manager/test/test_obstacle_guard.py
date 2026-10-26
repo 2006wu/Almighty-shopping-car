@@ -23,10 +23,24 @@ def test_speed_direction_and_slow_zone():
 
 
 def test_rotation_disk_and_curved_sweep():
-    assert ready([(0.6, 0)], (0, 0.8))[1].velocity[1] > 0
+    assert ready([(0.6, 0)], (0, 0.8))[1].velocity == (0, 0.8)
     assert ready([(0.32, 0.25)], (0, -0.8))[1].state == 'STOP'
     # Point on the commanded turning arc, outside the initial footprint.
     assert ready([(0.55, 0.45)], (0.6, 1.2))[1].state == 'STOP'
+
+
+def test_safe_rotation_releases_prior_translation_slowdown_without_lowering_margin():
+    guard, result = ready([(0.7, 0)], (0.1, 0))
+    assert result.state == 'SLOW'
+    assert guard.step([(0.6, 0)], (0, .22), .32).state == 'SLOW'
+    assert guard.step([(0.6, 0)], (0, .22), .63).velocity == (0, .22)
+    radius = math.hypot(guard.half_length, guard.half_width)
+    assert guard.step([(radius+.09, 0)], (0, .22), .64).velocity == (0, 0)
+    assert guard.step([(radius+.14, 0)], (0, .22), 1.).state == 'STOP'
+    assert guard.step([(radius+.14, 0)], (0, .22), 2.).state == 'STOP'
+    assert guard.step([(radius+.16, 0)], (0, .22), 3.).state == 'STOP'
+    assert guard.step([(radius+.16, 0)], (0, .22), 3.31).velocity == (0, .22)
+    assert guard.step([(radius+.3, 0)], (0, .22), 3.32, fresh=False).state == 'STALE'
 
 
 def test_immediate_stop_delayed_wider_release_and_stale():

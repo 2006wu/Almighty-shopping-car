@@ -7,7 +7,7 @@ import time
 from .cli import positive_seconds, wait_until
 from .goal_tracker import State
 from .zones import Zone
-from .nav_check_logic import (navfn_tolerance, store_bounds, unreachable_clearances,
+from .nav_check_logic import (planner_tolerance, store_bounds, unreachable_clearances,
                               final_position_detail)
 
 
@@ -84,7 +84,7 @@ def main():
     def unreachable():
         world = Path(get_package_share_directory('shopping_robot_gazebo')) / 'worlds/supermarket.sdf'
         config = Path(get_package_share_directory('shopping_robot_navigation')) / 'config/nav2_params.yaml'
-        tolerance = navfn_tolerance(config)
+        tolerance = planner_tolerance(config)
         require(bool(costmaps), 'no global costmap')
         grid = costmaps[-1]
         origin = grid.info.origin
@@ -102,7 +102,7 @@ def main():
         wait_settled()
         require(node.tracker.state in (State.ABORTED, State.REJECTED),
                 f'unreachable goal returned {node.tracker.state.value}')
-        return f'NavFn tolerance={tolerance:.3f} m; minimum clearance={min(clearances):.3f} m'
+        return f'Planner tolerance={tolerance:.3f} m; minimum clearance={min(clearances):.3f} m'
 
     def canceled():
         distances.clear()

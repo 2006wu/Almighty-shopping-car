@@ -2,7 +2,9 @@
 set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 read -r -a docker_cmd <<< "${DOCKER:-docker}"
-compose=("${docker_cmd[@]}" compose -f "$repo_dir/docker/docker-compose.yaml")
+compose=("${docker_cmd[@]}" compose)
+if [[ -f "$repo_dir/.env" ]]; then compose+=(--env-file "$repo_dir/.env"); fi
+compose+=(-f "$repo_dir/docker/docker-compose.yaml")
 command="${1:-help}"
 if [[ $# -gt 0 ]]; then shift; fi
 run() { "${compose[@]}" exec compute /usr/local/bin/compute-entrypoint "$@"; }
@@ -128,7 +130,10 @@ EOF
   comm-up) "${compose[@]}" --profile comm up -d microros_agent ;;
   comm-down) "${compose[@]}" --profile comm stop microros_client microros_agent ;;
   comm-e2e-up)
-    "${compose[@]}" --profile comm up -d --build microros_agent microros_client
+    # Build only the opt-in client; rebuilding compute here can replace the shared
+    # network namespace without recreating an already running display service.
+    "${compose[@]}" --profile comm build microros_client
+    "${compose[@]}" --profile comm up -d --no-build microros_agent microros_client
     run ros2 launch shopping_mcu_bridge comm.launch.py standalone:=true transport:=agent use_sim_time:=false
     ;;
   comm-e2e-check) run ros2 run shopping_mcu_bridge agent_check "$@" ;;
@@ -188,7 +193,12 @@ EOF
       shift
     done
     [[ ${#summary_names[@]} -gt 0 ]] || { echo 'Provide bag names' >&2; exit 2; }
-    run ros2 run shopping_zone_manager eval_summary "${summary_names[@]}" "${summary_output[@]}"
+    # Bash 3.2 treats an empty array expansion as unset under nounset.
+    if [[ ${#summary_output[@]} -gt 0 ]]; then
+      run ros2 run shopping_zone_manager eval_summary "${summary_names[@]}" "${summary_output[@]}"
+    else
+      run ros2 run shopping_zone_manager eval_summary "${summary_names[@]}"
+    fi
     ;;
   zones) run ros2 run shopping_zone_manager list_zones ;;
   map-tour)
@@ -202,12 +212,14 @@ EOF
     ;;
   save-map)
     [[ $# == 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple map name' >&2; exit 2; }
-    path="/ws/src/shopping_robot_navigation/maps/$1"
-    run ros2 run nav2_map_server map_saver_cli -f "$path" --ros-args -p use_sim_time:=true
-    run ros2 service call /slam_toolbox/serialize_map slam_toolbox/srv/SerializePoseGraph "{filename: '$path'}"
+    run ros2 run shopping_zone_manager save_map --ros-args -p use_sim_time:=true -p "map_name:=$1"
     ;;
   rviz) "${compose[@]}" exec display /usr/local/bin/compute-entrypoint ros2 launch shopping_robot_bringup rviz.launch.py "$@" ;;
   gz-gui) "${compose[@]}" exec display /usr/local/bin/compute-entrypoint ign gazebo -g "$@" ;;
-  novnc) echo 'http://localhost:6080/vnc.html (VNC: 127.0.0.1:5910)' ;;
+  novnc)
+    novnc_endpoint="$("${compose[@]}" port --index 1 compute 6080)"
+    vnc_endpoint="$("${compose[@]}" port --index 1 compute 5900)"
+    echo "http://localhost:${novnc_endpoint##*:}/vnc.html (VNC: $vnc_endpoint)"
+    ;;
   *) echo "Unknown command: $command" >&2; exit 2 ;;
 esac

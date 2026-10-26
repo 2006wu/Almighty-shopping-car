@@ -5,13 +5,13 @@ import xml.etree.ElementTree as ET
 import yaml
 
 
-def navfn_tolerance(path):
+def planner_tolerance(path):
     with open(path, encoding='utf-8') as stream:
         params = yaml.safe_load(stream)['planner_server']['ros__parameters']
     tolerances = [float(params[name]['tolerance']) for name in params['planner_plugins']
-                  if params[name]['plugin'] == 'nav2_navfn_planner/NavfnPlanner']
+                  if params[name]['plugin'] in ('nav2_navfn_planner/NavfnPlanner', 'nav2_smac_planner/SmacPlanner2D')]
     if len(tolerances) != 1 or not math.isfinite(tolerances[0]) or tolerances[0] < 0:
-        raise ValueError('Expected one NavFn planner with a finite nonnegative tolerance')
+        raise ValueError('Expected one supported grid planner with a finite nonnegative tolerance')
     return tolerances[0]
 
 
@@ -45,10 +45,10 @@ def outside_distance(x, y, bounds):
 
 def unreachable_clearances(x, y, tolerance, world_bounds, costmap_bounds):
     if not math.isfinite(tolerance) or tolerance < 0:
-        raise ValueError('Invalid NavFn tolerance')
+        raise ValueError('Invalid Planner tolerance')
     distances = [outside_distance(x, y, bounds) for bounds in (world_bounds, costmap_bounds)]
     if any(distance <= tolerance + 1.0 for distance in distances):
-        raise ValueError('Unreachable goal must exceed NavFn tolerance + 1 m from store and costmap')
+        raise ValueError('Unreachable goal must exceed Planner tolerance + 1 m from store and costmap')
     return distances
 
 

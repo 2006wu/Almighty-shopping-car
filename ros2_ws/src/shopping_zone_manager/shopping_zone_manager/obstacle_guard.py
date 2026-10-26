@@ -116,11 +116,18 @@ class ObstacleGuard:
             return GuardResult((0.0, 0.0), 'STALE', 0.0, math.nan)
         self.last_time = now
         clearance = self.clearance(points, velocity)
-        raw = max(0.0, min(1.0, (clearance-self.margin)/self.slow_extra))
+        rotation = abs(velocity[0]) < 1e-6 and abs(velocity[1]) > 1e-6
+        # A clear full rotation disk bounds every heading at any allowed angular
+        # speed. Scaling an in-place turn can strand a skid-steer below friction.
+        raw = (float(clearance > self.margin) if rotation else
+               max(0.0, min(1.0, (clearance-self.margin)/self.slow_extra)))
         if raw < self.scale:
             self.scale, self.clear_since = raw, None
         elif raw > self.scale:
-            wide = clearance > self.margin+self.scale*self.slow_extra+self.hysteresis
+            release_margin = self.margin+self.hysteresis
+            if not rotation:
+                release_margin += self.scale*self.slow_extra
+            wide = clearance > release_margin
             self.clear_since = (now if self.clear_since is None else self.clear_since) if wide else None
             if self.clear_since is not None and now-self.clear_since >= self.clear_time:
                 self.scale, self.clear_since = raw, None

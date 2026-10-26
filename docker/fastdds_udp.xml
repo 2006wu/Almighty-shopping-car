@@ -6,4 +6,14 @@
   <participant profile_name="udp_participant" is_default_profile="true">
     <rtps><userTransports><transport_id>udp_only</transport_id></userTransports><useBuiltinTransports>false</useBuiltinTransports></rtps>
   </participant>
+  <!-- Give service reply discovery time to match during a cold Nav2 startup.
+       This profile does not alter velocity/sensor topic writers or their QoS. -->
+  <publisher profile_name="service">
+    <qos>
+      <reliability>
+        <kind>RELIABLE</kind>
+        <max_blocking_time><sec>3</sec><nanosec>0</nanosec></max_blocking_time>
+      </reliability>
+    </qos>
+  </publisher>
 </profiles>

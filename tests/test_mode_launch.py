@@ -1,5 +1,6 @@
 """Evaluate launch wiring with small substitution/action fakes, without ROS."""
 import ast
+import math
 import os
 from shopping_robot_navigation.stack_selection import select_stack, apt_environment
 from pathlib import Path
@@ -41,14 +42,14 @@ def load(relative):
     tree.body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
     env = {name: action(name) for name in (
         'DeclareLaunchArgument', 'IncludeLaunchDescription', 'Node', 'GroupAction',
-        'SetRemap', 'OpaqueFunction', 'ParameterValue', 'IfCondition', 'LogInfo', 'ExecuteProcess')}
+        'SetRemap', 'OpaqueFunction', 'ParameterValue', 'IfCondition', 'LogInfo', 'ExecuteProcess', 'RewrittenYaml')}
     env['prepare_scenario'] = lambda context: []
     env['pedestrian_actions'] = lambda context: []
     env.update(LaunchDescription=lambda values: values, LaunchConfiguration=Configuration,
                PythonExpression=Expression, PythonLaunchDescriptionSource=lambda path: path,
                get_package_share_directory=lambda package: '/share/'+package,
                get_packages_with_prefixes=lambda: {}, select_stack=select_stack,
-               apt_environment=apt_environment, os=os)
+               apt_environment=apt_environment, os=os, Path=Path, math=math)
     exec(compile(tree, str(path), 'exec'), env)
     return env
 
@@ -100,7 +101,8 @@ def test_scenarios_preserve_nav2_and_optional_mcu_wiring(name, stack):
 
 
 @pytest.mark.parametrize('enabled', ['true', 'false'])
-def test_nav2_velocity_outputs_are_remapped(enabled):
+def test_nav2_velocity_outputs_are_remapped(enabled, monkeypatch):
+    monkeypatch.delenv('AMENT_PREFIX_PATH', raising=False)
     env = load('shopping_robot_navigation/launch/navigation.launch.py')
     actions = env['start']({'use_mux': enabled, 'slam_mode': 'mapping', 'map': '', 'nav2_stack': 'apt'})
     group = actions[-1]
@@ -115,14 +117,17 @@ def test_nav2_velocity_outputs_are_remapped(enabled):
 
 @pytest.mark.parametrize('spawn', [{}, dict(spawn_x='', spawn_y='', spawn_yaw=''),
                                   dict(spawn_x='-2.4', spawn_y='0', spawn_yaw='1.5707963267948966')])
-def test_slam_localization_uses_scenario_pose_only_when_supplied(spawn):
+def test_slam_localization_uses_scenario_pose_only_when_supplied(spawn, tmp_path):
     class Context(dict):
         @property
         def launch_configurations(self):
             return self
 
     env = load('shopping_robot_slam/launch/slam.launch.py')
-    actions = env['start'](Context(mode='localization', map='/ws/map', use_sim_time='true', **spawn))
+    prefix = str(tmp_path/'map')
+    for suffix in ('.posegraph', '.data'):
+        Path(prefix+suffix).write_bytes(b'test')
+    actions = env['start'](Context(mode='localization', map=prefix, use_sim_time='true', **spawn))
     parameters = actions[0].parameters[-1]
     if spawn.get('spawn_x'):
         assert parameters['map_start_at_dock'] is False
@@ -216,3 +221,34 @@ def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack
         assert includes['mode_mux.launch.py']['manage_follow'] == 'true'
     else:
         assert resolve(includes['sim.launch.py']['person'], context) == context['person']
+
+
+def test_follow_has_navigation_catchup_headroom_with_guide_default_preserved(monkeypatch):
+    monkeypatch.delenv('AMENT_PREFIX_PATH', raising=False)
+    actions = load('shopping_robot_bringup/launch/follow.launch.py')['generate_launch_description']()
+    navigation = next(a for a in actions if a.kind == 'IncludeLaunchDescription'
+                      and a.args[0].endswith('/shopping_robot_navigation/launch/navigation.launch.py'))
+    assert dict(navigation.launch_arguments)['rpp_desired_speed'] == '0.5'
+    start = load('shopping_robot_navigation/launch/navigation.launch.py')['start']
+    base = dict(use_mux='true', slam_mode='mapping', map='', nav2_stack='apt')
+    guide = start(base)[-1].actions[-1]
+    assert isinstance(dict(guide.launch_arguments)['params_file'], str)
+    follow = start({**base, 'rpp_desired_speed': '0.5'})[-1].actions[-1]
+    assert dict(follow.launch_arguments)['params_file'].param_rewrites == {'desired_linear_vel': '0.5'}
+
+
+@pytest.mark.parametrize('speed', ['0', '-0.1', '0.6', 'nan', 'inf', 'invalid'])
+def test_navigation_speed_override_rejects_unsafe_values(speed):
+    start = load('shopping_robot_navigation/launch/navigation.launch.py')['start']
+    with pytest.raises(ValueError):
+        start(dict(use_mux='true', slam_mode='mapping', map='', nav2_stack='apt', rpp_desired_speed=speed))
+
+
+@pytest.mark.parametrize('missing', ['.posegraph', '.data'])
+def test_slam_localization_rejects_incomplete_or_empty_graph(tmp_path, missing):
+    env = load('shopping_robot_slam/launch/slam.launch.py')
+    prefix = str(tmp_path/'map')
+    for suffix in ('.posegraph', '.data'):
+        Path(prefix+suffix).write_bytes(b'' if suffix == missing else b'test')
+    with pytest.raises(ValueError, match='Missing or empty SLAM artifact'):
+        env['start'](dict(mode='localization', map=prefix, use_sim_time='true'))

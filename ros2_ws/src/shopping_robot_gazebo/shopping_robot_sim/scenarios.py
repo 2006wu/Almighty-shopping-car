@@ -107,4 +107,12 @@ def generate_world(world_file, scenario):
         plugin = ET.SubElement(model, 'plugin', filename='ignition-gazebo-velocity-control-system',
                                name='ignition::gazebo::systems::VelocityControl')
         ET.SubElement(plugin, 'topic').text = f'/model/{name}/cmd_vel'
+        observer = ET.SubElement(model, 'plugin', filename='ignition-gazebo-pose-publisher-system',
+                                 name='ignition::gazebo::systems::PosePublisher')
+        for key, value in dict(publish_model_pose='true', publish_nested_model_pose='true',
+                               publish_link_pose='false',
+                               publish_visual_pose='false', publish_collision_pose='false',
+                               publish_sensor_pose='false', use_pose_vector_msg='true',
+                               static_publisher='false', update_frequency='30').items():
+            ET.SubElement(observer, key).text = value
     return ET.tostring(root, encoding='unicode')

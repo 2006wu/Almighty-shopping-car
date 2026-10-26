@@ -91,10 +91,13 @@ def nodes_for(filename, context):
 @pytest.mark.parametrize('mode', ['guide', 'follow'])
 @pytest.mark.parametrize('odom_source', ['ekf', 'ground_truth'])
 @pytest.mark.parametrize('slam_mode', ['mapping', 'localization', 'map_server'])
-def test_role_node_ownership(mode, odom_source, slam_mode, monkeypatch):
+def test_role_node_ownership(mode, odom_source, slam_mode, monkeypatch, tmp_path):
     monkeypatch.delenv('AMENT_PREFIX_PATH', raising=False)
+    prefix = str(tmp_path/'map')
+    for suffix in ('.posegraph', '.data'):
+        Path(prefix+suffix).write_bytes(b'test')
     roles = {role: list(nodes_for(f'shopping_robot_bringup/launch/{role}.launch.py', {
-        'mode': mode, 'odom_source': odom_source, 'slam_mode': slam_mode, 'map': '/ws/map.yaml'}))
+        'mode': mode, 'odom_source': odom_source, 'slam_mode': slam_mode, 'map': prefix}))
         for role in ('sim', 'localization', 'navigation', 'app')}
     names = {role: Counter(n.executable for n in nodes) for role, nodes in roles.items()}
     assert names['app']['cmd_vel_watchdog'] == names['app']['cmd_vel_mux'] == 1
@@ -184,6 +187,7 @@ def test_apt_isolation_keeps_role_switches(monkeypatch):
                 'start_localization': str(role == 'localization').lower(),
                 'start_navigation': str(role == 'navigation').lower()}
         process = start(args)[-1]
+        assert 'map:=' not in process.cmd
         for name in ('start_localization', 'start_navigation'):
             assert f'{name}:={args[name]}' in process.cmd
 

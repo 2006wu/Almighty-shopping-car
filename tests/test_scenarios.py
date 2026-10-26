@@ -4,6 +4,7 @@ from copy import deepcopy
 import math
 from pathlib import Path
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -133,7 +134,7 @@ def test_scenario_list_without_docker():
     import os
     result = subprocess.run(['bash', str(ROOT/'scripts/dev.sh'), 'scenario-list'],
                             env={**os.environ, 'DOCKER': 'this-must-not-run',
-                                 'PYTHON': '/workspace/scratch/venv-shop/bin/python'},
+                                 'PYTHON': sys.executable},
                             capture_output=True, text=True, check=True)
     assert all(name+':' in result.stdout for name in NAMES)
 
@@ -248,3 +249,52 @@ def test_initial_pose_targets_amcl_once_and_uses_scenario_heading():
     assert messages[0].pose.pose.orientation.z == pytest.approx(math.sin(math.pi/4))
     assert messages[0].pose.pose.orientation.w == pytest.approx(math.cos(math.pi/4))
     assert messages[0].header.frame_id == 'map'
+
+
+def test_pedestrian_truth_has_individual_simulator_timestamps():
+    scenario = load_scenario(CONFIG, 'checkout_queue')
+    world = ET.fromstring(generate_world(WORLD, scenario)).find('world')
+    for person in scenario['pedestrians']:
+        model = world.find(f"model[@name='{person['name']}']")
+        plugin = next(p for p in model.findall('plugin') if p.get('name').endswith('PosePublisher'))
+        assert plugin.find('topic') is None  # Fortress uses the model-scoped pose topic.
+        assert plugin.findtext('publish_model_pose') == 'true'
+        assert plugin.findtext('publish_nested_model_pose') == 'true'
+        assert plugin.findtext('update_frequency') == '30'
+
+
+def test_pedestrian_merges_stamped_model_messages_without_using_scene_time():
+    from types import SimpleNamespace as NS
+    path = SRC/'shopping_robot_gazebo/shopping_robot_sim/pedestrian_mover.py'
+    tree = ast.parse(path.read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+    cls.bases = []
+    scope = dict(math=math, tracking_velocity=tracking_velocity,
+                 Twist=lambda: NS(linear=NS(x=0., y=0.)),
+                 Pose=lambda: NS(position=NS(x=0., y=0., z=0.)),
+                 PoseArray=lambda: NS(header=NS(), poses=[]))
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), str(path), 'exec'), scope)
+    mover = scope['PedestrianMover'].__new__(scope['PedestrianMover'])
+    mover.people = [dict(name=name, speed=.3, start_delay=0,
+                         waypoints=[[0, 0], [1, 0]]) for name in ('a', 'b')]
+    commands, arrays = [], []
+    mover.publishers_by_name = {name: NS(publish=commands.append) for name in ('a', 'b')}
+    mover.truth = NS(publish=arrays.append)
+    mover.last, mover.measured = None, {}
+
+    def message(name, sec, nsec=0):
+        return NS(transforms=[NS(child_frame_id=name, header=NS(stamp=NS(sec=sec, nanosec=nsec)),
+                                transform=NS(translation=NS(x=0., y=0., z=.85),
+                                             rotation=NS(w=1., x=0., y=0., z=0.)))])
+
+    mover.on_poses(message('a', 0))
+    mover.on_poses(message('a', 2))
+    assert not arrays and not commands
+    mover.on_poses(message('b', 2, 20_000_000))
+    assert len(arrays) == 1 and len(arrays[0].poses) == 2
+    assert arrays[0].header.stamp.sec == 2
+    assert arrays[0].header.stamp.nanosec == 0
+    assert len(commands) == 2
+    assert all(math.hypot(c.linear.x, c.linear.y) <= .3 for c in commands)
+    mover.on_poses(message('a', 3))
+    assert len(arrays) == 1  # Never combine old and new measurements as fresh truth.
