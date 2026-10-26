@@ -1278,8 +1278,10 @@
 
 | 項目 | 結果 |
 | --- | --- |
-| arm64 原生映像與套件建置 | 待驗證 |
-| 環境變數與實際連接埠 | 待驗證 |
-| SLAM 建圖、儲存與重載定位 | 待驗證 |
-| 模擬功能與安全回歸 | 待驗證 |
-| Linux amd64 相容性 | 待驗證 |
+| arm64 原生映像與套件建置 | 僅使用者 Mac 自行回報（映像、fork 建置、colcon 721／0 failures）；審查端無 arm64 主機，未重做 |
+| 環境變數與實際連接埠 | 審查端檢視 `dev.sh`／`.env.example`／compose：`.env` 已列入 .gitignore，連接埠預設 6080／5910 只綁 127.0.0.1；在 Linux 以環境變數覆寫連接埠（16085／15915）實際啟動通過。Mac 上 6081／5970 為自行回報 |
+| SLAM 建圖、儲存與重載定位 | 審查端只跑 pytest（含 `test_slam_save.py`）；mapping＋map-tour、save-map、重載定位為 Mac 自行回報，Linux 未重跑 |
+| 模擬功能與安全回歸 | 審查端 Linux amd64（2026-10-27）：apt Nav2＋Smac2D guide nav-check 5/5、loc-check 六區全過（最大 0.027 m）、follow 故障 fault-check 7/7。跟隨轉彎、aisle_crossing、narrow_pass、checkout_queue 仍未通過（見上方限制）；fork 導航與 yaw-check 未重測 |
+| Linux amd64 相容性 | 審查端 Linux amd64 Docker：映像建置、colcon build、colcon test 721 tests／0 errors／0 failures／5 skipped；pytest 1034 passed、1 skipped（私有 fork 子模組未取出）。修正 3 個 `setup.py` 的 glob，避免主機 pytest 留下的 `launch/__pycache__` 讓 colcon build 失敗 |
+
+使用者 2026-10-27 授權測試通過後合併至 develop（取代上方「不開 PR／不合併」的原指示）。
