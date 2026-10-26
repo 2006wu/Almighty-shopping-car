@@ -78,7 +78,7 @@ def generate_launch_description():
                               DeclareLaunchArgument('start_navigation', default_value='true'),
                               DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
                               DeclareLaunchArgument('use_sim_time', default_value='true'),
-                              DeclareLaunchArgument('nav2_stack', default_value='apt', choices=['auto', 'fork', 'apt']),
+                              DeclareLaunchArgument('nav2_stack', default_value='auto', choices=['auto', 'fork', 'apt']),
                               DeclareLaunchArgument('rpp_desired_speed', default_value='0.4'),
                               DeclareLaunchArgument('map', default_value=''),
                               DeclareLaunchArgument('spawn_x', default_value=''),

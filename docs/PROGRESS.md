@@ -1423,7 +1423,25 @@
 
 | 審查驗證項目 | 狀態 |
 | --- | --- |
-| 衝突合併、設定一致性與純 Python 回歸 | 待驗證 |
-| Humble colcon build／test 與執行期依賴 | 待驗證 |
-| fork Smac 安裝來源、動態連結與 ABI | 待驗證 |
-| Gazebo 導航、未知格、取消停止與 Shrink 還原 | 待驗證 |
+| 衝突合併、設定一致性與純 Python 回歸 | 審查端（2026-10-27）：pytest 1041 passed；索引衝突已於提交 8d091d4 解決 |
+| Humble colcon build／test 與執行期依賴 | 審查端 Linux amd64：fork nav2-build 含 Smac2D 1 分 5 秒完成，custom_controller gtest 28/0 |
+| fork Smac 安裝來源、動態連結與 ABI | 審查端：linkage 檢查 110 PASS，Smac2D 從 `/nav2_ws` 載入 |
+| Gazebo 導航、未知格、取消停止與 Shrink 還原 | 審查端：fork nav-check 6/6（區域容差 0.043 m）、loc-check 六區全過；取消停止與 Shrink 還原未單獨重測 |
+
+## 2026-10-27：fork 成為預設 Nav2 stack（`nav2_stack:=auto`）
+
+### 修改與原因
+
+- 審查端 fork 模擬驗收：fork guide loc-check 六區全過（最大定位誤差 0.078 m，entrance；其餘 ≤ 0.030 m）；fork follow fault-check 7/7（命令停止 0.114–0.665 s）；fork 障礙物 fault-check 4/4（lidar_front:0.2 命令停止 0.070 s、lidar_drop 0.538 s、lidar_freeze 0.661 s）。同次 develop（apt）障礙物 fault-check 4/4 作為基準。
+- 修正：fork 的 `StopController` BT 裝飾器從每個 navigator 的 client 節點發布絕對 `/cmd_vel`。原本只重映射 `bt_navigator_navigate_to_pose_rclcpp_node`，through-poses client 仍在 `/cmd_vel` 留下第二個發布者，fault-check 以「`/cmd_vel` 必須只有 cmd_vel_watchdog 一個發布者」失敗。新增 `bt_navigator_navigate_through_poses_rclcpp_node:/cmd_vel → /cmd_vel/nav`；重跑後 `ros2 topic info -v /cmd_vel` 只有 cmd_vel_watchdog，障礙物 fault-check 通過。
+- guide／follow／navigation 與拆分容器 `runtime_role` 的 `nav2_stack` 預設由 `apt` 改為 `auto`：已建置 fork underlay 時使用 fork TEB＋Smac2D，沒有私有子模組或未建置時自動回退 apt（Mac／無權限使用者不受影響）。要比對 apt 須明確指定 `nav2_stack:=apt`。
+
+### 限制與下一步
+
+- `auto` 實際選到 fork 的 Gazebo 啟動以及動態情境（aisle_crossing／narrow_pass／checkout_queue）在 fork 下尚未重跑；Mac arm64 fork 建置未驗證。
+- 跟隨 TEB 繞行與 Shrink 還原仍待調參與專門回歸。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| through-poses `/cmd_vel` 重映射與單一發布者 | 待驗證 |
+| 預設 `auto` 選擇與回退 | 待驗證 |

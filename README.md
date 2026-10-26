@@ -422,7 +422,7 @@ git submodule update --init third_party/eurobot_nav2
 
 **目前固定版本：** fork `shopping-car` 分支 `bf60ee0` 已含非全向／gentle TEB 參數合約與 opt-in 的 Shrink `safe_recovery`（遵守 `shrink_to`、0.40 m 下限、local／global 各自的 inflation service、optional rival／object layer 逾時、結束或取消時還原）。建置前檢查仍會拒絕缺少合約的版本。2026-10-24 模擬中 fork 建置、連結、lifecycle、BT 與 Shrink 均正常，但 gentle TEB 在店內走道仍常判定阻擋、未能抵達區域目標，因此 launch 預設維持 `apt`（見 PROGRESS）。
 
-`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `apt`（fork TEB 尚在調參，2026-10-24 起需明確指定 `fork` 或 `auto`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
+`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `auto`（2026-10-27 起：已建置 fork underlay 就用 fork TEB＋Smac2D，否則自動回退 apt；要比對 apt 請明確指定 `nav2_stack:=apt`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
 
 ```bash
 ./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
@@ -470,6 +470,6 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 
 錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
 
-情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設仍為 `apt`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
+情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設為 `auto`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
 
 SLAM 建圖、專用 RViz 視圖、四檔儲存與重載定位的完整操作見 [SLAM 操作說明](docs/SLAM.md)；Mac arm64 的本次實測記錄見 [驗收報告](docs/VALIDATION_ARM64.md)。

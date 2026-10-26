@@ -308,7 +308,7 @@ compute 唯讀掛載 `../third_party/eurobot_nav2/src → /nav2_ws/src`，`nav2_
 
 `nav2-build` 成功後 source underlay，以 `scripts/check_nav2_linkage.py` 對 fork shared libraries、apt `libnav2*.so`（含 RPP／collision monitor）及 AMCL 執行 `ldd -r`，缺 library、未定義 symbol 或非零結束碼都使建置失敗，通過才寫 build commit。這能攔截動態連結缺失，無法偵測 C++ layout／vtable 語意變化或 DDS 訊息相容問題；維護者仍須以當前 image apt 版本執行 colcon、AMCL lifecycle 啟動、action／取消／recovery 與 Gazebo 真值回歸。若失敗，回報精確 symbol 與套件版本，決定在 fork 修正 ABI 或增加必要的原始碼重建範圍，不能略過檢查假裝通過。display 不掛 fork，沿用 apt RViz plugins；跨容器 action／訊息仍要驗證。
 
-`nav2_stack:=apt|fork|auto` 預設 `apt`；fork TEB 尚待調參，須明確選用 `fork` 或 `auto`。選擇 helper 不匯入 ROS。`auto` 以 ament index 同時出現 `custom_controller` 與 `custom_nav_to_pose` 選 fork；明確 `fork` 缺套件就失敗；`apt` 保留原參數與 RPP。只換 YAML 並不能換回 apt binaries，所以在 fork underlay 存在而選 apt 時，launch 用移除 `/nav2_ws` 搜尋路徑的環境啟動子程序，source apt 與應用層的 `local_setup.bash`（不重播已記錄的 underlay），再執行相同導航 launch。guide／follow 將選擇參數傳入導航，其他 SLAM、EKF、模擬、模式管理流程不變；AMCL 仍是 apt 套件。一次只執行一個 bringup。若曾建置 fork，未初始化的主機 checkout 不會自動刪除既有 underlay volumes；`auto` 仍依容器 index 判定，要比對 apt 請明確選 apt。
+`nav2_stack:=apt|fork|auto` 預設 `auto`（2026-10-27 起）：容器內已建置 fork 時使用 fork TEB＋Smac2D，否則回退 apt；比對 apt 須明確選用 `apt`。選擇 helper 不匯入 ROS。`auto` 以 ament index 同時出現 `custom_controller` 與 `custom_nav_to_pose` 選 fork；明確 `fork` 缺套件就失敗；`apt` 保留原參數與 RPP。只換 YAML 並不能換回 apt binaries，所以在 fork underlay 存在而選 apt 時，launch 用移除 `/nav2_ws` 搜尋路徑的環境啟動子程序，source apt 與應用層的 `local_setup.bash`（不重播已記錄的 underlay），再執行相同導航 launch。guide／follow 將選擇參數傳入導航，其他 SLAM、EKF、模擬、模式管理流程不變；AMCL 仍是 apt 套件。一次只執行一個 bringup。若曾建置 fork，未初始化的主機 checkout 不會自動刪除既有 underlay volumes；`auto` 仍依容器 index 判定，要比對 apt 請明確選 apt。
 
 ### TEB、BT 與速度出口
 

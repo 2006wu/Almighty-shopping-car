@@ -36,7 +36,7 @@ def start(context):
 
 
 def generate_launch_description():
-    defaults = {'odom_source': 'ekf', 'headless': 'true', 'nav2_stack': 'apt',
+    defaults = {'odom_source': 'ekf', 'headless': 'true', 'nav2_stack': 'auto',
                 'slam_mode': 'mapping', 'map': '', 'fault_injection': 'false',
                 'mcu_transport': 'sim_ros', 'fault_schedule': '[]', 'route_around': 'true', 'person': 'false'}
     return LaunchDescription([

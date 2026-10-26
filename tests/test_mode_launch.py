@@ -76,7 +76,7 @@ def test_scenarios_preserve_nav2_and_optional_mcu_wiring(name, stack):
     actions = load(f'shopping_robot_bringup/launch/{name}.launch.py')['generate_launch_description']()
     declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
     assert declarations['scenario'].default_value == 'default'
-    assert declarations['nav2_stack'].default_value == 'apt'
+    assert declarations['nav2_stack'].default_value == 'auto'
     assert declarations['nav2_stack'].choices == ['auto', 'fork', 'apt']
     assert declarations['mcu_comm'].default_value == 'false'
     assert declarations['use_mux'].default_value == 'true'
@@ -200,7 +200,7 @@ def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack
                 'start_sim', 'start_navigation', 'start_app', 'start_nav_localization',
                 'start_sim_localization', 'mcu_transport'} | ({'start_uwb_sim'} if name == 'follow' else set())
     assert set(declarations) == expected
-    assert declarations['nav2_stack'].default_value == 'apt'
+    assert declarations['nav2_stack'].default_value == 'auto'
     assert set(declarations['nav2_stack'].choices) == {'apt', 'fork', 'auto'}
     assert declarations['use_mux'].choices == ['true']
     assert declarations['obstacle_guard'].default_value == 'true'
