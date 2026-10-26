@@ -350,14 +350,17 @@ class FollowNode(Node):
         if guard_fresh and self.guard_state in ('STOP', 'STALE'):
             v = w = 0.0
             self.control.v = self.control.w = 0.0
-            state, reason = 'OBSTACLE_STOP', 'Safety guard '+self.guard_state
+            # Keep the near stop visible even when the downstream guard stops.
+            if state != 'TOO_CLOSE':
+                state, reason = 'OBSTACLE_STOP', 'Safety guard '+self.guard_state
             if self.guard_state == 'STALE':
                 valid = False
         point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
         decision = self.supervisor.step(now, state, self.target, los, obstacle,
                                         self.nav_status, map_target=point,
                                         enabled=self.enabled, scan_valid=valid,
-                                        los_clear_wide=self.los_clear_wide)
+                                        los_clear_wide=self.los_clear_wide,
+                                        near_latched=self.control.near_latched)
         if (self.client is not None and self.supervisor.route_around
                 and decision.mode == 'DIRECT' and state == 'FOLLOWING'
                 and self.supervisor.los.blocked):
@@ -408,7 +411,8 @@ class FollowNode(Node):
                     and pose is not None and not self.drain.active
                     and not (guard_fresh and self.guard_state in ('STOP', 'STALE')))
             commanded_v, commanded_w = self.nav_guard.step(
-                nav_command, obstacle, self.rotation_clear, dt, safe=safe)
+                nav_command, obstacle, self.rotation_clear, dt, safe=safe,
+                near_latched=self.control.near_latched)
             # Relay the guarded Nav2 command on the higher-priority follow input.
             # Raw Nav2 must never bypass the front gate or command expiry.
             cmd = Twist()
@@ -434,12 +438,13 @@ class FollowNode(Node):
         distance = math.hypot(*self.target) if self.target is not None else math.nan
         bearing = math.atan2(self.target[1], self.target[0]) if self.target is not None else math.nan
         self.get_logger().info(
-            f'state={state} mode={self.supervisor.mode} distance={distance:.3f}m '
+            f'sim_time={now:.3f}s state={state} mode={self.supervisor.mode} distance={distance:.3f}m '
             f'bearing={bearing:.3f}rad command_v={v:.3f} command_w={w:.3f} cap_factor={factor:.3f} '
             f'front={obstacle:.3f}m target_age={age:.3f}s '
             f'nav_status={self.nav_status} nav_pending={self.goal_pending} '
             f'los_blocked={self.supervisor.los.blocked} drain={self.drain.active} '
-            f'rotation_clear={self.rotation_clear} limit={reason}')
+            f'rotation_clear={self.rotation_clear} near_latched={self.control.near_latched} '
+            f'near_clear_time={self.control.near_clear_time:.3f}s limit={reason}')
 
     def stop_before_shutdown(self):
         # SIGINT may already have invalidated the context. The independent

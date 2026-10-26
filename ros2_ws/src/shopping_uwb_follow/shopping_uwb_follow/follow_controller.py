@@ -227,9 +227,9 @@ class NavigationGuard:
         self.p = params
         self.v = self.w = 0.0
 
-    def step(self, command, obstacle, rotation_clear, dt, safe=True):
+    def step(self, command, obstacle, rotation_clear, dt, safe=True, *, near_latched=False):
         p = self.p
-        if (not safe or command is None or math.isnan(obstacle) or obstacle < 0
+        if (near_latched or not safe or command is None or math.isnan(obstacle) or obstacle < 0
                 or not all(math.isfinite(v) for v in (*command, dt)) or dt <= 0):
             self.v = self.w = 0.0
             return self.v, self.w

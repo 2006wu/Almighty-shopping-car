@@ -167,14 +167,15 @@ class HandoffSupervisor:
         self.last_goal, self.last_goal_time = tuple(map_target), now
 
     def step(self, now, state, target, los_clear, front_clearance, nav_status='none',
-             *, map_target=None, enabled=True, scan_valid=True, los_clear_wide=None):
+             *, map_target=None, enabled=True, scan_valid=True, los_clear_wide=None,
+             near_latched=False):
         """Targets are base-frame safety coordinates and map-frame goal coordinates."""
         action, reason = 'none', 'Direct following'
         previous = self.mode
         clock_reset = (not math.isfinite(now)
                        or self.last_time is not None and now < self.last_time)
         self.last_time = now
-        safe = (enabled and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
+        safe = (enabled and not near_latched and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
                 and valid_xy(target) and scan_valid
                 and not math.isnan(front_clearance) and front_clearance >= 0)
         if not safe or clock_reset:

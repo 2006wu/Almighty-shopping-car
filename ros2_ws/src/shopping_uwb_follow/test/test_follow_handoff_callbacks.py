@@ -729,3 +729,33 @@ def test_guard_stop_overrides_active_navigation_rotation(guard_state):
     output = node.publisher.publish.call_args.args[0]
     assert output.linear.x == output.angular.z == 0
     assert node.nav_guard.v == node.nav_guard.w == 0
+
+
+@pytest.mark.parametrize('guard_state', ['STOP', 'STALE', 'CLEAR'])
+def test_pass_through_cancels_navigation_and_keeps_near_latch(guard_state):
+    node = make_node()
+    node.rotation_clear = True
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    node.goal_response(completed(Mock(accepted=True)), node.goals.generation)
+    node.on_cmd_vel(NS(linear=NS(x=0.4), angular=NS(z=0.8)))
+    node.now = node.target_time = node.scan_time = 1.05
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].angular.z > 0
+    generation = node.goals.generation
+    for i, target in enumerate([(0.51, 0.01), (0.01, 0.01), (-0.39, 0.01),
+                                 (-0.59, 0.01), (-0.70, 0.01), (-0.80, 0.01)]):
+        node.now = node.target_time = node.scan_time = 1.1+i*0.05
+        node.guard_state, node.guard_time = guard_state, node.now
+        node.target = target
+        node.rotation_clear = True
+        node.last_nav_command = (node.now, 0.4, 0.8)
+        node.tick()
+        output = node.publisher.publish.call_args.args[0]
+        assert output.linear.x == output.angular.z == 0
+        assert node.control.near_latched and node.supervisor.mode == 'DIRECT'
+        assert node.nav_guard.v == node.nav_guard.w == 0
+        assert node.state.publish.call_args.args[0].data.startswith('TOO_CLOSE:')
+    node.goal_handle.cancel_goal_async.assert_called()
+    assert node.goals.generation == generation

@@ -3,7 +3,58 @@ import math
 
 import pytest
 
-from shopping_uwb_follow.follow_controller import ControllerParams, FollowController
+from shopping_uwb_follow.follow_controller import ControllerParams, FollowController, NavigationGuard
+from shopping_uwb_follow.follow_handoff import HandoffSupervisor
+
+
+@pytest.mark.parametrize('front', [0.593, math.inf])
+@pytest.mark.parametrize('sign', [-1, 1])
+def test_pass_through_stays_stopped_until_sustained_release(front, sign):
+    control = FollowController()
+    # The bearing flips behind the robot; a clear rotation disk is insufficient.
+    positions = [(0.51, 0.01), (0.23, 0.01), (0.01, 0.01),
+                 (-0.08, 0.01), (-0.39, 0.01), (-0.59, 0.01), (-0.70, 0.01)]
+    for x, y in positions:
+        assert control.step((x, sign*y), 0, front, 0.05,
+                            rotation_clear=True)[:3] == (0, 0, 'TOO_CLOSE')
+        assert control.near_latched
+    for _ in range(5):
+        assert control.step((-0.8, sign*0.01), 0, front, 0.05,
+                            rotation_clear=True)[:3] == (0, 0, 'TOO_CLOSE')
+    # A dip below the release margin restarts the sustained-clearance timer.
+    assert control.step((-0.70, sign*0.01), 0, front, 0.05,
+                        rotation_clear=True)[:2] == (0, 0)
+    for _ in range(5):
+        assert control.step((-0.8, sign*0.01), 0, front, 0.05,
+                            rotation_clear=True)[:2] == (0, 0)
+    v, w, state, _ = control.step((-0.8, sign*0.01), 0, front, 0.05,
+                                   rotation_clear=True)
+    assert not control.near_latched and v == 0 and sign*w > 0
+    assert state == ('FOLLOWING' if front == math.inf else 'OBSTACLE_STOP')
+
+
+@pytest.mark.parametrize('front', [0.593, math.inf])
+def test_navigation_guard_near_latch_stops_existing_rotation_immediately(front):
+    guard = NavigationGuard(ControllerParams())
+    assert guard.step((0.4, 0.8), front, True, 0.05)[1] > 0
+    for _ in range(10):
+        assert guard.step((0.4, 0.8), front, True, 0.05,
+                          near_latched=True) == (0, 0)
+        assert guard.v == guard.w == 0
+
+
+def test_near_latch_prevents_handoff_even_if_state_is_masked_by_guard():
+    supervisor = HandoffSupervisor()
+    for now in (0, 1, 2):
+        decision = supervisor.step(now, 'OBSTACLE_STOP', (3, 0), False, 0.4,
+                                   map_target=(3, 0), near_latched=True)
+        assert decision.mode == 'DIRECT' and decision.action == 'none'
+    supervisor.step(3, 'OBSTACLE_STOP', (3, 0), False, 0.4, map_target=(3, 0))
+    assert supervisor.step(4, 'OBSTACLE_STOP', (3, 0), False, 0.4,
+                           map_target=(3, 0)).action == 'send_goal'
+    decision = supervisor.step(4.05, 'OBSTACLE_STOP', (-0.5, 0.01), False, 0.4,
+                               'active', map_target=(-0.5, 0.01), near_latched=True)
+    assert decision.mode == 'DIRECT' and decision.action == 'cancel_goal'
 
 
 @pytest.mark.parametrize('bearing', [-1.35, -0.25, 0, 0.25, 1.35])
