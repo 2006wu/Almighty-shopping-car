@@ -115,7 +115,7 @@ def test_scan_sensor_limits():
 @pytest.mark.parametrize('field', list(vars(ControllerParams())))
 @pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf')])
 def test_controller_parameter_validation(field, value):
-    if value == 0 and field in ('velocity_feedforward', 'distance_hysteresis_enter',
+    if value == 0 and field in ('velocity_feedforward', 'distance_hysteresis_enter', 'distance_hysteresis_exit',
                                 'side_slow_clearance', 'side_sector_min',
                                 'side_min_speed_factor', 'los_uncertain_speed_factor'):
         FollowController(ControllerParams(**{field: value}))
@@ -131,6 +131,9 @@ def test_stop_boundaries_and_resume(target, age, obstacle, state):
     controller = FollowController()
     controller.step((3, 1), 0, 5, 0.1)
     assert controller.step(target, age, obstacle, 0.1)[:3] == (0, 0, state)
+    if state == 'TOO_CLOSE':
+        for _ in range(2):
+            assert controller.step((3, 0), 0.5, 5, 0.1)[:3] == (0, 0, 'TOO_CLOSE')
     v, w, actual, _ = controller.step((3, 0), 0.5, 5, 0.1)
     assert actual == 'FOLLOWING' and v == pytest.approx(0.04) and w == 0
 

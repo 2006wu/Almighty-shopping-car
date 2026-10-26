@@ -1,7 +1,10 @@
 import math
 import json
 
+import signal
+
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy._rclpy_pybind11 import RCLError
@@ -23,10 +26,9 @@ from .follow_controller import (
 )
 from .follow_handoff import (
     GoalBook, VelocityDrain, HandoffParams, HandoffSupervisor,
-    line_of_sight_clear, scan_valid, transform_xy, standoff_target,
+    line_of_sight_clear, scan_valid, transform_xy,
 )
 from .node_common import seconds
-from .estimator import TargetVelocityEstimator
 
 
 def planar_pose(transform):
@@ -47,10 +49,8 @@ class FollowNode(Node):
         self.rotation_clear = False
         self.monitor_odom = self.declare_parameter('monitor_odom', False).value
         self.odom_time = None
-        self.odom_pose = None
-        self.target_velocity = (0.0, 0.0)
-        self.velocity_estimator = TargetVelocityEstimator()
-        self.create_subscription(Odometry, '/odom', self.on_odom, 10)
+        if self.monitor_odom:
+            self.create_subscription(Odometry, '/odom', self.on_odom, 10)
         self.enabled = self.declare_parameter('enabled', False).value
         route_around = self.declare_parameter('route_around', True).value
         handoff = HandoffParams(follow_distance=params.follow_distance,
@@ -59,7 +59,7 @@ class FollowNode(Node):
             if key not in vars(defaults):
                 setattr(handoff, key, self.declare_parameter(key, value).value)
         self.supervisor = HandoffSupervisor(handoff, route_around)
-        self.robot_half_width = self.declare_parameter('robot_half_width', 0.4).value
+        self.robot_half_width = self.declare_parameter('robot_half_width', 0.25).value
         self.los_margin = self.declare_parameter('los_margin', 0.35).value
         if any(not math.isfinite(v) or v <= 0 for v in (self.robot_half_width, self.los_margin)):
             raise ValueError('LOS parameters must be positive and finite')
@@ -69,6 +69,7 @@ class FollowNode(Node):
         if route_around:
             self.client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.target = self.target_time = self.scan_time = self.scan = None
+        self.cached_map_goal = self.cached_map_goal_time = None
         self.los_clear_wide = False
         self.guard_state, self.guard_time = None, None
         self.create_subscription(String, '/safety/obstacle_state', self.on_guard, 10)
@@ -140,22 +141,12 @@ class FollowNode(Node):
 
     def on_odom(self, msg):
         self.odom_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
-        position, q = msg.pose.pose.position, msg.pose.pose.orientation
-        yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
-        self.odom_pose = (position.x, position.y, yaw)
 
     def on_target(self, msg):
         if msg.header.frame_id != 'base_link':
             return
         self.target = (msg.point.x, msg.point.y)
         self.target_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
-        if (self.odom_pose is not None and self.odom_time is not None
-                and -1e-9 <= self.target_time-self.odom_time <= 0.15):
-            self.target_velocity = self.velocity_estimator.update(
-                self.target, self.odom_pose, self.target_time)
-        else:
-            self.velocity_estimator.reset()
-            self.target_velocity = (0.0, 0.0)
 
     def on_scan(self, msg):
         self.scan = msg
@@ -177,7 +168,7 @@ class FollowNode(Node):
         self.rotation_clear = rotation_scan_clear(
             self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
             self.scan.range_min, self.scan.range_max, laser,
-            max(math.hypot(0.30, 0.25), self.robot_half_width)+0.05)
+            max(0.4, math.hypot(0.30, 0.25), self.robot_half_width)+0.05)
         return laser
 
     def map_goal_and_los(self):
@@ -190,14 +181,21 @@ class FollowNode(Node):
             robot = planar_pose(self.tf_buffer.lookup_transform(
                 'map', 'base_link', Time(seconds=self.target_time)))
         except TransformException:
-            return None, False
-        point = transform_xy(standoff_target(self.target, self.control.p.follow_distance), robot)
-        pose = PoseStamped()
-        pose.header.frame_id = 'map'
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x, pose.pose.position.y = point
-        yaw = robot[2]+math.atan2(self.target[1], self.target[0])
-        pose.pose.orientation.z, pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
+            stamp = getattr(self, 'cached_map_goal_time', None)
+            # TF and target messages arrive independently. Reuse only a matched
+            # map goal from the last two 10 Hz measurements, never refresh its age.
+            if stamp is None or not 0 <= seconds(self)-stamp <= 0.2:
+                return None, False
+            pose = self.cached_map_goal
+        else:
+            point = transform_xy(self.target, robot)
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x, pose.pose.position.y = point
+            yaw = robot[2]+math.atan2(self.target[1], self.target[0])
+            pose.pose.orientation.z, pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
+            self.cached_map_goal, self.cached_map_goal_time = pose, self.target_time
         scan = self.scan
         los = line_of_sight_clear(scan.ranges, scan.angle_min, scan.angle_increment,
                                   transform_xy(self.target, laser), self.robot_half_width,
@@ -324,21 +322,24 @@ class FollowNode(Node):
         else:
             self.update_rotation_clearance()
         p = self.control.p
+        guard_fresh = (getattr(self, 'guard_time', None) is not None
+                       and 0 <= now-self.guard_time < 0.5)
         clearance = (side_clearance(scan.ranges, scan.angle_min, scan.angle_increment,
                                     p.side_sector_min, p.side_sector_max) if valid else math.nan)
         factor = side_speed_factor(clearance, p.side_slow_clearance,
                                    p.side_free_clearance, p.side_min_speed_factor)
+        if guard_fresh and self.guard_state in ('CLEAR', 'SLOW'):
+            # The downstream swept-footprint guard already scales this command;
+            # applying the fallback side cap too makes a moving target outrun us.
+            factor = 1.0
         if self.client is not None and not los:
-            # Independent speed caps should not compound into a smaller cap.
-            factor = min(factor, p.los_uncertain_speed_factor)
+            # Preserve the fallback slowdown when LOS is uncertain.
+            factor *= p.los_uncertain_speed_factor
         v, w, state, reason = self.control.step(
             self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
             rotation_clear=(valid and self.rotation_clear
                             and (not self.supervisor.route_around or self.client is None
-                                 or not self.client.server_is_ready())),
-            target_velocity=(getattr(self, 'target_velocity', (0.0, 0.0))
-                             if getattr(self, 'odom_time', None) is not None and 0 <= now-self.odom_time <= 0.15
-                             else (0.0, 0.0)))
+                                 or not self.client.server_is_ready())))
         dt = now-self.last_time
         self.last_time = now
         if (not self.enabled and not self.busy()
@@ -346,8 +347,6 @@ class FollowNode(Node):
             self.diagnose(now, 'IDLE', 0.0, 0.0, 'Disabled', factor, obstacle, age)
             self.state.publish(String(data='IDLE: Disabled'))
             return
-        guard_fresh = (getattr(self, 'guard_time', None) is not None
-                       and 0 <= now-self.guard_time < 0.5)
         if guard_fresh and self.guard_state in ('STOP', 'STALE'):
             v = w = 0.0
             self.control.v = self.control.w = 0.0
@@ -406,7 +405,8 @@ class FollowNode(Node):
                            else None)
             safe = (valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
                     and decision.mode == 'NAV2' and self.nav_status == 'active'
-                    and pose is not None and not self.drain.active)
+                    and pose is not None and not self.drain.active
+                    and not (guard_fresh and self.guard_state in ('STOP', 'STALE')))
             commanded_v, commanded_w = self.nav_guard.step(
                 nav_command, obstacle, self.rotation_clear, dt, safe=safe)
             # Relay the guarded Nav2 command on the higher-priority follow input.
@@ -453,14 +453,14 @@ class FollowNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     node = FollowNode()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
+    except KeyboardInterrupt:
         pass
     finally:
         node.stop_before_shutdown()
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()

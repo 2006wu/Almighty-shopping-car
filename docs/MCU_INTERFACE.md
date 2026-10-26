@@ -87,3 +87,7 @@ header stamp 與 frame 由 PC 收到有效訊框時重建；這不是 MCU 時鐘
 ## 未來實車 EKF 接法（尚未啟用）
 
 另建明確 opt-in 的硬體 launch：先將 `/mcu/wheel_state` 換算成帶 covariance 的輪式 Odometry，將 `/mcu/imu` 接到實車 EKF 輸入，停止 Gazebo 同類輸入。不能把 JointState 直接餵 robot_localization；須先處理重啟跳點、減速比、符號、校正、時間同步與失效 covariance。維持 EKF 唯一發布 odom → base_footprint，AMCL／slam_toolbox 二選一發布 map → odom，robot_state_publisher 負責車體 TF。這次沒有改 EKF、加入硬體 launch 或控制真實馬達。
+
+## Linux XRCE-DDS 子集
+
+`firmware/sim_client` 以 C／rclc 經 UDP agent 實作 command、兩向 heartbeat、wheel、status；常數由本契約與 description xacro 產生。沒有 encoder、IMU、MCU 按鈕鎖定／reset 或 `/mcu/estop`，因此不宣稱符合完整板端契約。只用於獨立、壁鐘時間的 `dev.sh comm-e2e-up`／`comm-e2e-check`，不能接入實車或當作 Gazebo 底盤控制。完整測試與限制見 [micro-ROS 入門](MICROROS_GUIDE.md)。

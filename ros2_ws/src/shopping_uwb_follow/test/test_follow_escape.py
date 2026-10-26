@@ -107,18 +107,14 @@ def test_navigation_guard_limits_speed_acceleration_and_no_reverse():
     assert guard.step((0.5, 1), 2, True, 0) == (0, 0)
 
 
-def test_success_keeps_navigation_and_refreshes_without_cancel_churn():
+def test_success_returns_direct_without_refreshing_a_completed_goal():
     supervisor = HandoffSupervisor()
     args = dict(state='OBSTACLE_STOP', target=(3, 0), los_clear=False,
-                front_clearance=0.607, map_target=(2, 0))
+                front_clearance=0.607, map_target=(3, 0))
     supervisor.step(0, **args)
     assert supervisor.step(1, **args).action == 'send_goal'
-    for t in range(2, 120):
-        result = supervisor.step(t, nav_status='succeeded', **args)
-        assert result.mode == 'NAV2' and result.action == 'update_goal'
-    # An already-close person does not trigger a success resend loop either.
-    args['target'] = (1.1, 0)
-    assert supervisor.step(120, nav_status='succeeded', **args).action == 'none'
+    result = supervisor.step(2, nav_status='succeeded', **args)
+    assert result.mode == 'DIRECT' and result.action == 'cancel_goal'
 
 
 def test_synthetic_costmap_turn_escapes_a_fixed_shelf_in_closed_loop():

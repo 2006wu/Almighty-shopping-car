@@ -39,7 +39,7 @@ WORLD_FILE = ROOT/'ros2_ws/src/shopping_robot_gazebo/worlds/supermarket.sdf'
 def load_inputs():
     path = yaml.safe_load(PATH_FILE.read_text())
     config = yaml.safe_load(PARAM_FILE.read_text())['/**']['ros__parameters']
-    return path, ControllerParams(**{k: config[k] for k in vars(ControllerParams())})
+    return path, ControllerParams(**{k: config.get(k, v) for k, v in vars(ControllerParams()).items()})
 
 
 class LegacyController(FollowController):
@@ -123,6 +123,10 @@ def simulate(path=None, params=None, *, legacy=False, world=False, duration=None
     path, params = path or default_path, params or default_params
     if not acceleration:
         params = replace(params, max_linear_accel=1e6, max_angular_accel=1e6)
+    # Preserve the historical feedforward experiment independently of runtime defaults.
+    if not legacy:
+        params = replace(params, velocity_feedforward=1.0,
+                         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08)
     controller = (LegacyController if legacy else FollowController)(params)
     mux, limiter, watchdog = VelocityMux(), VelocityLimiter(), OutputWatchdog()
     filt, velocity_filter = TargetFilter(), TargetVelocityEstimator()

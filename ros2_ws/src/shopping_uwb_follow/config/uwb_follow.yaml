@@ -12,6 +12,9 @@
     lost_timeout: 0.5
     follow_distance: 1.0
     stop_distance: 0.6
+    # Stop immediately; require sustained clearance before any translation or turn.
+    stop_release_margin: 0.15
+    stop_release_time: 0.3
     obstacle_stop_distance: 0.65
     obstacle_stop_rotate: true
     max_linear: 0.5
@@ -20,9 +23,9 @@
     max_angular_accel: 1.5
     kp_distance: 0.7
     kp_bearing: 1.5
-    velocity_feedforward: 1.0
-    distance_hysteresis_enter: 0.04
-    distance_hysteresis_exit: 0.08
+    # Turn in place before approaching a target around a shelf corner.
+    rotate_to_target_min_angle: 0.7853981633974483
+    rotate_to_target_release_angle: 0.25
     enabled: false
     route_around: true
     handoff_margin: 0.3
@@ -31,12 +34,9 @@
     goal_update_distance: 0.4
     goal_update_period: 0.5
     clear_margin: 0.15
-    # Release a detour only near the person and aligned with the direct path.
     resume_delay: 0.5
-    resume_max_bearing: 0.25
     retry_cooldown: 3.0
-    # Cover the rotating 0.60 x 0.50 m footprint (circumradius 0.391 m).
-    robot_half_width: 0.4
+    robot_half_width: 0.25
     # Exclude the 0.25 m person radius plus estimation allowance at the endpoint.
     los_margin: 0.35
     # LOS persistence uses seconds; spatial release margin uses metres.

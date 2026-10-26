@@ -132,7 +132,6 @@ class HandoffParams:
     los_block_time: float = 0.3
     los_clear_time: float = 0.6
     los_clear_extra_width: float = 0.10
-    resume_max_bearing: float = 0.25
     min_nav_hold: float = 1.5
     min_direct_hold: float = 1.0
 
@@ -155,8 +154,6 @@ class HandoffSupervisor:
             raise ValueError('Handoff parameters must be finite and within their positive/nonnegative bounds')
         if not isinstance(route_around, bool):
             raise ValueError('route_around must be boolean')
-        if self.p.resume_max_bearing > math.pi/2:
-            raise ValueError('Resume bearing must be at most pi/2')
         self.los = LosDebouncer(self.p.los_block_time, self.p.los_clear_time)
         self.nav_since = self.direct_since = None
         self.route_around = route_around
@@ -194,27 +191,23 @@ class HandoffSupervisor:
                 self.direct_since = self.nav_since = None
             reason = 'Direct only or safety stop'
         elif self.mode == 'NAV2':
-            close = math.hypot(*target) <= self.p.follow_distance+self.p.handoff_margin
-            aligned = abs(math.atan2(target[1], target[0])) <= self.p.resume_max_bearing
-            # Do not abandon a detour just because the person becomes visible:
-            # the direct controller can still cut the corner or be speed-limited.
-            clear = (los_clear and close and aligned
-                     and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin)
+            distance = math.hypot(*target)
+            close = distance <= self.p.follow_distance+self.p.handoff_margin
+            clear = close and los_clear and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin
             self.clear_since = (now if self.clear_since is None else self.clear_since) if clear else None
             if nav_status in ('failed', 'canceled') or not valid_xy(map_target):
                 self.mode = 'DIRECT'
                 self.retry_after = now+self.p.retry_cooldown
                 reason = 'Navigation failed or map transform unavailable'
-            elif (now-self.nav_since >= self.p.min_nav_hold
-                  and self.clear_since is not None
-                  and now-self.clear_since >= self.p.resume_delay):
+            elif (nav_status == 'succeeded'
+                  or now-self.nav_since >= self.p.min_nav_hold
+                  and (los_clear and distance <= self.p.follow_distance or self.clear_since is not None
+                       and now-self.clear_since >= self.p.resume_delay)):
                 self.mode = 'DIRECT'
-                reason = 'Close aligned direct path sustained'
-            elif (now-self.last_goal_time >= self.p.goal_update_period
-                  and (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
-                       or nav_status == 'succeeded'
-                       and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin)):
-                action, reason = 'update_goal', 'Refresh moving standoff goal'
+                reason = 'Direct path restored or navigation succeeded'
+            elif (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
+                  and now-self.last_goal_time >= self.p.goal_update_period):
+                action, reason = 'update_goal', 'Person moved in map frame'
             else:
                 reason = 'Navigation owns velocity'
         else:

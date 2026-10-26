@@ -45,17 +45,25 @@ def test_apt_environment_does_not_mutate_or_retain_fork():
     assert '/nav2_ws/' in original['AMENT_PREFIX_PATH']
 
 
-def test_apt_launch_reexec_isolates_binaries_and_forwards_arguments(monkeypatch):
+@pytest.mark.parametrize('spawn', [{}, dict(spawn_x='-2.4', spawn_y='0', spawn_yaw='1.5707963267948966')])
+def test_apt_launch_reexec_isolates_binaries_and_forwards_arguments(monkeypatch, spawn):
     monkeypatch.setenv('AMENT_PREFIX_PATH', '/nav2_ws/install/nav2_msgs:/opt/ros/humble')
     env = load('shopping_robot_navigation/launch/navigation.launch.py')
     actions = env['start'](dict(nav2_stack='apt', use_mux='true', slam_mode='map_server',
-                               map='/ws/map with spaces.yaml', use_sim_time='true'))
+                               map='/ws/map with spaces.yaml', use_sim_time='true',
+                               rpp_desired_speed='0.5', **spawn))
     process = actions[-1]
     assert process.kind == 'ExecuteProcess'
     assert 'map:=/ws/map with spaces.yaml' in process.cmd
+    assert 'rpp_desired_speed:=0.5' in process.cmd
     assert '/nav2_ws/' not in process.env['AMENT_PREFIX_PATH']
     assert 'local_setup.bash' in process.cmd[2]
     assert 'exec ros2 launch' in process.cmd[2]
+    for name in ('spawn_x', 'spawn_y', 'spawn_yaw'):
+        if name in spawn:
+            assert f'{name}:={spawn[name]}' in process.cmd
+        else:
+            assert not any(arg.startswith(name+':=') for arg in process.cmd)
 
 
 def test_fork_params_and_tree():
@@ -110,8 +118,10 @@ def test_fork_params_and_tree():
         assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
         for key in fork_only:
             layer.pop(key)
-    for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator'}:
+    for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator', 'planner_server'}:
         assert apt[key] == params[key]
+    assert apt['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
+    assert params['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
     assert 'behavior_trees' in (NAV/'CMakeLists.txt').read_text()
     for path in (NAV/'config').glob('*.yaml'):
         for node in yaml.safe_load(path.read_text()).values():

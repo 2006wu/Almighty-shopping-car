@@ -56,7 +56,13 @@ class LocalizationCheck(ExperimentNode):
             msg = PoseWithCovarianceStamped()
             msg.header.frame_id = 'map'
             msg.header.stamp = self.get_clock().now().to_msg()
-            msg.pose.pose.orientation.w = 1.0
+            from shopping_robot_sim.scenarios import load_scenario
+            config = get_package_share_directory('shopping_robot_gazebo')+'/config'
+            pose = load_scenario(config, self.parameter('scenario', 'default'))['robot_pose']
+            msg.pose.pose.position.x = float(pose['x'])
+            msg.pose.pose.position.y = float(pose['y'])
+            msg.pose.pose.orientation.z = math.sin(pose['yaw']/2)
+            msg.pose.pose.orientation.w = math.cos(pose['yaw']/2)
             msg.pose.covariance[0] = 0.01
             msg.pose.covariance[7] = 0.01
             msg.pose.covariance[35] = math.radians(2)**2
@@ -78,7 +84,7 @@ class LocalizationCheck(ExperimentNode):
                 age = (self.get_clock().now().nanoseconds-key)/1e9
                 if key in seen or key == 0 or not -0.1 <= age <= 0.5 or time.monotonic()-received > 0.5:
                     continue
-                # Truth shares the map's spawn origin/yaw, even without a connecting TF.
+                # Truth shares the standard map's fixed world origin/yaw, even without a connecting TF.
                 # Do not transform truth with map->odom: that would mask localization error.
                 validate_truth_frames(msg.header.frame_id, msg.child_frame_id)
                 try:

@@ -131,9 +131,11 @@ def test_nav_hold_and_debounced_close_return():
 
 def test_direct_hold_and_continuously_blocked_exception():
     s = nav()
-    # Success retains navigation despite a hidden person and an expired goal.
-    assert step(s, 1, nav_status='succeeded').mode == 'NAV2'
-    assert step(s, 1.52, nav_status='succeeded').action == 'update_goal'
+    # Terminal success bypasses the NAV2 hold, while LOS is still blocked.
+    assert step(s, 1, nav_status='succeeded').action == 'cancel_goal'
+    step(s, 1.01)
+    # Continuous debounced blockage since 0.3 permits a new handoff early.
+    assert step(s, 1.52).action == 'send_goal'
     s = nav()
     clear = dict(los_clear=True, los_clear_wide=True, target=(1.3, 0))
     step(s, 1, **clear)
@@ -145,21 +147,68 @@ def test_direct_hold_and_continuously_blocked_exception():
     assert step(s, 3.32).action == 'send_goal'
 
 
+def test_clear_line_of_sight_does_not_release_navigation_before_catching_up():
+    s = nav()
+    clear = dict(los_clear=True, los_clear_wide=True, target=(4, 0))
+    for t in (1, 2, 3, 5, 10):
+        assert step(s, t, **clear).mode == 'NAV2'
+    clear['target'] = (1.3, 0)
+    assert step(s, 10.1, **clear).mode == 'NAV2'
+    assert step(s, 10.61, **clear).action == 'cancel_goal'
+
+
 @pytest.mark.parametrize('override', [dict(state='LOST'), dict(state='TOO_CLOSE'),
     dict(state='IDLE'), dict(enabled=False), dict(scan_valid=False),
     dict(front_clearance=math.nan), dict(nav_status='failed'),
-    dict(nav_status='canceled')])
+    dict(nav_status='canceled'), dict(nav_status='succeeded')])
 def test_safety_and_terminal_events_bypass_minimum_nav_hold(override):
     s = nav()
     assert step(s, 0.81, **override).action == 'cancel_goal'
 
 
-def test_uncertain_slowdown_caps_speed_without_scaling_feedback_gain():
+def test_uncertain_slowdown_also_applies_below_speed_limit():
     s = FollowController()
     for _ in range(50):
         result = s.step((1.2, 0), 0, 3, 0.05, speed_factor=0.6)
-    assert result[0] == pytest.approx(0.7*0.2)
-    for _ in range(50):
-        result = s.step((4, 0), 0, 3, 0.05, speed_factor=0.6,
-                        target_velocity=(0.35, 0))
-    assert result[0] == pytest.approx(0.5*0.6)
+    assert result[0] == pytest.approx(0.7*0.2*0.6)
+
+
+def test_near_stop_latches_both_axes_through_range_noise_and_fresh_recovery():
+    controller = FollowController()
+    for _ in range(20):
+        controller.step((3, 1), 0, math.inf, .05)
+    assert controller.step((.5, .1), 0, math.inf, .05)[:3] == (0., 0., 'TOO_CLOSE')
+    for distance in (.61, .74, .72, .65)*5:
+        assert controller.step((0, distance), 0, math.inf, .05)[:3] == (0., 0., 'TOO_CLOSE')
+    for _ in range(4):
+        assert controller.step((0, 1.2), 0, math.inf, .05)[:3] == (0., 0., 'TOO_CLOSE')
+    assert controller.step(None, 1, math.inf, .05)[:3] == (0., 0., 'LOST')
+    for _ in range(5):
+        assert controller.step((0, 1.2), 0, math.inf, .05)[:3] == (0., 0., 'TOO_CLOSE')
+    assert controller.step((0, 1.2), 0, math.inf, .05)[2] == 'FOLLOWING'
+
+
+def test_invalid_dt_cannot_release_near_stop_or_count_missing_time():
+    controller = FollowController()
+    controller.step((.4, 0), 0, math.inf, .05)
+    for dt in (float('nan'), float('inf'), -1, 0):
+        assert controller.step((2, 1), 0, math.inf, dt)[:3] == (0., 0., 'TOO_CLOSE')
+    assert controller.step((2, 1), 0, math.inf, 100)[:3] == (0., 0., 'TOO_CLOSE')
+
+
+def test_target_corner_alignment_has_hysteresis_and_preserves_acceleration_limits():
+    controller = FollowController()
+    for _ in range(20):
+        controller.step((3, 0), 0, math.inf, .05)
+    old = controller.v
+    for _ in range(30):
+        v, w, state, reason = controller.step((1, 2), 0, math.inf, .05)
+        assert state == 'FOLLOWING' and 0 <= old-v <= .4*.05+1e-10
+        assert w > 0
+        old = v
+    assert v == 0
+    for _ in range(10):
+        assert controller.step((2, 1), 0, math.inf, .05)[0] == 0
+    v, w, state, _ = controller.step((3, .1), 0, math.inf, .05)
+    assert state == 'FOLLOWING' and 0 < v <= .4*.05+1e-10
+    assert controller.step((.1, .2), 0, math.inf, .05)[:3] == (0., 0., 'TOO_CLOSE')

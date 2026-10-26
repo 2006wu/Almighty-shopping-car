@@ -65,7 +65,8 @@ def settle(controller, distance, velocity=(0, 0), factor=1):
 
 
 def test_feedforward_target_motion_and_physical_speed_cap():
-    control = FollowController()
+    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+        distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     assert settle(control, 1, (0.35, 0))[0] == pytest.approx(0.35)
     assert settle(control, 1)[0] == 0
     assert settle(control, 4, (100, 0), 0.4)[0] == pytest.approx(0.2)
@@ -74,7 +75,8 @@ def test_feedforward_target_motion_and_physical_speed_cap():
 
 
 def test_distance_hysteresis_retains_feedforward_but_suppresses_chatter():
-    control = FollowController()
+    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+        distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     assert settle(control, 1.03, (0.3, 0))[0] == pytest.approx(0.3)
     assert control.holding_distance
     assert settle(control, 1.06, (0.3, 0))[0] == pytest.approx(0.3)
@@ -92,7 +94,8 @@ def test_distance_hysteresis_retains_feedforward_but_suppresses_chatter():
     ({'obstacle': math.nan}, 'OBSTACLE_STOP'), ({'target': None}, 'LOST'),
     ({'age': 0.51}, 'LOST'), ({'enabled': False}, 'IDLE')])
 def test_feedforward_never_bypasses_safety(override, state):
-    control = FollowController()
+    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+        distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     settle(control, 2, (0.4, 0))
     args = dict(target=(2, 1), age=0, obstacle=math.inf, dt=0.05,
                 target_velocity=(0.6, 0.4))
@@ -150,7 +153,8 @@ def test_realistic_browsing_pace_exposes_sustained_narrow_cap_lag():
 
 
 def test_controller_reports_active_limits_without_changing_safety_reason():
-    control = FollowController()
+    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+        distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     result = control.step((4, 1), 0, math.inf, 0.05, speed_factor=0.4)
     assert 'speed cap' in result[3] and 'linear acceleration' in result[3]
     result = control.step((1, 1), 0, math.inf, 0.05)

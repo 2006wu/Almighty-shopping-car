@@ -8,15 +8,23 @@
 
 目標展示為 **12 × 10 公尺的小型模擬商店**，配置恰好四排貨架、三條貨架間走道（各寬 1.6 公尺）、入口與結帳區，另有四個不對稱地標（端架、柱子、冷藏櫃、展示台），避免 SLAM 把相同的走道互相誤認。這是畢業專題的模擬展示場景。機器人出生姿態為世界座標 `(x, y, z, yaw) = (0, 0, 0.02, 0)`，朝向正 x；地面穩定後 base_footprint 接近 z = 0。以此初始原點建立 `odom`／`map`，六個區域目標使用與世界相同的平面座標，既有外部地圖須先對齊，不能直接套用。
 
-## 2027 年 1 月在 Mac 上執行
+## 選用角色容器
+
+預設維持 `compute`＋`display`。要驗證容器拆分，先執行 `./scripts/dev.sh build compute display`、`./scripts/dev.sh colcon-build`，再執行 `./scripts/dev.sh split-up guide headless:=true`；用 `split-status` 查看狀態、`split-logs navigation` 看日誌、`nav-check --case-timeout 180` 檢查導航，最後 `split-down`。也支援 `split-up follow`，沿用 `nav2_stack:=apt|auto|fork`。
+
+`split` 分別啟動 sim、localization、navigation、app 與既有 display；comm、record 另外明確選用。所有服務共用 compute 網路命名空間與 UDP-only DDS，適用 Mac arm64／Linux。`split-up` 會先停止同一專案的既有服務，避免重複控制節點；切換前先結束錄製工作。Mac 日常開發優先使用預設單容器模式，驗證拆分時保持 headless、暫不啟用額外 profiles。角色表、主題流向、限制與完整維護者驗收命令見 [容器操作說明](docs/CONTAINERS.md)。
+
+## 在 Mac Apple Silicon 與 Linux 上執行
 
 先安裝並啟動 Docker Desktop，確認 `docker compose version` 可用，並預留足夠記憶體供 Gazebo 軟體繪圖。以下指令可以直接在 fish 執行；腳本會由 Bash 解譯，不必修改 fish 設定，也不需在 macOS 安裝 ROS。
 
 ```fish
 git clone https://github.com/2006wu/Almighty-shopping-car.git
 cd Almighty-shopping-car
+git switch develop
+cp .env.example .env
 set -gx VNC_PASSWORD myshop42
-./scripts/dev.sh build
+./scripts/dev.sh build compute display
 ./scripts/dev.sh colcon-build
 ./scripts/dev.sh test
 ./scripts/dev.sh up
@@ -32,6 +40,8 @@ set -gx VNC_PASSWORD myshop42
 ```
 
 瀏覽器開啟 <http://localhost:6080/vnc.html>，輸入相同 VNC 密碼。RViz 預設固定座標為 `odom`，純跟隨也可顯示；使用 Nav2 時請在 Global Options 將 Fixed Frame 切成 `map`。
+
+若連接埠已有其他專案使用，修改根目錄 `.env` 的 `NOVNC_HOST_PORT` 與 `VNC_HOST_PORT`，例如 `6081`／`5970`，再執行 `dev.sh up`。`dev.sh` 從任何工作目錄都會載入這份檔案；服務啟動後，`dev.sh novnc` 顯示實際連接位址。Linux Bash 使用相同指令，將 `set -gx VNC_PASSWORD myshop42` 改為 `export VNC_PASSWORD=myshop42`。一般開發不需建置選用的 micro-ROS C client，只有 `comm-e2e-up` 才會啟用。
 
 ### 自動建圖與離線定位檢查
 
@@ -81,7 +91,7 @@ ros2 run shopping_zone_manager map_tour --ros-args -p use_sim_time:=true -p map_
 ros2 run shopping_zone_manager localization_check --ros-args -p use_sim_time:=true -p report_file:=/tmp/localization_check.json
 ```
 
-巡航、定位檢查、`goto`、`/shopping/goto_zone`、跟隨與鍵盤控制必須互斥操作；尚無模式管理器或速度仲裁。`map → odom` 在每次啟動時只由所選 slam_toolbox 或 AMCL 發布。定位用解析度、雷射上限及座標框架與 mapper 一致；slam_toolbox 保留 `map_start_at_dock: true`，從出生點的第一筆建圖掃描開始，不同時設定優先權更高的 `map_start_pose`（[Humble 實作](https://github.com/SteveMacenski/slam_toolbox/blob/humble/src/slam_toolbox_common.cpp)）。AMCL 使用 `(0,0,0)` 初始姿態，檢查工具的 `publish_initial_pose` 會在移動前另外發布 `/initialpose`。本次未調整控制器與規劃器，也尚未執行這套巡航及兩種離線定位的 ROS／Gazebo 驗收。
+巡航、定位檢查、`goto`、`/shopping/goto_zone`、跟隨與鍵盤控制必須互斥操作；尚無模式管理器或速度仲裁。`map → odom` 在每次啟動時只由所選 slam_toolbox 或 AMCL 發布。定位用解析度、雷射上限及座標框架與 mapper 一致；單獨的 slam_toolbox launch 保留 `map_start_at_dock: true`；情境 bringup 則以選定起點的 `map_start_pose` 覆寫定位起點（[Humble 實作](https://github.com/SteveMacenski/slam_toolbox/blob/humble/src/slam_toolbox_common.cpp)）。AMCL 由情境初始化節點發布選定的世界／標準地圖起點（default 為 `(0,0,0)`），檢查工具的 `publish_initial_pose` 可在移動前再次發布相同起點。本次未調整控制器與規劃器，也尚未執行這套巡航及兩種離線定位的 ROS／Gazebo 驗收。
 
 導航就緒後，從另一個終端機送出目標：
 
@@ -243,6 +253,56 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 
 ## 安全與驗證狀態
 
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。直接跟隨時，前方有效障礙讀值不超過 0.65 公尺，`OBSTACLE_STOP` 立即將線速度固定為零。`obstacle_stop_rotate` 預設啟用；僅在未啟用繞行或 Nav2 不可用、目標新鮮、雷射有效且 TF 與完整 360° 掃描確認至少 0.45 公尺旋轉圓盤淨空時，允許依原角速度／角加速度上限朝人物轉向；條件不符或參數關閉時輸出完整零 Twist。過近停止須人物距離持續大於 0.75 公尺達 0.3 秒才解除；前方清空後，若方位誤差仍達 45°，會先依原加速度限制減速並原地對準，直到誤差不超過 0.25 rad 才恢復平移。啟用繞行時仍可交由 Nav2 規劃，輸出經障礙安全層與 watchdog。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+
+跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
+
+跟隨模式可將持續受阻的有效目標交給 Nav2 繞行。一般 LOS 走廊半寬為 0.25 公尺；連續受阻 0.3 秒才進入 `BLOCKED_WAIT`，此前維持 `FOLLOWING` 並減速。已判定受阻後，須以加寬至 0.35 公尺的走廊連續暢通 0.6 秒才能解除，避免貨架末端的雷射擦邊反覆停車。人物距離超過 1.3 公尺且判定受阻再持續 0.5 秒後交接；前方障礙停止仍立即生效，不等待 LOS 計時。`/follow/state` 發布 `STATE: 原因`，`/follow/handoff_goal` 為人物 map 座標的 PoseStamped，可加入 RViz。
+
+NAV2 至少保持 1.5 秒；之後須 LOS 遲滯確認暢通、人物距離不超過 1.3 公尺、前方淨空大於 0.8 公尺，並持續 0.5 秒才恢復 DIRECT。人物已在 1.0 公尺跟隨距離內時，可略過額外 0.5 秒，仍須 LOS 確認與最短保持時間。導航成功／失敗／取消或安全事件可立即結束保持時間。恢復 DIRECT 後至少保持 1 秒才再次交接；若 LOS 已連續判定受阻達 1 秒，可提前交接，但仍須滿足受阻交接延遲。導航中停止直接追逐，由跟隨節點轉送經安全檢查的 Nav2 命令；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。apt Smac2D 與 fork NavFn 的容差皆為 0.8 公尺，目標未偏移；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。
+
+新增的 `uwb_follow.yaml`／節點參數如下；時間單位為秒、距離為公尺、角度為弧度。LOS 與保持時間及額外寬度接受有限非負值；減速比例限於 0～1，側向角度須滿足 `0 <= min < max <= pi`，側向距離須滿足 `0 <= slow < free`。
+
+| 參數 | 預設值 | 用途 |
+| --- | --- | --- |
+| `los_block_time`／`los_clear_time` | 0.3／0.6 | 受阻／暢通連續確認時間；時間倒退重設 |
+| `los_clear_extra_width` | 0.10 | 已受阻時恢復所需的額外走廊半寬 |
+| `los_uncertain_speed_factor` | 0.6 | 原始 LOS 受阻但尚未確認時的線速度倍率 |
+| `min_nav_hold`／`min_direct_hold` | 1.5／1.0 | 導航／直接模式最短保持時間 |
+| `side_sector_min`／`side_sector_max` | 0.523599／1.745329 | 左右各 30°～100° 的側向扇區 |
+| `side_slow_clearance`／`side_free_clearance` | 0.35／0.75 | 最小側向淨空的減速／全速門檻 |
+| `side_min_speed_factor` | 0.4 | 淨空不超過減速門檻時的最低線速度倍率 |
+
+側向淨空取雷射回波的最小 `range * abs(sin(angle))`；兩門檻間線性插值，缺少側向涵蓋時採最低倍率。側向與 LOS 倍率相乘，套用在線速度及其上限，仍受既有加速度限制。直接上限 0.5 m/s 已高於人物 0.35 m/s，且等於 Nav2 velocity_smoother 上限，因此本次不提高。比例控制 `kp_distance=0.7` 在無減速、正前方等速追蹤時本來就有約 0.5 公尺的穩態距離誤差；不能把 1.0 公尺設定解讀為動態距離保證。遲滯及側向減速可能延後恢復或追近，須比較下一輪 240 秒模擬的真實距離及切換率，尚未驗證改善幅度。
+
+可直接分析 `ros2 topic echo /follow/state` 文字紀錄，不需 rosbag：
+
+```bash
+python3 scripts/follow_state_stats.py follow-state.log
+python3 scripts/follow_state_stats.py follow-state.log --sample-period 0.05
+```
+
+工具解析 `data: STATE: 原因` 或 `state: STATE` 紀錄，可在同一行前綴 `[秒數]` 或 `秒數 `。有時間戳時須有限且嚴格遞增；無時間戳時依序假設每筆 0.05 秒（20 Hz），遺漏樣本或僅記錄狀態變更時須提供時間戳，否則每分鐘切換率與停留時間僅為估算。混用有／無時間戳會拒絕分析。輸出切換總數、每分鐘切換率與各狀態停留次數／總計／平均／最小／最大秒數；首尾停留區間只計算觀測範圍，最後一筆不外推。亦可呼叫 ROS-free 的 `follow_metrics.state_statistics([(t, state), ...])`。
+
+guide／follow 預設啟用全域模式管理、速度仲裁與獨立輸出看門狗，操作方式見下節；一次只啟動一個 bringup，跟隨期間仍不可另外送出 Nav2 目標，以免干擾跟隨自行管理的導航動作。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
+
+純 Python 測試可在容器執行（`./scripts/dev.sh test`），也可在任何已安裝 pytest、pyyaml、xacro 的 Python 3.10 環境執行：
+
+```bash
+python3 -m pytest -q
+./scripts/run_unit_tests.sh python3
+python3 scripts/check_static.py
+```
+
+此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
+
+[模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
+
+本次合併保留 develop 的 Smac2D、YAML 數值、人物模型服務與 Nav2 交接規則。一般與加寬 LOS 的檢查長度在人物距離大於跟隨距離時改為 `distance - max(los_margin, follow_distance)`；近距離仍檢查到 `distance - los_margin`。`route_around:=false` 也建立雷射到車體的 TF listener，旋轉判定不需要 map 或真值。下列舊分支設計僅保留歷史脈絡，與本段衝突時以本段及目前設定為準。
+
+<details>
+<summary>合併前 follow-los 分支設計紀錄</summary>
+
 所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；follow 僅接受 `use_mux:=true`；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，直接控制器的 `OBSTACLE_STOP` 立即輸出完整零 Twist，包含角速度。交接至 Nav2 後仍禁止前進，但完整雷射與 TF 確認車體旋轉淨空時，可轉送 Nav2 的限速角速度，讓車體轉離貨架；淨空不足或未知仍雙軸停止。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
@@ -311,6 +371,8 @@ python3 scripts/check_static.py
 
 [模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
 
+</details>
+
 ## rosbag 記錄與離線報告（僅模擬）
 
 先在既有 compute 容器執行 `./scripts/dev.sh colcon-build`，重新啟動 launch。在另一個終端機錄製；固定清單位於 `shopping_zone_manager/config/record_topics.yaml`，預設不錄 `/scan`、TF 或 action 服務。輸出 `bags/NAME/` 由 `/repo` 掛載回主機，已加入 Git 忽略清單，不會覆寫既有 bag。
@@ -373,7 +435,7 @@ ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eva
 | 濾波延遲 | 相對位置向量最佳時間位移，絕對值 <0.3 s；`--latency-limit` 可改 |
 | 直線／轉彎追蹤 | 共用人物路徑在前後各 0.5 s 的航向變化率 >0.3 rad/s 視為轉彎；各類至少 10 筆真值，真實距離減 `follow_distance` 的 RMSE <1.5 m（`--tracking-limit`）；另列距離及估測位置誤差統計 |
 | 近距停止 | 真實距離嚴格小於 YAML 的 `stop_distance`；0.5 s（`--stop-deadline`）後平面速度須 ≤0.03 m/s、角速度絕對值須 ≤0.05 rad/s，並維持到離開近距區間；列出所有違規時間 |
-| 重新取得 | 估測來源時間缺口超過 YAML 的 `lost_timeout` 或狀態進入 LOST，從下一筆新鮮估測到 `/follow/state` 回到 FOLLOWING 須 ≤2 s（`--reacquire-limit`）；另列遺失至恢復的總時間，NAV2_HANDOFF 不當作 FOLLOWING |
+| 重新取得 | 估測來源時間缺口超過 YAML 的 `lost_timeout` 或狀態進入 LOST，從下一筆新鮮估測到 `/follow/state` 回到 FOLLOWING 須 ≤2 s（`--reacquire-limit`）；另列遺失至恢復的總時間，NAV2_HANDOFF 不當作 FOLLOWING；schema 2 另列 `target_reacquire`，描述已辨識目標但仍安全停車／交接的時間，不取代本門檻 |
 
 停止距離、期望跟隨距離和 stale 門檻讀取安裝的 `shopping_uwb_follow/config/uwb_follow.yaml`；若模擬使用自訂設定，量測時也須指定相同的 `--follow-params`。`--person-path` 只供指定模擬已使用的同一份路徑，不能用另一條路徑作為真值。JSON 會記錄設定內容、門檻、來源路徑與各項結果。
 
@@ -413,6 +475,10 @@ python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
 新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/MICROROS_GUIDE.md)。
 
 `dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+## 未來硬體介面（預設全部模擬）
+
+[硬體介面規格](docs/HARDWARE_INTERFACES.md) 定義感測器、底盤、急停與心跳契約，以及 `shopping_interfaces` 的四種 UWB 訊息。`hardware.launch.py` 是含 Gazebo 的待機介面驗證入口，`use_real_lidar`、`use_real_imu`、`use_real_uwb`、`use_real_base` 全部預設 `false`；只有明確選用並提供對應 driver package／launch 才會引入未來驅動，缺設定只記錄錯誤，不探測裝置。入口使用 EKF、待機模式與唯一 `/cmd_vel` watchdog，沒有移動命令來源。現有 UWB 模擬／估測仍使用原訊息；目前沒有實體驅動、裝置連線或完整實車 bringup，guide／follow 也尚未整合硬體選項。
+
 ## Nav2 fork、TEB 與 apt 對照
 
 `third_party/eurobot_nav2` 是私人儲存庫 `2006wu/Eurobot-2027-Navigation2` 的 git submodule（Humble／Nav2 1.1.16，目前固定於 fork 的 `shopping-car` 分支 `bf60ee0`）。有權限的使用者在**主機**用自己的 Git 憑證初始化；沒有權限的人直接略過，選 `nav2_stack:=auto` 時若找不到 `custom_controller` 與 `custom_nav_to_pose` 會自動使用 apt Nav2。
@@ -462,3 +528,24 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 工具重用 nav-check 的 `ZoneNavigator(enable_interfaces=False)` 與區域清單，先確認執行中的 controller profile 符合 `--stack`，逐一記錄 action 結果、模擬時間、真值軌跡折線長度及終點平面距離誤差，輸出並列表。真值只接受 `/sim/ground_truth_odom` 的 `sim_world`，不退回 EKF odom；缺值、倒退或超過 0.5 模擬秒的取樣缺口會報錯。時間涵蓋送目標前最近一筆至結果後第一筆真值；失敗／逾時也保留結果，逾時會等待取消確認，無法確認則停止後續目標。`SUCCEEDED` 表示 action 成功，未額外保證終點誤差門檻；需一起檢視 error 欄。不同電腦負載、定位漂移與規劃隨機性仍會影響結果，建議重複多輪。JSON 預設例子存入忽略版控的 `output/`。
 
 完整回歸請在各自獨立的模擬場次執行 `dev.sh nav-check --tolerance-check`、`dev.sh loc-check`、mapping 加 map-tour，以及 `dev.sh follow nav2_stack:=fork fault_injection:=true` 加 `dev.sh fault-check`。Nav2 underlay 的 ABI 檢查與限制見架構文件；本機 Python／靜態 PASS 不代表容器或 Gazebo 通過。
+`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 停止 client 與 agent；一般 `dev.sh up` 不受影響。Python 模擬韌體直接使用 DDS，**不經過 agent**。另以 `./scripts/dev.sh comm-e2e-up` 建置／啟動真正 C／rclc Linux XRCE client、agent 與前景 standalone mux／watchdog／monitor；第二終端執行 `./scripts/dev.sh comm-e2e-check`，驗證心跳、輪速、命令逾時與 PC 心跳失聯。C client 只模擬輪子，沒有裝置連線；本次尚未執行 Docker／ROS 驗收。測試前須停止 Gazebo 及其他韌體，結束後 Ctrl-C 前景 launch 再執行 `comm-down`。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+
+
+## 模擬情境
+
+`sim`、`mapping`、`guide`、`follow` 都接受 `scenario:=default`。使用 `./scripts/dev.sh scenario-list` 可在本機列出並驗證七種設定，不啟動 Docker；可用 `PYTHON=/path/to/python` 指定已有 PyYAML 的 Python。情境涵蓋中間走道穿越、1.6 公尺窄走道迎面行人、結帳排隊、急轉／走道末端迴轉、人物停走與不同出生位置／朝向。
+
+```bash
+./scripts/dev.sh guide scenario:=aisle_crossing headless:=true \
+  slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
+# In another terminal, record before sending goals.
+./scripts/dev.sh record aisle_crossing_01 --duration 120 /scan /simulation/poses
+./scripts/dev.sh goto household --timeout 90
+./scripts/dev.sh eval-bag aisle_crossing_01
+```
+
+錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
+
+情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設仍為 `apt`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
+
+SLAM 建圖、專用 RViz 視圖、四檔儲存與重載定位的完整操作見 [SLAM 操作說明](docs/SLAM.md)；Mac arm64 的本次實測記錄見 [驗收報告](docs/VALIDATION_ARM64.md)。

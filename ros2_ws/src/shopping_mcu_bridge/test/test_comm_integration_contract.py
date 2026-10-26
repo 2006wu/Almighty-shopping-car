@@ -1,5 +1,6 @@
 """ROS-free boundary execution and repository integration checks (not DDS acceptance)."""
 import ast
+import pytest
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -65,6 +66,7 @@ def test_all_contract_topics_are_used_at_ros_boundary_and_monitor_opt_in():
     assert '/cmd_vel' in used_sub
 
 
+@pytest.mark.skipif(not (ROOT/'docs').is_dir(), reason='Repository files unavailable; mount /repo')
 def test_contract_is_standard_bounded_and_documented():
     assert len({s['name'] for s in SPEC['topics'].values()}) == len(SPEC['topics'])
     ids = [s['wire_id'] for s in SPEC['topics'].values() if 'wire_id' in s]
@@ -96,6 +98,7 @@ def test_pure_modules_have_no_ros_imports_or_undeclared_dependencies():
     assert "self.declare_parameter('use_hardware', False)" in (PKG/'shopping_mcu_bridge/nodes.py').read_text()
 
 
+@pytest.mark.skipif(not (ROOT/'docs').is_dir(), reason='Repository files unavailable; mount /repo')
 def test_entry_points_dependencies_and_opt_in_launches():
     captured = {}
     source = (PKG/'setup.py').read_text().replace('from setuptools import setup', '')
@@ -118,6 +121,7 @@ def test_entry_points_dependencies_and_opt_in_launches():
     assert "DeclareLaunchArgument('estop_on_link_loss', default_value='true'" in launch
 
 
+@pytest.mark.skipif(not (ROOT/'docs').is_dir(), reason='Repository files unavailable; mount /repo')
 def test_compose_profile_and_default_services_remain_simulation_only():
     compose = load_contract(ROOT/'docker/docker-compose.yaml')
     default = {k for k, s in compose['services'].items() if not s.get('profiles')}
@@ -188,6 +192,7 @@ def test_node_telemetry_mapping_and_serial_errors_hold_link_lost():
     assert node.publishers_by_key['status'].publish.call_args.args[0].data == 'LINK_LOST'
 
 
+@pytest.mark.skipif(not (ROOT/'docs').is_dir(), reason='Repository files unavailable; mount /repo')
 def test_comm_include_is_after_use_sim_time_declaration():
     for name in ('follow', 'guide'):
         source = (ROOT/f'ros2_ws/src/shopping_robot_bringup/launch/{name}.launch.py').read_text()

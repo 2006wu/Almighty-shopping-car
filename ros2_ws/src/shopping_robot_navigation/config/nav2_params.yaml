@@ -50,7 +50,8 @@ bt_navigator:
     robot_base_frame: base_footprint
     odom_topic: /odom
     bt_loop_duration: 10
-    default_server_timeout: 20
+    # Cancellation can need multiple 50 ms controller ticks under software rendering.
+    default_server_timeout: 200
     wait_for_service_timeout: 1000
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
@@ -124,8 +125,7 @@ controller_server:
     # entering 1.6 m aisles (DWB tended to cut the shelf corners and stall).
     FollowPath:
       plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
-      # Catch-up reserve within the existing 0.5 m/s robot/smoother limit.
-      desired_linear_vel: 0.5
+      desired_linear_vel: 0.4
       lookahead_dist: 0.6
       min_lookahead_dist: 0.3
       max_lookahead_dist: 0.9
@@ -152,11 +152,13 @@ planner_server:
     expected_planner_frequency: 5.0
     planner_plugins: [GridBased]
     GridBased:
-      plugin: nav2_navfn_planner/NavfnPlanner
-      # A follow standoff endpoint can intersect a shelf; permit a nearby free endpoint.
+      plugin: nav2_smac_planner/SmacPlanner2D
+      # Follow goals coincide with the person obstacle; permit a nearby free endpoint.
       # Shared with guide mode: blocked zone goals may also end up to 0.8 m away.
       tolerance: 0.8
-      use_astar: false
+      downsample_costmap: false
+      max_planning_time: 2.0
+      cost_travel_multiplier: 2.0
       allow_unknown: true
 smoother_server:
   ros__parameters:

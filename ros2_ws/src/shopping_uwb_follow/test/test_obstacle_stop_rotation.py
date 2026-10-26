@@ -23,7 +23,12 @@ def test_clear_fresh_target_rotates_with_limits_and_never_translates(bearing):
     assert w == pytest.approx(max(-0.7, min(0.7, 0.8*bearing)))
     # Clearing the front resumes the existing following logic and linear ramp.
     v, _, state, _ = control.step(target, 0, 1.0, 0.05, rotation_clear=True)
-    assert state == 'FOLLOWING' and 0 < v <= params.max_linear_accel*0.05
+    assert state == 'FOLLOWING'
+    if abs(bearing) >= params.rotate_to_target_min_angle:
+        assert v == 0
+        assert control.step((3, 0), 0, 1.0, 0.05, rotation_clear=True)[0] > 0
+    else:
+        assert 0 < v <= params.max_linear_accel*0.05
 
 
 @pytest.mark.parametrize('kwargs,state', [
@@ -63,3 +68,63 @@ def test_rotation_large_dt_and_direction_change_remain_acceleration_limited():
     previous = control.w
     v, w, _, _ = control.step((1, -2), 0, 0.593, 0.05, rotation_clear=True)
     assert v == 0 and w == pytest.approx(previous-0.075)
+
+
+@pytest.mark.parametrize('bearing', [-1.2, 1.2])
+def test_near_release_latch_precedes_obstacle_rotation(bearing):
+    control = FollowController()
+    assert control.step((0.5, 0), 0, 0.593, 0.05, rotation_clear=True)[:3] == (
+        0, 0, 'TOO_CLOSE')
+    target = (2*math.cos(bearing), 2*math.sin(bearing))
+    for _ in range(5):
+        assert control.step(target, 0, 0.593, 0.05, rotation_clear=True)[:3] == (
+            0, 0, 'TOO_CLOSE')
+    v, w, state, _ = control.step(target, 0, 0.593, 0.05, rotation_clear=True)
+    assert v == 0 and w*bearing > 0 and state == 'OBSTACLE_STOP'
+    # Clearing the front still requires alignment before translation.
+    assert control.step(target, 0, math.inf, 0.05)[0] == 0
+    assert control.step((2, 0.3), 0, math.inf, 0.05)[0] > 0
+
+
+def test_default_runtime_preserves_develop_proportional_tracking():
+    for distance in (0.8, 1.02, 1.06, 1.2, 2.0):
+        control = FollowController()
+        for _ in range(60):
+            v, _, state, _ = control.step((distance, 0), 0, math.inf, 0.05,
+                                           speed_factor=0.6)
+        assert state == 'FOLLOWING'
+        assert v == pytest.approx(min(0.5, max(0, 0.7*(distance-1)))*0.6)
+
+
+def test_direct_rotation_recovers_from_fixed_shelf_in_closed_loop():
+    from shopping_uwb_follow.follow_controller import front_obstacle_distance, rotation_scan_clear
+
+    control = FollowController()
+    x = y = yaw = 0.0
+    control.v = 0.5
+    rotated = moved = False
+    for _ in range(200):
+        laser_x, laser_y = x+0.18*math.cos(yaw), y+0.18*math.sin(yaw)
+        ranges = []
+        for i in range(720):
+            angle = -math.pi+i*2*math.pi/719
+            dx, dy = math.cos(yaw+angle), math.sin(yaw+angle)
+            distance = (0.787-laser_x)/dx if dx > 1e-9 else math.inf
+            hit = math.isfinite(distance) and distance > 0 and -1 <= laser_y+distance*dy <= 1
+            ranges.append(distance if hit and distance <= 12 else math.inf)
+        front = front_obstacle_distance(ranges, -math.pi, 2*math.pi/719)
+        clear = rotation_scan_clear(ranges, -math.pi, 2*math.pi/719,
+                                    0.12, 12, (-0.18, 0, 0), 0.45)
+        # Synthetic target observations in base_link; no ROS or simulator truth input.
+        target = (-x*math.cos(yaw)+(3-y)*math.sin(yaw),
+                  x*math.sin(yaw)+(3-y)*math.cos(yaw))
+        v, w, state, _ = control.step(target, 0, front, 0.05, rotation_clear=clear)
+        if front <= control.p.obstacle_stop_distance:
+            assert v == 0 and state == 'OBSTACLE_STOP'
+            rotated |= w > 0
+        moved |= v > 0
+        x += v*math.cos(yaw)*0.05
+        y += v*math.sin(yaw)*0.05
+        yaw += w*0.05
+        assert x+0.45 < 0.787
+    assert rotated and moved and y > 1

@@ -72,6 +72,7 @@ def make_node():
     node.get_logger = Mock()
     pose = NS(pose=NS(position=NS(x=3, y=5)))
     node.map_goal_and_los = lambda: (pose, False)
+    node.update_rotation_clearance = Mock(return_value=None)
     return node
 
 
@@ -111,18 +112,15 @@ def test_nav2_ownership_and_zero_first_direct_command_after_drain():
     node.now = node.target_time = node.scan_time = 1.0
     node.tick()
     assert node.supervisor.mode == 'NAV2' and node.goal_pending
-    command = node.publisher.publish.call_args.args[0]
-    assert command.linear.x == command.angular.z == 0  # Front obstacle masks Nav2.
-    node.publisher.reset_mock()
-    node.obstacle = 2.0
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
     node.goal_pending = False
     node.goal_handle = Mock()
     node.goal_result(completed(NS(status=4)), node.goals.generation)
     node.now = node.target_time = node.scan_time = 1.1
     node.tick()
-    assert node.supervisor.mode == 'NAV2'  # Success alone never abandons a detour.
-    assert node.publisher.publish.call_args.args[0].linear.x == 0
-    node.nav_status = 'failed'
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
     node.now = node.target_time = node.scan_time = 1.41
     node.tick()
     command = node.publisher.publish.call_args.args[0]
@@ -156,13 +154,13 @@ def test_update_preempts_without_cancel_or_drain_and_ignores_old_callbacks():
     new_pose = NS(pose=NS(position=NS(x=4, y=5)))
     node.map_goal_and_los = lambda: (new_pose, False)
     node.now = node.target_time = node.scan_time = 1.5
-    node.obstacle = 2.0
     node.publisher.reset_mock()
     node.tick()
     assert node.client.send_goal_async.call_count == 2
     old_handle.cancel_goal_async.assert_not_called()
     assert not node.drain.active and not node.cancel_requested
-    assert node.publisher.publish.call_args.args[0].linear.x == 0
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
     new_handle = Mock(accepted=True)
     second_response.set_result(new_handle)
     old_result.set_result(NS(status=5))
@@ -244,8 +242,6 @@ def test_safety_zero_bypasses_navigation_and_drain(safety, draining):
     node.tick()
     handle = Mock(accepted=True)
     node.goal_response(completed(handle), node.goals.generation)
-    node.rotation_clear = True
-    node.last_nav_command = (1.1, 0.4, 0.8)
     if draining:
         node.supervisor.mode = 'DIRECT'
         node.cancel_goal()
@@ -362,9 +358,7 @@ def test_odom_watchdog_recovery_uses_fresh_header():
     node.monitor_odom = True
     node.odom_time = -1
     node.tick()
-    node.on_odom(NS(header=NS(stamp=NS(sec=0, nanosec=0)),
-                    pose=NS(pose=NS(position=NS(x=0, y=0),
-                                    orientation=NS(x=0, y=0, z=0, w=1)))))
+    node.on_odom(NS(header=NS(stamp=NS(sec=0, nanosec=0))))
     node.obstacle = 3
     node.map_goal_and_los = lambda: (None, True)
     node.now = 0.05
@@ -390,28 +384,14 @@ def test_frozen_measurement_headers_stop_despite_recent_delivery(fault, nav):
         assert node.cancel_requested
 
 
-def test_target_velocity_uses_fresh_odometry_and_drops_stale_history():
-    from shopping_uwb_follow.estimator import TargetVelocityEstimator
+def test_target_callback_preserves_measurement_stamp_and_rejects_other_frames():
     node = make_node()
-    node.velocity_estimator = TargetVelocityEstimator()
-    node.odom_pose = (0, 0, 0)
-    node.odom_time = 0
-    for i in range(20):
-        t = i*0.1
-        node.odom_time = t
-        node.odom_pose = (0.2*t, 0, 0)
-        node.on_target(NS(header=NS(frame_id='base_link',
-                                   stamp=NS(sec=int(t), nanosec=round((t-int(t))*1e9))),
-                          point=NS(x=2+0.15*t, y=0)))
-    assert node.target_velocity[0] == pytest.approx(0.35, abs=0.006)
-    node.on_target(NS(header=NS(frame_id='base_link', stamp=NS(sec=3, nanosec=0)),
-                      point=NS(x=3, y=0)))
-    assert node.target_velocity == (0, 0)
-    assert node.velocity_estimator.previous is None
-    node.odom_time = 3.1
     node.on_target(NS(header=NS(frame_id='base_link', stamp=NS(sec=3, nanosec=100000000)),
-                      point=NS(x=3.1, y=0)))
-    assert node.target_velocity == (0, 0)  # First fresh sample reinitializes.
+                      point=NS(x=2, y=1)))
+    assert node.target == (2, 1) and node.target_time == pytest.approx(3.1)
+    node.on_target(NS(header=NS(frame_id='sim_world', stamp=NS(sec=4, nanosec=0)),
+                      point=NS(x=99, y=99)))
+    assert node.target == (2, 1) and node.target_time == pytest.approx(3.1)
 
 
 def test_pending_goal_updates_coalesce_then_preempt_with_latest_pose():
@@ -500,14 +480,14 @@ def test_shutdown_skips_invalid_context_and_handles_publish_race(context_ok, rac
     assert node.cancel_goal.call_count == int(context_ok)
 
 
-def test_independent_clearance_caps_do_not_multiply():
+def test_fallback_clearance_and_los_slowdowns_multiply():
     node = make_node()
-    # side coverage unavailable -> 0.4; uncertain LOS -> 0.6; combined cap 0.4.
+    # Side coverage unavailable -> 0.4; uncertain LOS -> 0.6; combined factor 0.24.
     # A short interval remains before blocked LOS is latched.
     node.control.v = 0.2
     node.obstacle = 2
     node.tick()
-    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.2)
+    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.18)
 
 
 @pytest.mark.parametrize('follow_distance,return_range,clear', [
@@ -520,6 +500,7 @@ def test_map_goal_and_both_los_checks_use_follow_distance(follow_distance, retur
     )
     node = make_node()
     node.control.p.follow_distance = follow_distance
+    node.update_rotation_clearance = type(node).update_rotation_clearance.__get__(node)
     # make_node substitutes map_goal_and_los; bind the production method here.
     method = type(node).map_goal_and_los
     namespace = method.__globals__
@@ -541,7 +522,7 @@ def test_map_goal_and_both_los_checks_use_follow_distance(follow_distance, retur
     node.robot_half_width, node.los_margin = 0.4, 0.35
     node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: 0))
     pose, los = method(node)
-    assert (pose.pose.position.x, pose.pose.position.y) == pytest.approx((10, 23-follow_distance))
+    assert (pose.pose.position.x, pose.pose.position.y) == pytest.approx((10, 23))
     assert los is clear
     assert node.los_clear_wide is clear
 
@@ -576,6 +557,7 @@ def test_node_relays_rotation_at_fixed_front_shelf_then_translation_and_expires(
 
 
 def configure_rotation_scan(node):
+    node.update_rotation_clearance = type(node).update_rotation_clearance.__get__(node)
     namespace = type(node).update_rotation_clearance.__globals__
     namespace.update(Time=NS(from_msg=lambda stamp: stamp),
                      TransformException=RuntimeError, planar_pose=lambda transform: transform)
@@ -655,3 +637,95 @@ def test_direct_rotation_resumes_following_after_front_clears():
     node.tick()
     assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.04)
     assert node.state.publish.call_args.args[0].data.startswith('FOLLOWING:')
+
+
+@pytest.mark.parametrize('state,age,expected', [
+    ('CLEAR', 0., 1.), ('SLOW', 0., 1.), ('SLOW', .6, .4), ('STALE', 0., .4)])
+def test_live_guard_owns_slowdown_without_duplicating_fallback_side_cap(state, age, expected):
+    node = make_node()
+    node.client = None
+    node.supervisor.route_around = False
+    node.obstacle = 3.
+    node.guard_state, node.guard_time = state, node.now-age
+    node.control.step = Mock(return_value=(.1, 0., 'FOLLOWING', 'tracking'))
+    node.tick()
+    assert node.control.step.call_args.kwargs['speed_factor'] == expected
+    if state == 'STALE':
+        cmd = node.publisher.publish.call_args.args[0]
+        assert cmd.linear.x == cmd.angular.z == 0
+
+
+def test_fresh_guard_stop_still_overrides_direct_motion():
+    node = make_node()
+    node.client = None
+    node.supervisor.route_around = False
+    node.obstacle = 3.
+    node.guard_state, node.guard_time = 'STOP', node.now
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0
+
+
+def map_lookup_node():
+    node = make_node()
+    method = type(node).map_goal_and_los
+    scope = method.__globals__
+    from shopping_uwb_follow.follow_handoff import transform_xy, line_of_sight_clear
+    def time_value(**kwargs):
+        return kwargs['seconds']
+    time_value.from_msg = lambda stamp: stamp
+    scope.update(Time=time_value, TransformException=LookupError, planar_pose=lambda pose: pose,
+                 transform_xy=transform_xy, line_of_sight_clear=line_of_sight_clear,
+                 PoseStamped=lambda: NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
+    node.now = node.target_time = 1.
+    node.robot_half_width, node.los_margin = .25, .35
+    node.scan.header = NS(frame_id='laser_link', stamp='scan-time')
+    node.tf_buffer = Mock()
+    node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: 'now'))
+    node.update_rotation_clearance = type(node).update_rotation_clearance.__get__(node)
+    node.tf_buffer.lookup_transform.side_effect = [(0., 0., 0.), (10., 20., 0.)]
+    return node, method
+
+
+def test_transient_map_tf_gap_reuses_only_recent_matched_goal():
+    node, lookup = map_lookup_node()
+    pose, _ = lookup(node)
+    assert (pose.pose.position.x, pose.pose.position.y) == (13., 20.)
+    node.now = node.target_time = 1.1
+    node.tf_buffer.lookup_transform.side_effect = [(0., 0., 0.), LookupError('future by 20 ms')]
+    cached, _ = lookup(node)
+    assert cached is pose and node.cached_map_goal_time == 1.
+    node.now = 1.201
+    node.tf_buffer.lookup_transform.side_effect = LookupError('unavailable')
+    assert lookup(node) == (None, False)
+    node.now = .9
+    assert lookup(node) == (None, False)
+
+
+def test_map_cache_never_hides_missing_laser_transform():
+    node, lookup = map_lookup_node()
+    node.tf_buffer.lookup_transform.side_effect = [LookupError('laser missing')]
+    assert lookup(node) == (None, False)
+    node.now = 1.1
+    node.tf_buffer.lookup_transform.side_effect = [LookupError('map gap'), LookupError('laser missing')]
+    assert lookup(node) == (None, False)
+
+
+@pytest.mark.parametrize('guard_state', ['STOP', 'STALE'])
+def test_guard_stop_overrides_active_navigation_rotation(guard_state):
+    node = make_node()
+    node.rotation_clear = True
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    node.goal_response(completed(Mock(accepted=True)), node.goals.generation)
+    node.on_cmd_vel(NS(linear=NS(x=0.4), angular=NS(z=0.8)))
+    node.now = node.target_time = node.scan_time = 1.05
+    node.tick()
+    assert node.publisher.publish.call_args.args[0].angular.z > 0
+    node.now = node.target_time = node.scan_time = 1.1
+    node.guard_state, node.guard_time = guard_state, node.now
+    node.tick()
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
+    assert node.nav_guard.v == node.nav_guard.w == 0

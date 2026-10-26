@@ -10,8 +10,13 @@ class Sample:
     angular: float
 
 
-def moving(sample):
-    return abs(sample.linear) > 0.02 or abs(sample.angular) > 0.05
+def moving(sample, translation_only=False):
+    return abs(sample.linear) > 0.02 or not translation_only and abs(sample.angular) > 0.05
+
+
+def planar_sample(stamp, vx, vy, angular):
+    """Keep lateral truth motion visible to the stop check in either twist frame."""
+    return Sample(stamp, math.hypot(vx, vy), angular)
 
 
 def valid_samples(samples):

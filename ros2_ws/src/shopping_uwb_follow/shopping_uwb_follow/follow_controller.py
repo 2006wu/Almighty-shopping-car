@@ -51,6 +51,8 @@ def side_speed_factor(clearance, slow=0.45, free=0.9, minimum=0.4):
 class ControllerParams:
     follow_distance: float = 1.0
     stop_distance: float = 0.6
+    stop_release_margin: float = 0.15
+    stop_release_time: float = 0.3
     obstacle_stop_distance: float = 0.65
     obstacle_stop_rotate: bool = True
     lost_timeout: float = 0.5
@@ -60,9 +62,12 @@ class ControllerParams:
     max_angular_accel: float = 1.5
     kp_distance: float = 0.7
     kp_bearing: float = 1.5
-    velocity_feedforward: float = 1.0
-    distance_hysteresis_enter: float = 0.04
-    distance_hysteresis_exit: float = 0.08
+    # Optional offline experiment hooks; zero preserves the develop control law.
+    velocity_feedforward: float = 0.0
+    distance_hysteresis_enter: float = 0.0
+    distance_hysteresis_exit: float = 0.0
+    rotate_to_target_min_angle: float = math.pi/4
+    rotate_to_target_release_angle: float = 0.25
     los_uncertain_speed_factor: float = 0.6
     side_sector_min: float = math.pi/6
     side_sector_max: float = math.radians(100)
@@ -82,6 +87,8 @@ class FollowController:
         if any(not math.isfinite(v) or (v < 0 if k in nonnegative else v <= 0)
                for k, v in vars(self.p).items() if k != 'obstacle_stop_rotate'):
             raise ValueError('Controller parameters must be finite and within their positive/nonnegative bounds')
+        if not 0 < self.p.rotate_to_target_release_angle < self.p.rotate_to_target_min_angle <= math.pi:
+            raise ValueError('Invalid target alignment angles')
         if self.p.stop_distance >= self.p.follow_distance:
             raise ValueError('Stop distance must be below follow distance')
         side_speed_factor(0, self.p.side_slow_clearance, self.p.side_free_clearance,
@@ -93,17 +100,34 @@ class FollowController:
             raise ValueError('Hysteresis requires enter <= exit')
         self.holding_distance = False
         self.v = self.w = 0.0
+        self.near_latched = False
+        self.near_clear_time = 0.0
+        self.aligning = False
 
     def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
              target_velocity=(0.0, 0.0), rotation_clear=False):
         p = self.p
+        valid_target = (target is not None and math.isfinite(age) and 0 <= age <= p.lost_timeout
+                        and all(math.isfinite(t) for t in target))
+        if not enabled or not valid_target:
+            self.near_clear_time = 0.0
+        elif math.hypot(*target) <= p.stop_distance:
+            self.near_latched = True
+            self.near_clear_time = 0.0
+        elif self.near_latched:
+            clear = (math.hypot(*target) > p.stop_distance+p.stop_release_margin
+                     and math.isfinite(dt) and dt > 0)
+            self.near_clear_time = self.near_clear_time+min(dt, 0.2) if clear else 0.0
+            if self.near_clear_time >= p.stop_release_time:
+                self.near_latched = False
+                self.near_clear_time = 0.0
         state, reason = 'FOLLOWING', 'Tracking target'
         if not enabled:
             state, reason = 'IDLE', 'Disabled'
         elif target is None or not math.isfinite(age) or age < 0 or age > p.lost_timeout or not all(math.isfinite(t) for t in target):
             state, reason = 'LOST', 'Target missing or stale'
-        elif math.hypot(*target) <= p.stop_distance:
-            state, reason = 'TOO_CLOSE', 'Target inside stop distance'
+        elif self.near_latched:
+            state, reason = 'TOO_CLOSE', 'Target near; waiting for sustained release clearance'
         elif math.isnan(obstacle) or obstacle <= p.obstacle_stop_distance:
             state, reason = 'OBSTACLE_STOP', 'Obstacle or unavailable scan'
         if (state == 'OBSTACLE_STOP' and math.isfinite(obstacle)
@@ -141,7 +165,13 @@ class FollowController:
         demand = max(0.0, p.velocity_feedforward*radial+correction)
         cap = p.max_linear*max(0.0, min(1.0, speed_factor))
         heading = max(0.0, math.cos(bearing))
-        v = min(cap, demand)*heading
+        v = min(p.max_linear, demand)*max(0.0, min(1.0, speed_factor))*heading
+        if abs(bearing) >= p.rotate_to_target_min_angle:
+            self.aligning = True
+        elif abs(bearing) <= p.rotate_to_target_release_angle:
+            self.aligning = False
+        if self.aligning:
+            v = 0.0
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
         limits = []
@@ -155,6 +185,8 @@ class FollowController:
             limits.append('angular acceleration')
         if self.holding_distance:
             limits.append('distance hold')
+        if self.aligning:
+            limits.append('Aligning with target before translating')
         reason = ', '.join(limits) or 'Tracking target'
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))

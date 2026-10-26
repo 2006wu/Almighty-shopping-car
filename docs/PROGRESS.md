@@ -675,7 +675,7 @@
 | --- | --- |
 | 純 Python 測試與轉換／評估往返 | 待驗證 |
 | YAML／XML／xacro／launch 與 Bash 靜態檢查 | 待驗證 |
-| Humble colcon build／test 與執行期依賴 | 待驗證 |
+| Humble colcon build／test 與執行期依賴 | PASS：colcon test 647 tests、0 failures（t31s） |
 | guide 短錄製、成功／失敗回合與真值邊界 | 待驗證 |
 | follow 短錄製、同步距離與停止事件 | 待驗證 |
 | report JSON／Markdown 與中繼資料完整性 | 待驗證 |
@@ -1049,6 +1049,88 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 ### 結論與下一步
 
 - fork 整合（建置、連結、lifecycle、BT、Shrink safe 模式）可用，但 **gentle TEB 在 1.6 m 走道與貨架轉角仍常判定阻擋**：clearance 以外接圓（0.391 m）計算，0.60×0.50 m 矩形車體在走道中央只剩約 0.37 m。已交給 fork 任務 t23（opt-in 依朝向的矩形 footprint clearance＋恢復遲滯，Eurobot 預設不變）。完成後以 `nav2_stack:=fork` 重跑 nav-check、loc-check 與 nav-compare，通過再考慮把預設改回 `auto`。
+| 項目 | 結果 |
+| --- | --- |
+| 盒內 pytest／`check_static.py` | 755 passed／PASS（rebase 至 develop 3346718 後） |
+| 容器 colcon build + test | 624 tests，0 errors，0 failures，5 skipped。修正：套件測試在容器（`/ws/src`）找不到 repo 根目錄，37 項失敗 → 改為找不到 `docs/` 時使用 `/repo` |
+| sim_ros `comm-sim` + `comm-check` | 10/10 PASS。修正：首次執行因 DDS discovery 未完成，隔離檢查誤判 FAIL；改為最多輪詢 10 秒並在失敗時記錄發布／訂閱者 |
+| serial_loopback `comm-sim` + `comm-check` | 10/10 PASS |
+| `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
+| 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
+
+## 2026-10-24：Linux rclc 客戶端與 micro-ROS agent 端到端驗收流程
+
+### 本次修改
+
+- 新增 `firmware/sim_client`，以 C／rclc、`rmw_microxrcedds` 實作 Linux 模擬客戶端，透過 UDP4 agent 發布 heartbeat、wheel 與 status，訂閱 command 與 PC heartbeat；沒有實體裝置、馬達或板卡 SDK。
+- 純 C 模型與 ROS 邊界分離，包含三筆遞增心跳恢復、UInt32 回繞、命令 0.3 秒逾時、PC 心跳 0.5 秒逾時立即零速、拒絕非有限／非平面輸入、預設不倒車、一階輪速與加速度限制。由 `interface.yaml` 與 description xacro 產生契約 header，Docker 建置時重新產生。
+- 新增基於 `ros:humble-ros-base-jammy` 的客戶端 Dockerfile，使用官方 `micro_ros_setup` humble 分支的 host 建立／建置流程，將獨立 ament C 套件複製到工具工作區 `src/uros`。新增 opt-in `comm` profile 客戶端服務，以 agent hostname 解析 IPv4，無 host port、devices、privileged 或固定架構。
+- 新增 `comm-e2e-up`／`comm-e2e-check`；前者建置／啟動 agent、client 後，在前景執行 standalone `transport:=agent` 的既有 mux／watchdog／monitor，不啟動 Python 韌體。watchdog 維持唯一 `/cmd_vel` 發布者。`comm-down` 同時停止 client 與 agent。
+- 新增 ROS 驗收器，保留最長 10 秒 DDS discovery 等待，檢查 graph 隔離、兩向 heartbeat、輪速頻率、teleop 經 mux 抵達、命令逾時及恢復、PC 心跳真正停止發布後的 LINK_LOST／零速，以及心跳恢復仍維持 ESTOP。執行中持續重查隔離；失敗後請求 ESTOP 並嘗試清除心跳故障。
+- PC monitor 的心跳故障參數僅在 standalone agent 模式明確啟用模擬故障時生效，一般預設不啟用。新增純邏輯、實際 C 編譯執行、安全清理與 wiring 測試；repo 檔案測試依祖先 repo、`/repo`、skip 的順序處理 colcon 掛載位置。
+- 更新 README、micro-ROS 入門、MCU 介面子集與客戶端說明，補齊 rosserial 對照、STM32 移植責任、啟停及維護者驗收指令。未勾選 ROADMAP，未提交或推送。
+
+### 自行檢查（執行紀錄，非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：764 項通過；1 筆既有 xacro／Python 棄用警告。測試包含以系統 C 編譯器實際建置／執行純模型，未編譯需要 ROS 的 `main.c`。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；YAML、XML／SDF／xacro、Python、Bash 與兩／三錨點、ekf／ground_truth 展開一致性檢查。
+- `git diff --check`：通過。`dev.sh` 分派測試使用暫存假 Docker 指令記錄參數，沒有呼叫 Docker。
+
+### 限制與下一步
+
+- 本環境沒有 ROS，未執行 Docker、colcon、XRCE session 或 DDS rate 驗收；沒有安裝套件或建立虛擬環境。Docker 映像、Humble C API 完整編譯、agent 連線／重啟與兩種原生架構仍須維護者實測，靜態與純邏輯檢查不可視為通過容器驗收。
+- Linux client 是有限子集，沒有 encoder、IMU、MCU 按鈕急停／reset；現有 Python 完整模擬仍保留。只支援獨立壁鐘時間，不接 Gazebo／EKF、不操作硬體，不能作為完整板端安全韌體。
+- Linux 失敗重試依 Compose 程序重啟，重啟清除舊命令；STM32 仍需 RTOS transport、時鐘、記憶體與獨立安全控制／重連設計。heartbeat 故障若遇強制 kill，需重啟前景 launch 清除殘留參數。
+- 下一步：依 `docs/MICROROS_GUIDE.md` 在容器執行 colcon build/test、`comm-e2e-up` 與 `comm-e2e-check`，回報完整建置、agent／client 日誌及七項驗收結果；再於 amd64／arm64 原生主機驗收。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 契約 header 與純 C 安全模型 | 待驗證 |
+| pytest、靜態檢查及 colcon 掛載路徑 | 待驗證 |
+| Humble host 映像與 C／rclc 建置 | 待驗證 |
+| agent／client XRCE session、DDS 頻率及重連 | 待驗證 |
+| mux／watchdog 唯一速度發布與 graph 拒絕注入 | 待驗證 |
+| 命令逾時、PC heartbeat 失聯及 ESTOP 恢復 | 待驗證 |
+| amd64／arm64 原生執行及無裝置預設 | 待驗證 |
+
+## 2026-10-24：t24 依角色拆分模擬容器
+
+### 本次修改
+
+- 新增 `split` profile 的 sim、localization、navigation、app，以及 `record` profile；保留預設 compute／display 與既有 comm agent／XRCE 客戶端服務名稱。角色與工具容器透過 YAML anchors 共用原生架構運算映像、工作區與 Nav2 underlay 卷，補齊 rosbag2 工具依賴。
+- 所有服務共用 compute 網路命名空間與相同 domain；DDS 參與者共用 UDPv4-only profile，XRCE 客戶端改以迴送位址連 agent。沒有新增 devices、privileged 或固定 platform；serial 範本額外要求明確設定 `MICROROS_SERIAL_DEVICE`，仍不掛載裝置。
+- 新增 bringup 的四個角色入口與共用角色 launch，透過既有 guide／follow／Gazebo／navigation launch 的預設相容開關重用節點定義。sim 保留模擬感測與 MCU；EKF 與 SLAM／AMCL 移至 localization；Nav2 獨立；app 保留唯一 watchdog 與 mux。拆分固定模擬時間與 mux，維持 TF 唯一來源、apt／fork／auto 選擇及 apt 隔離重新啟動的角色參數。
+- 新增 `split-up [guide|follow] [ARGS...]`、`split-down`、`split-status`、`split-logs SERVICE`；啟動前重建同一專案的服務，避免舊單容器 launch 殘留。參數不經 eval，支援空白並拒絕換行及未開放參數。Gazebo 健康檢查使用有逾時的 `ign topic -l`，確認世界時鐘主題後才啟動其他角色。
+- 新增離線測試，涵蓋 Compose profiles／映像／DDS／無裝置限制、十二組模式與里程計來源的節點歸屬、定位與導航 include 開關、apt 重新啟動參數、命令派送、字面參數與健康檢查。同步調整既有 XRCE 網路契約測試；套件測試仍保留 repo root／`/repo`／skip 的既有處理。
+- 新增 `docs/CONTAINERS.md` 的角色表、主題圖、Mac／Linux 操作、DDS 排錯、選用 profiles 與維護者驗收命令；更新 README、架構與 micro-ROS 網路／serial 說明。未勾選 ROADMAP，未提交或推送。
+
+### 自行檢查紀錄（不代替審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：803 passed、1 skipped；另有既有 xacro DeprecationWarning。跳過項目為未初始化的私有 Nav2 fork 原始碼契約檢查。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；18 個 YAML／RViz、14 個 XML／SDF／xacro、120 個 Python、7 個 Bash，並完成兩／三錨點及 ekf／ground_truth xacro 展開與錨點設定比對。
+- `git diff --check`：通過。命令派送測試使用假 Docker 執行檔，沒有執行 Docker、安裝套件或建立虛擬環境。
+
+### 限制與下一步
+
+- 本環境沒有 ROS，未執行 Compose 實際解析、映像建置、colcon、DDS、Gazebo、Nav2 或硬體驗收；靜態結果不代表容器整合通過。維護者請依 `docs/CONTAINERS.md` 的完整指令建置、執行 `split-up guide headless:=true`、對拆分堆疊執行 `nav-check`，最後 `split-down`，回報錯誤後再修正。
+- Gazebo 健康僅代表 transport 已列出世界時鐘主題，不保證 ROS 時鐘、模型、感測器、TF、定位與 Nav2 lifecycle 已就緒。app 延用既有 steady timer 重試及零速等待機制；連線異常觸發的 ESTOP 仍須明確解除。
+- XRCE C 模擬客戶端保留既有壁鐘 wheel telemetry，獨立 comm-e2e 流程仍使用壁鐘；不當作 Gazebo EKF 輸入。預設 split 使用 Python 模擬韌體；替換為 agent 的時間戳與整合尚待驗收，不能同時開啟兩個韌體發布者。
+- `split-up`／`split-down` 會停止同一專案的選用通訊與錄製工作；先正常結束錄製，再切換模式。Mac 日常使用預設單容器；拆分驗收先保持 headless 並不啟用額外 profiles。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 離線 pytest、靜態語法與模型檢查 | 待驗證 |
+| Mac arm64／Linux 原生映像、Compose 與 colcon | 待驗證 |
+| split 啟動順序、Gazebo transport、ROS 時鐘與 DDS | 待驗證 |
+| EKF／ground_truth、SLAM／AMCL TF 唯一來源 | 待驗證 |
+| guide／follow、Nav2 apt／fork 與晚啟動容忍 | 待驗證 |
+| watchdog 唯一發布者、急停與失聯零速 | 待驗證 |
+| 單容器與 micro-ROS e2e 相容性 | 待驗證 |
+| noVNC／RViz、record 與停止清理 | 待驗證 |
 
 ### 審查追加（2026-10-24 15:50 臺北時間）
 
@@ -1057,6 +1139,154 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 - 因此本 PR 只合併 fork 整合層，submodule 仍固定 `bf60ee0`，**預設 `nav2_stack:=apt` 不變**；TEB 修正驗證通過後另開 PR 更新固定版本與參數。
 - 修正分支上 PROGRESS.md 誤刪 develop 既有段落（偏航率／AMCL 調查、micro-ROS 通訊層）的合併錯誤，已還原。
 
+## 2026-10-24：硬體介面設計、預設關閉入口與 UWB 訊息
+
+### 修改內容
+
+- 新增 [HARDWARE_INTERFACES.md](HARDWARE_INTERFACES.md)，整理雷射、IMU、UWB、MCU 輪狀態／encoder、輪式里程計、命令、急停、心跳的 topic、型別、frame、頻率、QoS、單位與模擬／實車責任；說明安裝位置、covariance、TF 唯一來源、時鐘同步、高度校正、有效性及維護者驗證指令。ARCHITECTURE 加入入口連結，ROADMAP 未修改或勾選。
+- 新增 `hardware.launch.py`，四個 `use_real_lidar/imu/uwb/base` 選項皆預設 false。每項 true 只引入對應 placeholder，未明確給定 driver package 與 launch 時記錄錯誤，不啟動裝置、不探測、不自動回退。未來 launch 檔只接受指定套件 launch 目錄的單一檔名，並傳遞 use_sim_time。
+- 將原模擬 bridge 契約分為 common／lidar／imu／base 四檔，選用真實來源時不建立對應 bridge；輪速噪聲節點分別關閉 wheel／IMU 的 publisher 與 subscription。選用真實 UWB 時不建立舊模擬及估測節點。硬體入口固定 EKF、關閉模擬故障、啟動待機 mux 與唯一 watchdog，沒有導航、跟隨或 teleop 移動來源；真實來源不得搭配 ground_truth 或故障發布者。
+- 新增獨立 `shopping_interfaces` ament_cmake 套件，提供 UwbRange、UwbRangeArray、UwbAnchor、UwbAnchorArray；含量測 stamp、錨點／標籤 ID、距離、不確定度、品質、有效性原因、NLOS 與未知狀態、三維位置及校正高度。bringup 宣告介面套件依賴，compute Dockerfile 明列 rosidl 產生器供維護者重建；本次沒有安裝套件。
+- 保留原 UWB ROS 訊息與估測流程，新增無 ROS 匯入的 dict adapter 與 pytest，檢查 ID 對應、NaN／Infinity／非正距離、stamp、未知 metadata、不確定度與 msg 契約一致性。adapter 僅轉接既有平面距離，不能宣稱是實體斜距或已完成時鐘同步。
+- 擴充 `check_static.py`，驗證 msg 語法子集、欄位重複、型別引用、CMake／package.xml／rosidl 相依、映像建置依賴與 bridge 分檔完整性。launch AST 測試涵蓋四項選項的全部 16 組組合、預設值、轉送、placeholder 缺設定／不存在套件與檔案、明確 include、EKF／故障互斥及模擬處理的 channel guard。
+
+### 本次自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：794 passed，保留既有 xacro 棄用警告 1 項。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；4 個 msg、21 個 YAML／RViz、12 個 XML／SDF／xacro、110 個 Python、4 個 Bash，含兩／三錨點與 ekf／ground_truth 的 xacro 展開及錨點位置一致性。
+- `git diff --check`：通過。未執行 Docker、colcon、ROS 或裝置連線，未安裝套件、建立虛擬環境、提交或推送。新增套件測試若讀取 repo 契約，依 docs 存在與否選擇原始碼根目錄、再退回 `/repo`，都不存在才 skip。
+
+### 限制與下一步
+
+- 沙盒沒有 ROS；以上為純 Python 與靜態檢查，不能代替 Humble rosidl／colcon 建置、DDS QoS、Gazebo 執行、TF 發布者數量或硬體驗收。維護者須依 HARDWARE_INTERFACES 的指令重建 compute 映像、colcon build／test，再驗證預設與缺驅動入口，以及 guide／follow 的模擬回歸。
+- 入口仍是含 Gazebo 的介面測試，不是完整無模擬實車 bringup；未提供雷射、IMU、UWB、底盤驅動、輪式里程計轉接或電氣急停。混合測試的 Gazebo 車體與實車不會同步，模擬真值不得作為實車 EKF 漂移基準。
+- guide／follow 暫不轉送硬體選項；待新 UWB 時間／高度感知估測器與實車輪速轉接完成後，再整合移動流程。新 UWB topic 本次僅定義，未有 ROS 發布者，原流程仍使用 Float32MultiArray。
+- 後續須實作並測試模組時鐘 rollover／重啟與 offset／drift、量測同步不確定度、標籤與錨點高度校正、斜距轉平面距離及 covariance 傳播，再驗證兩錨點歧義、貨架 NLOS、掉訊恢復與保護停止。未來硬體選用仍須明確設定，不能靠裝置偵測自動啟用。
+
+### 審查驗證
+
+以下由審查者執行與填寫，自行檢查不代填審查結果。
+
+| 項目 | 結果 |
+| --- | --- |
+| 硬體介面、MCU 契約、QoS、單位與 TF 所有權 | 待驗證 |
+| 四項預設關閉選項、16 組切換與模擬來源互斥 | 待驗證 |
+| placeholder 明確配對、無裝置探測與缺驅動缺資料行為 | 待驗證 |
+| UWB msg／純 adapter、有效性、時鐘與高度遷移設計 | 待驗證 |
+| check_static、xacro、YAML／XML／launch 與相依檢查 | 待驗證 |
+| Humble 原生 amd64／arm64 映像及 colcon build／test | 待驗證 |
+| Fortress 預設／缺驅動入口、publisher 數與唯一 cmd_vel watchdog | 待驗證 |
+| guide／follow 純模擬回歸與 use_sim_time 一致性 | 待驗證 |
+| 未來實車驅動、輪速轉接、時間同步、安裝校正與電氣急停 | 待驗證 |
+
+
+## 2026-10-24：t28 合併 Nav2 fork 與硬體介面
+
+### 修改內容
+
+- 解決 ARCHITECTURE、PROGRESS 與 check_static 的合併衝突；保留兩側全部進度內容，依時序排列 Nav2 fork 整合及審查追加、硬體介面紀錄，再附加本次紀錄。逐行比對合併雙方的歷史內容，確認沒有遺失。
+- check_static 同時保留四個 rosidl 訊息／相依圖／bridge 分檔檢查，以及 third_party 排除規則；README 補上硬體入口與 shopping_interfaces，ARCHITECTURE 保留兩項功能並明列 nav2_stack 的 apt 預設值。
+- 自行檢查四個 placeholder：模組頂層僅匯入與定義函式，不開啟裝置；hardware 入口四項實體來源選項全部預設 false，placeholder 套件與 launch 預設空白，沒有裝置偵測。既有純 Python launch AST 測試涵蓋四個入口與 16 組來源互斥組合；擴充四個入口的缺套件測試及預設不查找／不啟動驅動測試。入口維持待機 mux 與唯一 cmd_vel watchdog。
+- 保留 Dockerfile.compute 的 rosidl 產生器及 Nav2 原生編譯相依，確認 compose 的唯讀 /nav2_ws/src 與產物 volumes、nav2-build 的 apt 起始環境及入口 apt → fork → 應用層載入順序。未自行修改 ROADMAP 或勾選項目。
+
+### 本次自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：820 passed、1 skipped、1 warning。略過項目需要尚未初始化的私人 Nav2 submodule；警告為既有 xacro Python 棄用警告。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；4 個 rosidl msg、22 個 YAML／RViz、14 個 XML／SDF／xacro、117 個 Python、5 個 Bash，含兩／三錨點及 ekf／ground_truth 的 xacro 展開。
+- `git diff --check` 與 `git diff --cached --check` 通過；未提交或推送，未執行 Docker、安裝套件或建立虛擬環境。嘗試 `git add` 時，實際 Git 目錄 `/workspace/repos/Almighty-shopping-car/.git/worktrees/shop-hw-interfaces` 為沙盒唯讀路徑，無法建立 `index.lock`，因此未能暫存；工作檔已移除衝突標記，但索引仍保留未解決狀態。
+
+### 限制與下一步
+
+- 本環境沒有 ROS；自行檢查僅涵蓋純 Python、設定與靜態契約，未執行容器映像建置、colcon、DDS、Gazebo 或實體裝置驗收，不能據此宣稱 Nav2 underlay 已成功建置。
+- 維護者先在可寫入 Git 索引的環境執行 `git add docs/ARCHITECTURE.md docs/PROGRESS.md scripts/check_static.py README.md tests/test_hardware_launch.py` 完成暫存，再接續執行 Humble 容器重建、colcon build／test、Nav2 apt／fork 模擬回歸及硬體入口預設／缺驅動驗證。所有實體驅動仍須未來明確選用；目前沒有新增真實裝置連線。
+
+## 2026-10-24：模擬情境與動態行人
+
+### 修改
+
+- 新增純 Python 情境載入器與七種 YAML：default、aisle_crossing、narrow_pass、checkout_queue、follow_turns、follow_stop_go、alt_start，驗證出生姿態、路徑、逐點停留與行人欄位。default 保留原 `config/person_path.yaml`，未複製或更動其內容。
+- sim／mapping／guide／follow 新增 `scenario:=default`；每次 launch 只解析一份人物路徑，Gazebo 主要人物與 UWB 共用相同檔案，暫存世界與解析設定於關閉後清除。出生位置／朝向同步至 EKF 初始狀態、AMCL `/initialpose`、slam_toolbox 定位起點及 loc-check 的 scenario 參數。
+- 新增 Fortress 原生 VelocityControl 圓柱行人、ROS `pedestrian_mover`、延遲／循環／速度上限純軌跡邏輯及真值過期停止。選用 Humble 已有的 Twist topic 橋接，避免依賴 set_pose 服務橋接修訂版差異；人物有 collision 與 visual，未使用 Classic 外掛或硬體。
+- `/sim/pedestrians` 以 `sim_world` PoseArray 發布 Gazebo 回報姿態，納入錄製清單、有界內插及最小人物間距；缺樣數與半徑設定列於轉換中繼資料。既有跟隨目標與停止事件定義保留。
+- 新增本機 `dev.sh scenario-list`、逐情境驗收程序與 README／ARCHITECTURE／METRICS 說明。擴充 schema 錯誤、原始路徑一致性、所有航點連線與出生點淨空／地圖邊界、軌跡停走／循環／延遲、launch 單次解析／參數、行人 watchdog、程式入口、SDF／Fortress 外掛及 bag 動態間距測試。check_static 納入情境 schema 與生成 SDF XML 檢查。
+- 未修改 ROADMAP 勾選、Nav2 launch／參數或跟隨調校；未提交、推送、執行 Docker、安裝套件或建立虛擬環境。
+
+### 本次執行驗證
+
+| 指令／方法 | 執行觀察 |
+| --- | --- |
+| `/workspace/scratch/venv-shop/bin/python -m pytest -q` | 684 項通過；既有 xacro 棄用警告 1 項 |
+| `/workspace/scratch/venv-shop/bin/python scripts/check_static.py` | PASS：21 YAML／RViz、10 XML／SDF／xacro、89 Python、4 Bash、7 情境，兩／三錨點及兩種里程計模式展開 |
+| `./scripts/dev.sh scenario-list` | 列出七種情境與出生姿態、行人數，不啟動 Docker |
+| `git diff --check` | 通過 |
+
+### 限制與下一步
+
+- 本環境未安裝 ROS，僅執行純邏輯、假 launch API 與靜態檢查。維護者依 `docs/SCENARIOS.md` 執行 colcon 與七種 headless 情境，核對外掛載入、橋接、AMCL 啟動時序、雷射／成本地圖可見性、實際相遇、讓行與恢復；本表不冒充容器、跨架構或硬體驗收。
+- 行人依世界模擬秒開始移動，目標送出與啟動耗時會影響相遇；需記錄時刻及重複試驗。圓柱無避讓決策，物理接觸後可能偏離名義軌跡；強制終止 mover 時外掛無內建命令逾時，須結束整個模擬。主要人物仍用既有原生 set_pose 程序，解析人物真值與模型實際到位可能不同步。
+- PoseArray 順序依 YAML，不包含半徑；內附情境皆為 0.25 公尺。自訂尺寸需用 bag_to_eval 的 `--pedestrian-radius` 指定保守最大值。缺 topic／缺樣不得判定動態安全通過；仍未實作連續碰撞監測、自動 scenario_check 執行器或純 Nav2 讓行事件偵測。
+- eval-bag 與 loc-check 假設標準 map→world 為單位轉換，替代出生不是改變世界原點。自訂地圖需先核對座標，非單位轉換須手動轉換評估，loc-check 不支援自訂轉換。初始就停的 stop-go 不能代替行進煞停驗收，須另做既有 fault-check。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 合併衝突解決、雙方歷史完整性與文件一致性 | 待驗證 |
+| pytest、check_static 與 xacro／YAML／XML／launch 契約 | 待驗證 |
+| 四個 placeholder 預設關閉、明確選用與來源互斥 | 待驗證 |
+| Dockerfile 原生相依、Nav2 underlay 建置與 colcon build／test | 待驗證 |
+| Fortress apt／fork、硬體介面入口與唯一 cmd_vel watchdog | 待驗證 |
+
+| 純 Python 測試與情境 schema／原始人物路徑一致性 | PASS：合併 develop 後 pytest 897 passed、1 skipped |
+| 全情境路徑／行人／出生點淨空與地圖邊界 | PASS（pytest／check_static） |
+| YAML／SDF／xacro／launch／Bash 靜態檢查 | PASS：check_static（7 情境） |
+| Humble colcon build／test 與執行期依賴 | PASS：colcon test 647 tests、0 failures（t31s） |
+| 七種情境 headless 啟動及 default 舊路徑重現 | 部分：aisle_crossing、alt_start、follow_stop_go、follow_turns 已啟動；narrow_pass、checkout_queue 未跑 |
+| alt_start 的 EKF／AMCL／slam_toolbox／loc-check 初始姿態 | PASS：loc-check 6/6，平均誤差 0.04 m |
+| Fortress 行人碰撞幾何、雷射與 Nav2 成本地圖可見性 | 待驗證 |
+| 窄走道／結帳／穿越的實際相遇、讓行與恢復 | 部分：aisle_crossing nav-check 4/5，valid goal 到 household 120 秒內未收斂（ACTIVE）；窄走道、結帳未驗 |
+| 急轉／迴轉／停走／過近完整零 Twist 與故障回歸 | 部分：follow_stop_go 追蹤 PASS（直線平均 0.95 m、轉彎 1.04 m）；follow_turns FAIL（平均 2.71 m，屬既有跟隨控制問題，非情境框架） |
+| PoseArray 真值、錄製完整性、間距與 report 中繼資料 | 待驗證 |
+| amd64／arm64 原生容器驗收 | 待驗證 |
+
+
+## 2026-10-24：t31 情境分支合併 develop 衝突整合
+
+### 修改內容
+
+- 解決 README、ARCHITECTURE、PROGRESS、follow／guide launch、dev.sh 與模式 launch 測試的七處檔案衝突。保留雙方全部章節與 develop 歷史紀錄，依序接回情境紀錄，沒有刪除既有審查結果或勾選 ROADMAP。
+- follow／guide 同時保留並轉送情境、Nav2 stack、故障注入、時間、里程計及模式參數；`nav2_stack` 預設 apt、`mcu_comm` 預設 false。保留人物位姿唯讀橋接，UWB 與 Gazebo 人物共用本次情境解析路徑。
+- 修正無衝突標記的交互問題：fork underlay 存在而選 apt 時，導航會另開隔離程序，原先繼承的出生姿態會遺失。導航新增選用的 spawn 三參數並轉送，slam_toolbox 僅在三個值完整時覆寫定位起點；直接啟動未指定情境的定位仍保留原 dock 行為。
+- 擴充 ROS-free launch 回歸測試，涵蓋兩種 bringup 與三種 stack、MCU 預設關閉／時鐘轉送、人物橋接／共用路徑、apt 隔離程序的出生姿態，以及有／無情境的 slam_toolbox 定位。
+- 已檢視 `git diff origin/develop`，包含未衝突檔案的差異。develop 的容器、Nav2 apt／fork YAML、兩份 Shrink＋Wait BT、模式 mux、世界檔、MCU 與跟隨改進保留；額外差異為情境、出生姿態、動態行人、離線評估與測試整合。預設速度接線維持 mux → watchdog，未新增底盤 `/cmd_vel` 發布者，未更動 submodule 固定版本。
+
+### 本次自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：836 passed、1 skipped、1 個既有 xacro Python 棄用警告。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；25 YAML／RViz、13 XML／SDF／xacro、116 Python、5 Bash、7 情境，包含兩／三錨點與 ekf／ground_truth 的 xacro 展開。
+- `./scripts/dev.sh scenario-list`：七種情境列出成功，不啟動 Docker。`git diff --check` 通過；工作樹衝突標記已清除。另以 AST 比對兩邊 launch 參數，並比對雙方文件章節與 develop 關鍵設定。
+- 未執行 git add、提交、推送、Docker、安裝套件或建立虛擬環境。index 仍保留 unmerged 狀態，需維護者確認工作樹後完成暫存與合併。
+
+### 限制與下一步
+
+- 此環境沒有 ROS；以上為純 Python 與靜態檢查，不能當作 Humble colcon、DDS、Gazebo 或硬體驗收。
+- 維護者須執行容器 colcon build／test，再依 SCENARIOS 驗證七種 headless 情境；特別核對 alt_start 在 apt／fork、已有 fork underlay 的 apt 隔離程序、AMCL 與 slam_toolbox 定位起點，以及 EKF／ground_truth 的 TF 唯一來源。
+- 核對人物位姿橋接、UWB 共用路徑、行人碰撞／雷射／成本地圖與錄製評估覆蓋；guide／follow 分開驗證預設 watchdog 為唯一 `/cmd_vel` 發布者、故障零速、NAV2_HANDOFF 與選用 `mcu_comm:=true`。fork 的既有 TEB 阻擋問題與人物模型延遲仍以原 develop 紀錄為準，本次合併未調校或宣稱修復。
+
+### 審查驗證
+
+以下由審查者執行與填寫，本次自行檢查不代填審查結果。
+
+| 項目 | 結果 |
+| --- | --- |
+| 衝突解決、雙方文件歷史與 develop 行為保留 | 待驗證 |
+| pytest、靜態檢查與 Humble colcon build／test | 待驗證 |
+| 七種情境與預設情境回歸 | 待驗證 |
+| apt／fork／auto 與情境參數共存、隔離 apt 出生姿態 | 待驗證 |
+| alt_start 的 EKF／AMCL／slam_toolbox 與 TF 唯一來源 | 待驗證 |
+| 人物橋接、共用路徑、動態行人與錄製評估 | 待驗證 |
+| watchdog 唯一 cmd_vel 出口、急停／故障零速與跟隨交接 | 待驗證 |
+| MCU 預設關閉、明確選用與 amd64／arm64 容器回歸 | 待驗證 |
 ## 2026-10-24：獨立障礙安全層、選用 collision_monitor 與故障觀測
 
 ### 修改內容
@@ -1140,6 +1370,43 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 - 推論：主要瓶頸是視線遮蔽判定過於保守（大量誤判遮蔽）與 Nav2 接手時速度過低，不是 BLOCKED_WAIT 本身；需另外調整 LOS 判定寬度／去彈跳與 Nav2 跟隨速度上限，再以 follow-eval 驗證。ROADMAP「評估濾波延遲、轉彎跟隨…」維持未勾選。
 - 已驗證：filter latency 0.07–0.08 s PASS；near_stop PASS；pytest 893 passed。fault-check 結果見合併 PR 說明。
 
+## 2026-10-24：可重現離線評估的錄製來源、重跑驗證與多次彙整
+
+### 本次完成
+
+- 錄製命令增加可重複的 `--meta KEY=VALUE` 與鍵名驗證；收尾時保存 UTC 起始時間、Git 提交／dirty、Nav2 子模組提交、topics、指定錄製秒數與使用者中繼資料至 bag 內的 `manifest.json`。Git 查詢失敗以 unknown 表示，不阻止錄製。
+- 報告固定鍵排序與九位小數精度，CLI 參數先正規化再計算；新增純邏輯正規化與欄位差異比較，排除來源路徑及預留的獨立產生時間欄位。
+- 新增 `eval_verify`／`dev.sh eval-verify NAME`，依保存的轉換設定與評估參數在暫存目錄重跑，回傳相同／差異狀態並列出差異欄位，不覆寫原報告。
+- 新增純邏輯彙整與 `eval_summary`／`dev.sh eval-summary NAME... [--output DIR]`，輸出數值 count／mean／min／max／樣本標準差、既有 verdict 的通過／失敗次數及來源缺漏／版本與情境不一致警告。
+- 補齊純邏輯、錄製收尾、命令列驗證、暫存清理及高精度參數重現測試；更新使用說明與 `docs/METRICS.md` 精確命令。未修改 bag_converter、ROADMAP 或控制流程，未提交或推送。
+
+### 自行檢查
+
+- 使用指定沙盒 Python 執行儲存庫根目錄 pytest：834 項通過、1 項略過，另有既有 xacro 相依套件的棄用警告。`scripts/check_static.py` 回報 PASS：19 份 YAML／RViz、13 份 XML／SDF／xacro、117 份 Python、5 份 Bash，並完成兩／三錨點在 ekf／ground_truth 的 xacro 展開。
+- `git diff --check` 通過。未安裝套件、建立虛擬環境或執行 Docker。
+
+### 已知限制與下一步
+
+- 本環境沒有 ROS，尚未以 Humble sqlite3 真實 bag 驗證錄製與 SequentialReader；維護者需執行容器 colcon build/test 與模擬，驗證 console script、錄製收尾、重跑一致及差異回傳碼。
+- manifest 的 duration 為指定上限而非實際經過時間；中繼資料由使用者填寫，dirty 旗標不保存修改內容。Git 不可用時只能標示 unknown。
+- 驗證需原 bag、轉換中繼資料、世界檔與 zones 原路徑仍有效；不保證重新啟動 Gazebo 會產生相同資料。舊版未正規化參數的報告可能需先重新評估。
+- 彙整警告不會禁止比較，仍需人工核對參數、資料覆蓋、回合順序與失敗事件；現有報告沒有 verdict 時不推論通過。下一步由維護者以同情境兩次錄製及刻意改動報告的案例驗收。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| manifest 欄位、Git 降級與 metadata 驗證 | PASS：模擬錄製 t34r1 產生 manifest（metadata scenario／nav2_stack 正確）；容器內 git 不可用時三欄降級為 unknown，錄製未受影響 |
+| 正規化、九位精度與差異欄位 | PASS（pytest）；實際 bag 驗證見下列 |
+| 暫存重跑、原報告保留與結束碼 | PASS：`eval-verify t34r1` 輸出 Report matches、結束碼 0 |
+| 多次統計、verdict 與來源警告 | 部分：`eval-summary t34r1` 單一 bag 結束碼 0；多次重複彙整只有 pytest 覆蓋 |
+| pytest 與靜態檢查 | PASS：pytest 834 passed、check_static PASS |
+| Humble colcon 與模擬 bag 整合 | PASS：colcon test 650 tests、0 failures；guide 無頭模擬錄製 60 秒 → eval-bag → eval-verify → eval-summary 全部結束碼 0 |
+
+審查時間：2026-10-24 17:20（台北時間），Docker 專案 shoprep（t34s）。限制：manifest 的 Git 欄位在容器內為 unknown（容器沒有可用 git），需在主機補記；機器人在錄製期間靜止，未涵蓋導航中的報表數值。
+
+審查時間：2026-10-24 17:40（台北時間），Docker 專案 shopscen（t31s／t31f）。修正：整數 YAML 航點使 uwb_sim_node 崩潰（'y' 須為 float），person_path 改為一律回傳 float 並加測試。
+
 ## 2026-10-24：LOS 足跡檢查縮至跟隨停止點（待模擬驗證）
 
 - `line_of_sight_clear` 新增可選的 `follow_distance` 關鍵字參數，舊呼叫維持原行為。目標距離大於跟隨距離時，足跡檢查長度改為 `distance - max(los_margin, follow_distance)`，排除停止點與人物間的回波；一般與加寬 LOS 均使用控制器的跟隨距離，保留原寬度、去彈跳、寬度遲滯與 NAV2_HANDOFF 狀態機。
@@ -1170,3 +1437,81 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 - t39s（含 t40 LOS 修正，route_around:=false）：fault-check obstacle 與 follow 套件全部「no moving baseline」→ **FAIL**。log 顯示機器人起步跟隨（v 0.18–0.5、w 至 0.72），轉彎切角後前方 0.593 m < 0.65 進入 OBSTACLE_STOP，v、w 皆 0 且永不恢復，人員離開至 5.6 m。
 - 已由 t44 加入 `obstacle_stop_rotate`（預設 true）：OBSTACLE_STOP 時線速度維持 0，旋轉淨空且目標新鮮時原地轉向人員；pytest 946 passed，**待模擬驗證**。
 - follow-eval 未跑完（為讓出模擬鎖給 hw／split 提前停止）。此分支**未合併**；下一步：重建後跑 fault-check --suite obstacle／follow 與 follow-eval，確認不再卡死且追蹤距離改善後再開 PR。
+## 2026-10-24：硬體介面分支審查結果（18:03 台北時間）
+
+| 項目 | 結果 |
+| --- | --- |
+| pytest／check_static（合併含情境的 develop 後） | PASS：943 passed、1 skipped；check_static PASS（4 rosidl 訊息） |
+| Humble colcon build／test（t41） | PASS：672 tests、0 failures |
+| guide nav-check（use_real_* 皆預設 false） | PASS 5/5 |
+| follow fault-check --suite obstacle | PASS 4/4（lidar_front 0.2 停止 0.11 s） |
+| follow fault-check --suite follow | PASS 7/7 |
+| 真實驅動、實體感測器、arm64 | 未驗證（僅模擬；未連接任何硬體） |
+
+- 合併 develop 時 sim.launch.py 保留分源 bridge（lidar／imu／base 各自受 `use_real_*` 控制）並接上情境出生姿態與行人；測試替身新增 `pedestrian_actions`。
+
+## 2026-10-24：容器拆分審查（合併至 develop）
+
+- t42（硬體介面整合前 cf88ae5）：colcon test 667／0；拆分 guide nav-check 5/5；XRCE comm-e2e 7/7。
+- 硬體介面 #19 後再次合併 develop：sim.launch.py 保留拆分分支的 start_sim／start_localization GroupAction，加入硬體介面的 validate_sources、各來源 lidar／imu／base bridge 與 wheel_odom_noise simulate_* 旗標。tests/test_hardware_launch.py 改為展開 GroupAction；pytest 972 passed。
+- 尚未驗證：硬體介面整合後版本（70046eb+）的 Gazebo 模擬；下次須再執行 guide nav-check 與 comm-e2e。
+- 本次取代 codex/microros-agent-e2e 的工作。
+
+## 2026-10-26：Mac Apple Silicon 原生容器、SLAM 與整合回歸
+
+### 本次修改
+
+- 切至 `develop`，以 macOS arm64／Docker Desktop 的 Linux arm64 引擎原生建置三個映像，沒有固定 platform。Nav2 私有子模組固定 `bf60ee0`，未修改私有原始碼。使用者後續授權提交／推送，並要求不開 PR；本次整理於 `codex/mac-arm64-slam`，不合併 develop。
+- `dev.sh` 從任意目錄載入根 `.env`，依服務第 1 個實例查詢實際連接埠；本機使用 noVNC 6081／VNC 5970。6080 不由本專案接管。早先舊 display 曾短暫停止後恢復；晚間 Docker Desktop 已關閉，重啟後原容器已不存在，僅重建本專案 compute／display。
+- 修正 Bash 3.2 空陣列 nounset、apt 隔離啟動的空 `map:=`、comm-e2e-up 意外重建 compute 網路命名空間，以及 15 個長駐 Python 節點中斷時 context 提早關閉問題。
+- 服務專用 Fast DDS writer 的 max blocking time 改為 3 秒，緩解一次 lifecycle configure 回應遺失；一般 topic 仍為 0.1 秒。這是上游競態的緩解，不能保證根治。
+- 跟隨遇前方障礙改為完整零 Twist；安全層完整旋轉圓盤通過後保留要求角速度，避免摩擦門檻造成停滯。平移／曲線的縮速與所有 STOP／STALE 保護保留。
+- 人物模型改用持續非同步 SetEntityPose 服務連線。跟隨交接在遠距離時由 Nav2 持有，接近才回到 DIRECT；有新鮮 guard 狀態時由該層負責側向淨空縮速。apt follow 明確傳入 RPP 0.5 m/s，guide 維持 0.4；目標 map 轉換只容許重用不超過 0.2 秒且不刷新來源時間的配對結果，避免 TF 短暫未到導致取消重試。
+- 故障檢查改用平面真值速度，0.9 m 減速案例要求平移基線與恢復，不能以純旋轉冒充。
+- 依使用者建議，apt 全域規劃器改用 Humble Smac2D；保留原 0.8 m 搜尋容差。fork 保留原生建置的 NavFn。不可達目標檢查同步支援兩種格網規劃器。
+- 動態情境發現世界 SceneBroadcaster 沒有個別時間戳，行人因此不動；補各模型的 Fortress PosePublisher、模型專屬 pose topic 橋接及有界時間差合併。初次誤用不支援的 topic override 已修正，Fortress 6.18 另須同時設定 `publish_nested_model_pose=true`，否則只收到空 Pose_V；修正後三種動態情境的時間戳、移動與雷射可見性實測通過。
+- SLAM 增加 map 固定座標的俯視 RViz 設定、雷射／機器人／規劃路徑／位姿圖顯示及可選設定檔。重載前檢查位姿圖兩檔與有限出生姿態。
+- save-map 改與 map-tour 共用服務結果碼及四個有更新的非空檔案檢查；先完成暫存整組再替換目的檔，負例會保留原圖。實測 localization 序列化服務回覆成功卻未寫圖，新檢查正確以失敗回報，並防止舊圖冒充新輸出。新增 [SLAM 操作說明](SLAM.md)。暫存儲存成功，localization 負例也確認原四檔 SHA-256 不變、暫存清除。
+
+### 自行檢查
+
+- 三種 arm64 原生映像；fork 18 套件建置及 110 項動態連結檢查通過。最後完整檢查為 pytest 1035 passed、colcon 721 tests／0 errors／0 failures／5 skipped；靜態檢查與 git diff --check PASS。
+- noVNC／RViz 實際登入顯示；即時時鐘、雷射、IMU、里程計、TF、Nav2 lifecycle 與唯一 watchdog 14 項檢查通過。SIGINT／SIGTERM 都確認 watchdog 先送零速、結束碼 0。
+- 原 NavFn／AMCL guide nav-check 6/6；AMCL 六區定位最大 0.1029 m／2.0044°。建圖巡航 17/17；第一份新位姿圖冷啟動重測六區定位最大 0.0184 m／0.459°。第一輪 lifecycle 未就緒的失敗紀錄保留。
+- Smac2D 的第二份新圖 `arm64_smac_slam` 亦完成 17/17 航點，四檔保存；重載定位六區全部 PASS，位置 RMSE 0.02049 m，最大 0.03130 m／0.41884°。RViz 實際顯示建圖，並量測 SDF／格網幾何；缺少外牆面不能推論全圖誤差。
+- 人物同步重測平均 0.0096 m／0.03 s；原 NavFn 跟隨最終 120 模擬秒直線／轉彎距離誤差 RMSE 1.121／1.200 m、濾波延遲 0.08 s。未出現過近／重取得事件，整體 NOT_COVERED，尚須對應情境及 Smac 重測。
+- guard＋collision_monitor 的障礙故障 4/4、跟隨故障 7/7；模式切換及急停／重設 15/15。MCU Python 10/10、PTY serial 10/10、C／XRCE 7/7，均為模擬。
+- bag 轉換／重跑／彙整成功；晚錄導航的負例遭拒。loc-check 直接送 action，該 bag 沒有購物狀態 episode，不能由它宣稱導航成功率。Smac alt_start 兩個 action 成功，但入口真值 yaw 0.558 rad 未達情境建議；動態情境初輪停滯，保留失敗紀錄。
+
+### 限制與下一步
+
+- Smac2D stop-go 直線 RMSE 0.341 m、五次過近停止 PASS；turns 直線／轉彎 RMSE 1.227／1.366 m，人物同步兩情境均 PASS。turns 接觸時真值微動仍 FAIL，命令確認為零；不放寬門檻或移除碰撞。過近解除遲滯及大角度原地對準已補純邏輯測試。
+- 三種動態行人的實際來源／移動／雷射驗證通過；aisle_crossing 仍逾時，narrow_pass 的 household 雖 action 成功但真值誤差 1.878 m，checkout_queue 入口 yaw 0.439 rad 未達建議，均明列未通過。後續應分析 AMCL 動態遮擋與代價地圖／路徑／guard 的交互作用；不可用真值修正控制器來掩蓋定位問題。
+- 拆分容器的 14 項即時檢查及 nav-check 6/6 PASS，終點真值誤差 0.139 m。fork 導航與 yaw-check 本輪未重做功能回歸，既有建置及純測試不能取代實測。
+- 使用者會另外測 Linux；本次沒有新的 Linux amd64 原生結果，不能將歷史結果視為本次修改已通過。沒有連接硬體。完整證據索引見 [arm64 驗收](VALIDATION_ARM64.md)，日誌／bag 為忽略版控的本機產物。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| arm64 原生映像與套件建置 | 僅使用者 Mac 自行回報（映像、fork 建置、colcon 721／0 failures）；審查端無 arm64 主機，未重做 |
+| 環境變數與實際連接埠 | 審查端檢視 `dev.sh`／`.env.example`／compose：`.env` 已列入 .gitignore，連接埠預設 6080／5910 只綁 127.0.0.1；在 Linux 以環境變數覆寫連接埠（16085／15915）實際啟動通過。Mac 上 6081／5970 為自行回報 |
+| SLAM 建圖、儲存與重載定位 | 審查端只跑 pytest（含 `test_slam_save.py`）；mapping＋map-tour、save-map、重載定位為 Mac 自行回報，Linux 未重跑 |
+| 模擬功能與安全回歸 | 審查端 Linux amd64（2026-10-27）：apt Nav2＋Smac2D guide nav-check 5/5、loc-check 六區全過（最大 0.027 m）、follow 故障 fault-check 7/7。跟隨轉彎、aisle_crossing、narrow_pass、checkout_queue 仍未通過（見上方限制）；fork 導航與 yaw-check 未重測 |
+| Linux amd64 相容性 | 審查端 Linux amd64 Docker：映像建置、colcon build、colcon test 721 tests／0 errors／0 failures／5 skipped；pytest 1034 passed、1 skipped（私有 fork 子模組未取出）。修正 3 個 `setup.py` 的 glob，避免主機 pytest 留下的 `launch/__pycache__` 讓 colcon build 失敗 |
+
+使用者 2026-10-27 授權測試通過後合併至 develop（取代上方「不開 PR／不合併」的原指示）。
+
+## 2026-10-27：follow-los 與 develop 衝突整合
+
+- 以 develop 為執行時基準，保留近停釋放遲滯、大角度先對準、guard 接手側向減速、短暫 map TF 快取、人物非同步服務、Smac2D 及原有 YAML 數值；只增加必要的 `obstacle_stop_rotate` 設定。歷史前饋／距離保持實驗保留於診斷用途，執行時預設不啟用；不引入控制器真值輸入。
+- 疊加 t40：一般與加寬 LOS 均檢查至跟隨停止點，保留近距離 margin 與失效保護。疊加 t44：前方受阻立即固定零線速度，僅在有效目標、有效雷射／TF、至少 0.45 公尺旋轉圓盤淨空且未由 Nav2 接手時，允許受角速度／角加速度限制的原地轉向。近停／遺失／過期／guard STOP 或 STALE 均優先雙軸停止；前方清空後仍須遵守大角度對準遲滯。
+- Nav2 交接遵循 develop 的成功返回 DIRECT、接近與 LOS 恢復規則，沒有重新套用已撤回 t35 的持續持有策略；保留分支既有的命令安全轉送及取消／排空生命週期。README、ARCHITECTURE、METRICS 保留雙方內容，舊設計明確列為歷史；本檔保留雙方全部工作紀錄，依日期與已知審查時間排列。
+- 自行檢查：`/workspace/scratch/venv-shop/bin/python -m pytest -q` 為 1158 passed、1 skipped、1 warning（既有 xacro 棄用警告）；同一 Python 執行 `scripts/check_static.py` 為 PASS：4 個訊息介面、31 份 YAML／RViz、15 份 XML／SDF／xacro、151 份 Python、7 份 Bash、7 種情境，含兩／三錨點在 ekf／ground_truth 的 xacro 展開。`git diff --check` 與全儲存庫衝突標記檢查通過；這些為純 Python／靜態驗證，不能取代模擬驗收。
+- 限制與下一步：本次未執行 Docker、Gazebo、ROS 或硬體驗收；需重跑轉角跟隨、follow-eval、fault-check obstacle／follow，確認恢復移動、追蹤距離與故障停止。未提交或推送，合併結果留待使用者審查。工作檔衝突已清除，但此沙盒將實際 Git 索引目錄 `/workspace/repos/Almighty-shopping-car/.git/worktrees/follow-los/` 設為唯讀，`git add` 因無法建立 `index.lock` 失敗；須在可寫入索引的環境執行 `git add -u` 才能將衝突標記為已解決，合併仍未提交。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| develop 行為、t40／t44 與安全優先序回歸 | 待驗證 |
+| 文件歷史、設定值與衝突清除 | 待驗證 |
+| Gazebo 轉角恢復、follow-eval 與故障驗收 | 待驗證 |
