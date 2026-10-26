@@ -45,17 +45,25 @@ def test_apt_environment_does_not_mutate_or_retain_fork():
     assert '/nav2_ws/' in original['AMENT_PREFIX_PATH']
 
 
-def test_apt_launch_reexec_isolates_binaries_and_forwards_arguments(monkeypatch):
+@pytest.mark.parametrize('spawn', [{}, dict(spawn_x='-2.4', spawn_y='0', spawn_yaw='1.5707963267948966')])
+def test_apt_launch_reexec_isolates_binaries_and_forwards_arguments(monkeypatch, spawn):
     monkeypatch.setenv('AMENT_PREFIX_PATH', '/nav2_ws/install/nav2_msgs:/opt/ros/humble')
     env = load('shopping_robot_navigation/launch/navigation.launch.py')
     actions = env['start'](dict(nav2_stack='apt', use_mux='true', slam_mode='map_server',
-                               map='/ws/map with spaces.yaml', use_sim_time='true'))
+                               map='/ws/map with spaces.yaml', use_sim_time='true',
+                               rpp_desired_speed='0.5', **spawn))
     process = actions[-1]
     assert process.kind == 'ExecuteProcess'
     assert 'map:=/ws/map with spaces.yaml' in process.cmd
+    assert 'rpp_desired_speed:=0.5' in process.cmd
     assert '/nav2_ws/' not in process.env['AMENT_PREFIX_PATH']
     assert 'local_setup.bash' in process.cmd[2]
     assert 'exec ros2 launch' in process.cmd[2]
+    for name in ('spawn_x', 'spawn_y', 'spawn_yaw'):
+        if name in spawn:
+            assert f'{name}:={spawn[name]}' in process.cmd
+        else:
+            assert not any(arg.startswith(name+':=') for arg in process.cmd)
 
 
 def test_fork_params_and_tree():
@@ -113,12 +121,16 @@ def test_fork_params_and_tree():
         assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
         for key in fork_only:
             layer.pop(key)
-    planner = params['planner_server']['ros__parameters']['GridBased']
-    assert planner.pop('dijkstra_full_expansion') is True
     assert shrink['costmap_tolerance'] == 98
     assert shrink['service_timeout'] == 3.0 and shrink['restore_attempts'] == 2
     for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator'}:
         assert apt[key] == params[key]
+    assert apt['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
+    assert params['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
+    planner = params['planner_server']['ros__parameters']['GridBased']
+    assert planner == dict(plugin='nav2_smac_planner/SmacPlanner2D', tolerance=0.8,
+                           downsample_costmap=False, max_planning_time=2.0,
+                           cost_travel_multiplier=2.0, allow_unknown=True)
     assert 'behavior_trees' in (NAV/'CMakeLists.txt').read_text()
     for path in (NAV/'config').glob('*.yaml'):
         for node in yaml.safe_load(path.read_text()).values():
@@ -176,7 +188,7 @@ def test_build_configuration():
     assert entry.index('/opt/ros/humble') < entry.index('/nav2_ws/install') < entry.index('/ws/install')
     packages = (ROOT/'docker/nav2_fork_packages.txt').read_text().split()
     assert {'nav2_bt_navigator', 'nav2_behavior_tree', 'nav2_behaviors', 'nav2_controller',
-            'nav2_core', 'nav2_util', 'nav2_msgs', 'nav2_costmap_2d', 'nav2_navfn_planner',
+            'nav2_core', 'nav2_util', 'nav2_msgs', 'nav2_costmap_2d', 'nav2_navfn_planner', 'nav2_smac_planner',
             'custom_controller', 'custom_nav_to_pose'} <= set(packages)
     assert not any(p.startswith(('opennav_', 'custom_layer')) for p in packages)
     assert not {'navigation2_run', 'camera_offset_publisher', 'nav2_rviz_plugins', 'nav2_amcl'} & set(packages)
@@ -209,6 +221,44 @@ def test_contract_preflight():
     spec.loader.exec_module(module)
     assert module.missing_parameters('') == list(module.PARAMETERS)
     assert not module.missing_parameters(' '.join(f'".{p}"' for p in module.PARAMETERS))
+
+
+@pytest.mark.parametrize('layout', ['nav2_smac_planner/lib', 'lib'])
+def test_smac_requires_fork_2d_library(tmp_path, monkeypatch, layout):
+    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    import check_nav2_contract as contract
+    import check_nav2_linkage as linkage
+
+    params = (NAV/'config/nav2_params_fork.yaml').read_text()
+    install = tmp_path/'install'
+    library_dir = install/layout
+    library_dir.mkdir(parents=True)
+    # Hybrid alone is insufficient; pluginlib needs the 2D library.
+    (library_dir/'libnav2_smac_planner.so').touch()
+    for check in (contract.check_planner_install, linkage.check_planner_install):
+        with pytest.raises(RuntimeError, match='refusing apt plugin fallback.*ABI mixing'):
+            check(params, install)
+        check('plugin: nav2_navfn_planner/NavfnPlanner', install)
+    plugin = library_dir/'libnav2_smac_planner_2d.so'
+    plugin.symlink_to(library_dir/'missing.so')
+    with pytest.raises(RuntimeError, match='libnav2_smac_planner_2d.so'):
+        contract.check_planner_install(params, install)
+    plugin.unlink()
+    plugin.touch()
+    contract.check_planner_install(params, install)
+
+
+def test_linkage_rejects_missing_smac_before_ldd(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    import check_nav2_linkage as linkage
+
+    monkeypatch.setattr(linkage, 'FORK_PARAMS', NAV/'config/nav2_params_fork.yaml')
+    monkeypatch.setattr(linkage, 'Path', lambda path: tmp_path/path.lstrip('/'))
+    def unexpected_ldd(*args, **kwargs):
+        pytest.fail('Missing fork Smac must fail before running ldd on apt libraries')
+    monkeypatch.setattr(linkage.subprocess, 'run', unexpected_ldd)
+    with pytest.raises(RuntimeError, match='refusing apt plugin fallback'):
+        linkage.main()
 
 
 def test_truth_metrics_and_comparison():

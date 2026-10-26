@@ -8,13 +8,14 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/
                        'ros2_ws/src/shopping_robot_gazebo'))
-from shopping_robot_sim.fault_check import Sample, evaluate_trial, moving
+from shopping_robot_sim.fault_check import Sample, evaluate_trial, moving, planar_sample
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--motion-timeout', type=float, default=90.0,
                         help='Wall seconds allowed to find baseline/recovery motion')
+    parser.add_argument('--suite', choices=['follow', 'obstacle'], default='follow')
     args = parser.parse_args()
     import rclpy
     from rclpy.node import Node
@@ -29,11 +30,13 @@ def main():
     node = Node('fault_check', parameter_overrides=[Parameter('use_sim_time', value=True)])
     samples = {'cmd': [], 'truth': []}
     state = {'status': None, 'clock': None}
+    guard_samples = []
     def now():
         return node.get_clock().now().nanoseconds/1e9
     def record(key, twist):
         stamp = now()
-        sample = Sample(stamp, twist.linear.x, twist.angular.z)
+        sample = (planar_sample(stamp, twist.linear.x, twist.linear.y, twist.angular.z)
+                  if key == 'truth' else Sample(stamp, twist.linear.x, twist.angular.z))
         # Multiple publishers may deliver commands at one clock tick. Preserve
         # motion over zero so a competing nonzero command cannot be hidden.
         if samples[key] and samples[key][-1].time == stamp:
@@ -46,6 +49,13 @@ def main():
             state['status'] = json.loads(msg.data)
         except ValueError:
             state['status'] = None
+    def guard(msg):
+        try:
+            data = json.loads(msg.data)
+            guard_samples.append(data)
+        except (ValueError, KeyError, TypeError):
+            pass
+    node.create_subscription(String, '/safety/obstacle_state', guard, 100)
     def clock(msg):
         state['clock'] = msg.clock.sec+msg.clock.nanosec/1e9
     node.create_subscription(String, '/sim/fault_status', status, QoSProfile(
@@ -67,9 +77,9 @@ def main():
         publisher.publish(String(data=command))
         if not wait(lambda: state['status'] == expected, 5):
             raise RuntimeError('No fault status acknowledgement: '+command)
-    def motion():
-        return all(any(now()-1 <= s.time <= now() and moving(s) for s in samples[k])
-                   and samples[k] and moving(samples[k][-1])
+    def motion(translation_only=False):
+        return all(any(now()-1 <= s.time <= now() and moving(s, translation_only) for s in samples[k])
+                   and samples[k] and moving(samples[k][-1], translation_only)
                    and now()-samples[k][-1].time < 0.25 for k in samples)
     results = []
     owns_faults = False
@@ -77,13 +87,21 @@ def main():
         if not wait(lambda: state['status'] is not None and state['clock'] is not None
                     and publisher.get_subscription_count() > 0, 10):
             raise RuntimeError('Requires /clock and opt-in /sim/fault_status')
+        if not wait(lambda: len(node.get_publishers_info_by_topic('/cmd_vel')) == 1
+                    and node.get_publishers_info_by_topic('/cmd_vel')[0].node_name
+                    == 'cmd_vel_watchdog', 10):
+            raise RuntimeError('/cmd_vel must have exactly one publisher: cmd_vel_watchdog')
         if state['status']:
             raise RuntimeError('Clear existing faults before running the check')
         owns_faults = True
         print('Fault | Result | cmd stop (s) | truth stop (s) | thresholds / reason', flush=True)
-        for fault in ('uwb_stale', 'uwb_dropout:6.0', 'uwb_noise:0.5',
-                      'lidar_drop', 'lidar_freeze', 'odom_freeze'):
-            if not wait(motion, args.motion_timeout):
+        faults = (('lidar_front:0.9', 'lidar_front:0.2', 'lidar_drop', 'lidar_freeze')
+                  if args.suite == 'obstacle' else
+                  ('uwb_stale', 'uwb_dropout:6.0', 'uwb_noise:0.5',
+                   'lidar_drop', 'lidar_freeze', 'odom_freeze', 'lidar_front:0.2'))
+        for fault in faults:
+            translation_only = fault == 'lidar_front:0.9'
+            if not wait(lambda: motion(translation_only), args.motion_timeout):
                 results.append(False)
                 print(f'{fault} | FAIL | - | - | no moving baseline', flush=True)
                 continue
@@ -95,14 +113,21 @@ def main():
             end = now()
             during = {k: [s for s in v if start <= s.time <= end] for k, v in samples.items()}
             send('clear', [])
-            recovered = wait(lambda: now() > end+0.3 and motion()
-                             and all(any(s.time > end+0.3 and moving(s) for s in v)
+            recovered = wait(lambda: now() > end+0.3 and motion(translation_only)
+                             and all(any(s.time > end+0.3 and moving(s, translation_only) for s in v)
                                      for v in samples.values()), args.motion_timeout)
             recovery = {k: [s for s in v if s.time > end+0.3] if recovered else []
                         for k, v in samples.items()}
             ok, cmd, gt, reason = evaluate_trial(
                 during['cmd'], during['truth'], baseline['cmd'], baseline['truth'],
                 recovery['cmd'], recovery['truth'], start, end, noise=fault.startswith('uwb_noise'))
+            if fault == 'lidar_front:0.9':
+                observed = [g for g in guard_samples if start <= g['t'] <= end]
+                slow = [g for g in observed if g['state'] == 'SLOW' and 0 < g['scale'] < 0.95]
+                ok = (bool(slow) and recovered and all(any(moving(s, translation_only=True) for s in stream)
+                      for stream in (during['cmd'], baseline['cmd'], baseline['truth'])))
+                cmd = gt = None
+                reason = 'guard SLOW scale<0.95; translating command, baseline and recovery required'
             results.append(ok)
             print(f'{fault} | {"PASS" if ok else "FAIL"} | {cmd} | {gt} | {reason}', flush=True)
         return 0 if all(results) else 1

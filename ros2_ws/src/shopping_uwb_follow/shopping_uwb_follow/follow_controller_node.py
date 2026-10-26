@@ -1,6 +1,10 @@
 import math
+import json
+
+import signal
 
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -60,7 +64,10 @@ class FollowNode(Node):
             self.tf_buffer = Buffer(node=self)
             self.tf_listener = TransformListener(self.tf_buffer, self)
         self.target = self.target_time = self.scan_time = self.scan = None
+        self.cached_map_goal = self.cached_map_goal_time = None
         self.los_clear_wide = False
+        self.guard_state, self.guard_time = None, None
+        self.create_subscription(String, '/safety/obstacle_state', self.on_guard, 10)
         self.obstacle = float('nan')
         self.last_time = seconds(self)
         self.goal_handle = None
@@ -82,6 +89,13 @@ class FollowNode(Node):
         self.create_subscription(LaserScan, '/scan', self.on_scan, qos_profile_sensor_data)
         self.create_service(SetBool, '/follow/enable', self.enable)
         self.create_timer(0.05, self.tick)
+
+    def on_guard(self, msg):
+        try:
+            data = json.loads(msg.data)
+            self.guard_state, self.guard_time = data['state'], float(data['t'])
+        except (ValueError, KeyError, TypeError):
+            self.guard_state, self.guard_time = None, None
 
     def on_enabled(self, msg):
         self.set_enabled(msg.data)
@@ -141,17 +155,27 @@ class FollowNode(Node):
         try:
             robot = planar_pose(self.tf_buffer.lookup_transform(
                 'map', 'base_link', Time(seconds=self.target_time)))
+        except TransformException:
+            stamp = getattr(self, 'cached_map_goal_time', None)
+            # TF and target messages arrive independently. Reuse only a matched
+            # map goal from the last two 10 Hz measurements, never refresh its age.
+            if stamp is None or not 0 <= seconds(self)-stamp <= 0.2:
+                return None, False
+            pose = self.cached_map_goal
+        else:
+            point = transform_xy(self.target, robot)
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x, pose.pose.position.y = point
+            yaw = robot[2]+math.atan2(self.target[1], self.target[0])
+            pose.pose.orientation.z, pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
+            self.cached_map_goal, self.cached_map_goal_time = pose, self.target_time
+        try:
             laser = planar_pose(self.tf_buffer.lookup_transform(
                 self.scan.header.frame_id, 'base_link', Time.from_msg(self.scan.header.stamp)))
         except TransformException:
             return None, False
-        point = transform_xy(self.target, robot)
-        pose = PoseStamped()
-        pose.header.frame_id = 'map'
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x, pose.pose.position.y = point
-        yaw = robot[2]+math.atan2(self.target[1], self.target[0])
-        pose.pose.orientation.z, pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
         scan = self.scan
         los = line_of_sight_clear(scan.ranges, scan.angle_min, scan.angle_increment,
                                   transform_xy(self.target, laser), self.robot_half_width,
@@ -274,10 +298,16 @@ class FollowNode(Node):
         if self.client is not None:
             pose, los = self.map_goal_and_los()
         p = self.control.p
+        guard_fresh = (getattr(self, 'guard_time', None) is not None
+                       and 0 <= now-self.guard_time < 0.5)
         clearance = (side_clearance(scan.ranges, scan.angle_min, scan.angle_increment,
                                     p.side_sector_min, p.side_sector_max) if valid else math.nan)
         factor = side_speed_factor(clearance, p.side_slow_clearance,
                                    p.side_free_clearance, p.side_min_speed_factor)
+        if guard_fresh and self.guard_state in ('CLEAR', 'SLOW'):
+            # The downstream swept-footprint guard already scales this command;
+            # applying the fallback side cap too makes a moving target outrun us.
+            factor = 1.0
         if self.client is not None and not los:
             factor *= p.los_uncertain_speed_factor
         v, w, state, reason = self.control.step(
@@ -287,6 +317,12 @@ class FollowNode(Node):
                 and getattr(self, 'observed_cmd_vel_topic', '/cmd_vel') != '/cmd_vel'):
             self.state.publish(String(data='IDLE: Disabled'))
             return
+        if guard_fresh and self.guard_state in ('STOP', 'STALE'):
+            v = w = 0.0
+            self.control.v = self.control.w = 0.0
+            state, reason = 'OBSTACLE_STOP', 'Safety guard '+self.guard_state
+            if self.guard_state == 'STALE':
+                valid = False
         point = (pose.pose.position.x, pose.pose.position.y) if pose is not None else None
         decision = self.supervisor.step(now, state, self.target, los, obstacle,
                                         self.nav_status, map_target=point,
@@ -345,12 +381,15 @@ class FollowNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     node = FollowNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.cancel_goal()
         node.publisher.publish(Twist())
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()

@@ -141,11 +141,13 @@ def near_stop(samples, stop_distance, speed_limit=0.03, angular_limit=0.05,
     return events
 
 
-def reacquire_events(target_times, states, end, timeout=0.5, max_gap=0.25):
-    """Measure fresh-estimate -> FOLLOWING after stale intervals or LOST states.
+def reacquire_events(target_times, states, end, timeout=0.5, max_gap=0.25,
+                     recognized_states=('FOLLOWING',)):
+    """Measure fresh-estimate -> recognized tracking state after target loss.
 
-    No invented recovery at the recording boundary. A resumed estimate must still
-    be fresh at FOLLOWING, and state coverage must span that recovery interval.
+    Safety holds recognize a fresh target while correctly commanding zero motion.
+    Preserve the later FOLLOWING time separately; never count IDLE or LOST as
+    recovery. A resumed estimate must be fresh and state coverage continuous.
     """
     starts = [a+timeout for a, b in zip(target_times, target_times[1:]) if b-a > timeout]
     if target_times and end-target_times[-1] > timeout:
@@ -170,14 +172,18 @@ def reacquire_events(target_times, states, end, timeout=0.5, max_gap=0.25):
         if start <= until:
             continue
         fresh = next((t for t in target_times if t > start), None)
-        recovery = next((t for t, state in states if fresh is not None and t >= fresh
-                         and state == 'FOLLOWING'
-                         and fresh_at(t, fresh)), None)
+        recognized = set(recognized_states)
+        recovered = next(((t, state) for t, state in states if fresh is not None and t >= fresh
+                          and state in recognized and fresh_at(t, fresh)), None)
+        recovery = recovered[0] if recovered is not None else None
+        following = next((t for t, state in states if fresh is not None and t >= fresh
+                          and state == 'FOLLOWING' and fresh_at(t, fresh)), None)
         interval = [t for t, _ in states if start <= t <= (recovery if recovery is not None else end)]
         covered = (len(interval) >= 2 and interval[0]-start <= max_gap
                    and (recovery if recovery is not None else end)-interval[-1] <= max_gap
                    and all(b-a <= max_gap for a, b in zip(interval, interval[1:])))
-        events.append({'lost_s': start, 'fresh_s': fresh, 'following_s': recovery,
+        events.append({'lost_s': start, 'fresh_s': fresh, 'following_s': following,
+                       'tracking_s': recovery, 'tracking_state': recovered[1] if recovered else None,
                        'reacquire_s': recovery-fresh if recovery is not None else None,
                        'outage_to_following_s': recovery-start if recovery is not None else None,
                        'state_coverage': covered,
@@ -261,8 +267,13 @@ def follow_report(person, robot, target, states, path, params, end,
     rows.append(event_row('near_stop', near_stop(near, params['stop_distance'], deadline=stop_deadline)))
     events = reacquire_events([t for t, _ in target], states, end, params['lost_timeout'])
     for event in events:
-        if (event['following_s'] is None and event['fresh_s'] is not None
+        if (event['tracking_s'] is None and event['fresh_s'] is not None
                 and end-event['fresh_s'] > reacquire_limit and event['state_coverage']):
             event['status'] = 'FAIL'
     rows.append(event_row('reacquire', events, reacquire_limit))
+    # Keep the original motion-recovery gate; target recognition is distinct.
+    recognized = reacquire_events([t for t, _ in target], states, end, params['lost_timeout'],
+                                 recognized_states=('FOLLOWING', 'TOO_CLOSE', 'OBSTACLE_STOP',
+                                                    'BLOCKED_WAIT', 'NAV2_HANDOFF'))
+    rows.append(event_row('target_reacquire', recognized, reacquire_limit))
     return rows

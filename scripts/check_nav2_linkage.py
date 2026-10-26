@@ -1,6 +1,7 @@
 """Check dynamic linkage of the mixed apt/fork underlay inside compute."""
 from pathlib import Path
 import subprocess
+from check_nav2_contract import check_planner_install
 
 # Newer apt Humble Nav2 ships Route Server BT nodes built against Route messages that the
 # 1.1.16 fork's nav2_msgs does not define. They are only loaded when listed in a BT
@@ -30,7 +31,9 @@ def apt_targets(apt, fork_libs, params_text):
 def main():
     apt = Path('/opt/ros/humble/lib')
     fork = set(Path('/nav2_ws/install').glob('*/lib/*.so'))
-    params_text = FORK_PARAMS.read_text() if FORK_PARAMS.exists() else ''
+    fork.update(Path('/nav2_ws/install/lib').glob('*.so'))
+    params_text = FORK_PARAMS.read_text()
+    check_planner_install(params_text, Path('/nav2_ws/install'))
     targets, skipped = apt_targets(apt, {p.name for p in fork}, params_text)
     targets |= fork
     failures = []

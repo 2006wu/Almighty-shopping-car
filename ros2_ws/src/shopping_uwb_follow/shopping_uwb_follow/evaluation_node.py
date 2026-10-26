@@ -78,6 +78,7 @@ def run(mode, args=None):
             self.data = {k: [] for k in ('person', 'model', 'robot', 'target', 'states')}
             self.frames = {}
             self.invalid = 0
+            self.invalid_examples = []
             self.duplicates = {k: 0 for k in self.data}
             self.start = self.end = None
             self.create_subscription(PointStamped, '/uwb/person_ground_truth', self.on_person, 100)
@@ -103,6 +104,9 @@ def run(mode, args=None):
             if (not math.isfinite(t) or t <= 0 or t > self.now()+0.25
                     or (kind != 'states' and not all(math.isfinite(x) for x in value))):
                 self.invalid += 1
+                if len(self.invalid_examples) < 10:
+                    self.invalid_examples.append({'kind': kind, 'stamp': str(t),
+                                                  'clock': str(self.now()), 'value': str(value)})
                 return
             if not self.start <= t <= self.end:
                 return
@@ -168,7 +172,7 @@ def run(mode, args=None):
 
     rows = [check_row('recording', completed, reason),
             check_row('frames_and_values', node.invalid == 0,
-                      {'invalid': node.invalid, 'observed_frames': node.frames,
+                      {'invalid': node.invalid, 'invalid_examples': node.invalid_examples, 'observed_frames': node.frames,
                        'duplicate_or_reordered': node.duplicates})]
     for kind in (('person', 'model') if mode == 'sync' else ('person', 'robot', 'states')):
         rows.append(check_row(kind+'_coverage', node.start is not None and
@@ -185,7 +189,7 @@ def run(mode, args=None):
                               node.data['states'], path, params, node.end or 0,
                               options.latency_limit, options.tracking_limit,
                               options.reacquire_limit, options.stop_deadline)
-    report = {'schema_version': 1, 'mode': mode, 'start_sim_s': node.start,
+    report = {'schema_version': 2, 'mode': mode, 'start_sim_s': node.start,
               'end_sim_s': node.end, 'path_file': str(path_file), 'path': path,
               'params_file': str(params_file), 'controller_params': params,
               'thresholds': {k: str(v) if isinstance(v, Path) else v for k, v in vars(options).items()},

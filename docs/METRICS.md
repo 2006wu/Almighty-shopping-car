@@ -38,7 +38,7 @@
 - `minimum`：以上兩者可用資料的最小值。所有接觸與重疊均為 0，不以負值表達穿透深度。
 - `pose_count`、`static_sample_count`、`person_sample_count` 揭露覆蓋程度；缺人物資料時只計靜態障礙，不能宣稱已驗證人物安全間距。
 
-以上均為公尺及離散樣本最小值；未檢查相鄰位姿間的掃掠碰撞，也未計入雷射誤差、定位誤差、車體高度或其他動態障礙。後續情境測試須提高取樣率並另做連續碰撞檢查。
+以上均為公尺及離散樣本最小值；未檢查相鄰位姿間的掃掠碰撞，也未計入雷射誤差、定位誤差、車體高度或未提供真值的動態障礙。後續情境測試須提高取樣率並另做連續碰撞檢查。
 
 ## 跟隨距離與狀態
 
@@ -149,7 +149,7 @@ PYTHONPATH=ros2_ws/src/shopping_zone_manager \
 | 故障注入器、急停、看門狗及狀態轉換 | `trigger` 的 event | 需獨立標記實際觸發時刻；若從狀態字串產生，延遲只代表狀態公布之後的反應，不包含狀態偵測之前的延遲 |
 | `/clock`、訊息 header、`/tf` | t 及離線框架對齊 | 無 header 的狀態／命令使用模擬接收時間並記錄其限制；重啟與倒退時間必須分檔 |
 
-UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` 與 `/uwb/estimate_error`；本指標的跟隨距離誤差評估控制結果，兩者應分開呈現。後續情境變化須由 Gazebo 套件的 `config/person_path.yaml` 產生，不另建執行期人物路徑來源。
+UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` 與 `/uwb/estimate_error`；本指標的跟隨距離誤差評估控制結果，兩者應分開呈現。後續情境變化須由 Gazebo 套件的情境載入器解析，本次執行人物模型與 UWB 共用一份路徑檔（default 仍為 `config/person_path.yaml`）。
 
 ## rosbag 記錄、轉換與可重現流程
 
@@ -208,3 +208,63 @@ UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` �
 6. 以相同程序產生 guide2／follow2，先比對 `.meta.json` 的涵蓋程度、缺樣、截止回合及報告 parameters，再按相同區域順序比較 success_rate、逐回合 duration／path_length／final_position_error，以及跟隨 RMSE、帶內時間比例與停止 pending／每事件延遲。可用 `diff -u bags/guide1/report.json bags/guide2/report.json` 檢視完整差異（source 路徑必然不同）。不同資料覆蓋率不可只比平均數。
 
 Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非決定性；固定種子不保證逐位元相同。應重複多次並保留失敗，這份程序不是自動通過判準，也不代表容器或硬體已驗收。
+
+## 模擬情境與動態行人
+
+七種情境與逐步操作見 [模擬情境驗收程序](SCENARIOS.md)。每個情境獨立錄製，保存名稱、YAML、人物路徑、程式版本、啟動參數、目標及送出時的 `/clock`。行人延遲與主要人物軌跡採世界模擬秒；DDS 啟動或人工送目標時機仍可能影響相遇，沒有相遇的紀錄不能算穿越／讓行驗收通過。
+
+固定錄製清單新增 `/sim/pedestrians`（`geometry_msgs/PoseArray`）。轉換器要求 `sim_world` 與固定非空人數／順序，拒絕重複真值時間；各行人以最多每側 0.15 秒的有界內插配對車體真值，不外推。JSONL `pose` 新增 `pedestrians: [{x,y,radius}, ...]`，同時計算主要人物及所有行人的邊界間距，`person_min` 取其中最小值；`person_sample_count` 計算具有至少一個人物的車體樣本數。主要人物跟隨距離與停止事件維持原定義，動態行人不成為跟隨目標。PoseArray 不帶半徑，提供的七種情境皆為 0.25 公尺；自訂尺寸要以 `bag_to_eval --pedestrian-radius R` 指定保守的最大半徑，不可直接沿用固定包裝指令。
+
+轉換器 `.meta.json` 的 `missing_pedestrian_samples` 記錄有行人 topic 但無法完整同步的車體樣本。需確認 `input_counts` 有該 topic、人數符合情境，且驗收區間沒有缺樣；完全缺 topic 時數字仍可能是 0，不能當作有覆蓋。首尾缺樣應明確裁切與註記，內部缺樣不得宣告安全通過。仍採離散幾何間距，未增加接觸感測器或連續掃掠碰撞偵測；PASS 至少要求靜態及人物最小間距皆 > 0，建議沿用 > 0.10 公尺的較嚴門檻。
+
+`eval-bag` 的固定 `--map-world-transform 0 0 0` 與 `loc-check` 直接比較真值，都假設標準地圖的 map 與 Gazebo `sim_world` 原點、朝向一致。出生姿態不是 map→world 轉換：`alt_start` 仍使用同一標準地圖，EKF 初始化在世界中的 `(-2.4,0,π/2)`，AMCL 及定位工具也使用此 map 姿態。新建圖或自訂地圖須先核對座標；不一致時手動呼叫 `bag_to_eval --map-world-transform X Y YAW`，`loc-check` 目前沒有自訂轉換功能，不可直接用於該地圖。
+
+導航案例每目標須在 90 秒內 SUCCEEDED，且有真值核對最終位置；遭行人擋住時需觀察減速、等待或安全繞行與行人離開後恢復。`follow_stop_go` 起始人物中心距離 0.58 公尺，低於既有 0.60 公尺過近門檻且高於矩形前緣加人物半徑的 0.55 公尺接觸距離；應記錄 TOO_CLOSE 與零 Twist，再觀察人物離開後恢復。初始已停不能代替行進中的煞停驗收，須另執行既有 `fault-check`；障礙、過近及急停驗收均須檢查 linear 與 angular。未調整控制器，既有行為若未達門檻應記為失敗。
+
+## 障礙防護觀測（階段 4）
+
+預設錄製清單新增 `/safety/obstacle_state` 與 mux／guard／collision_monitor 的中間速度。bag_converter 取 guard JSON 內的模擬時間 `t`，在進入 STOP／STALE 時產生 `obstacle_guard_stop`／`obstacle_guard_stale` trigger，重複狀態不重開事件，沿用本文件 `stop_metrics` 的首次零命令／真值停止定義。同時出現的其他保護事件沿用既有合併規則。啟動即 STALE 也會產生事件；須保留它並另判讀是否有移動基線，不能拿啟動零速作為障礙停止驗收。
+
+狀態事件的延遲起點是 guard 偵測並發布狀態的模擬時間，不包含故障命令傳送到偵測的延遲。`scripts/fault_check.py --suite obstacle` 則以送出故障命令前的模擬時間開始計算，且要求移動基線、持續停止與恢復；與本文件「首次停止」統計不可混稱同一判準。減速列檢查 guard SLOW 比例與命令仍在移動，沒有自動辨識真值減速度。
+
+`/safety/obstacle_state.swept_clearance` 是雷射回波到要求速度掃掠範圍的保守距離，用於診斷；不取代本文件的真值矩形最小間距。既有 `clearance_metrics` 仍以世界 collision 與真值位姿計算，沿用原有錄製／轉換鏈路。`lidar_front` 假障礙沒有新增 Gazebo collision，因此真值最小間距不會包含它；不能用假障礙試驗宣稱通過實際障礙距離驗收。完整啟動、故障與 headless 程序見 [OBSTACLE_SAFETY.md](OBSTACLE_SAFETY.md)。
+
+## 可重現評估（manifest、驗證、彙整）
+
+在已啟動的 compute 容器中依序執行（此處未代為啟動容器）：
+
+```bash
+./scripts/dev.sh record guide1 --duration 120 \
+  --meta scenario=guide --meta nav2_stack=stock \
+  --meta 'launch_args=odom_source:=ekf use_mux:=true'
+./scripts/dev.sh eval-bag guide1 --target 1.0
+./scripts/dev.sh eval-verify guide1
+./scripts/dev.sh record guide2 --duration 120 \
+  --meta scenario=guide --meta nav2_stack=stock \
+  --meta 'launch_args=odom_source:=ekf use_mux:=true'
+./scripts/dev.sh eval-bag guide2 --target 1.0
+./scripts/dev.sh eval-summary guide1 guide2 --output /repo/bags/guide-summary
+```
+
+錄製結束（含 Ctrl-C／到期正常收尾）後，`bags/NAME/manifest.json` 保存 UTC 開始時間 `start_time_utc`、`git.commit`、`git.dirty`、Nav2 子模組的 `git.submodule_commit`、去重後的 `topics`、指定的牆鐘錄製上限 `duration`（未指定為 null，並非實際經過秒數），以及 `metadata`。Git 使用 `git -C /repo` 盡力查詢，未安裝、查詢失敗或子模組未初始化時對應欄位為 `unknown`，不阻止錄製。`--meta` 可重複，鍵限英文字母或底線開頭、後續為英數或底線；同鍵最後一個值優先，值可含空白與等號。情境、launch 參數與 Nav2 stack 是使用者提供的描述，不會自動驗證是否與執行環境相符；仍須另保存設定與地圖，dirty 旗標不包含修改內容。
+
+`eval_report` 的 JSON 鍵固定排序、浮點數四捨五入至小數點後九位，CLI 評估參數也先套用相同精度再計算，沒有牆鐘產生時間。驗證採相同正規化，排除 `source`（來源路徑）與預留的 `generated_at_utc` 欄位，其他參數、指標、逐回合及逐事件資料均參與比較；陣列順序保留。這也是對正規內容計算雜湊時的規則。JSON 仍保留來源路徑供追溯；不以原始 JSON 位元組直接比較。
+
+`eval-verify NAME` 從原 bag 重新轉換並評估，使用 `observations.jsonl.meta.json` 中的 zones 路徑、座標轉換與同步上限，以及 `report.json` 中的世界檔路徑和評估參數。暫存產物會清除，既有報告不覆寫；相同回傳 0，不同回傳 1 並列出至多 20 個差異欄位路徑，輸入錯誤回傳 2。原始 bag、世界檔、zones 與這兩份報告必須仍可讀，來源路徑須在目前容器有效。它驗證目前程式能否重現既有指標，不保證重新執行 Gazebo 會得到相同 bag，也不驗證未納入指標的原始資料是否改變。
+
+`eval-summary NAME... [--output DIR]` 讀取各 bag 的 `report.json` 與可選的 `manifest.json`；名稱沿用 `eval-bag` 的英數、底線與連字號限制，重複名稱拒絕。預設輸出 `/repo/bags/summary/summary.json` 與 `summary.md`，指定的 DIR 是容器內路徑，既有同名彙整檔會覆寫。以欄位路徑（陣列含索引）彙整每個數值的 count／mean／min／max／stdev；stdev 為樣本標準差，僅一筆時為 0，null 與布林不當作數值，parameters 與 source 不混入指標。不同回合索引的統計僅適用相同順序的情境，不能視為同一區域的自動配對。
+
+報告若有 `verdict` 或 `verdicts.*` 的 pass／fail 字串（不分大小寫）或布林，另列 pass_count／fail_count；現有評估器沒有自動判定，因此通常沒有判定計數，不會由數值猜測通過。缺少 manifest、commit／scenario／nav2_stack 資訊，或這三者跨次不同時會列出警告；警告不會阻止彙整，也不代表資料可直接比較，仍須核對評估參數、缺樣及失敗回合。
+
+安裝套件後，在 compute 也可直接使用以下等價命令；轉換與驗證只讀 bag，不發布或回放速度：
+
+```bash
+ros2 run shopping_zone_manager eval_verify guide1
+ros2 run shopping_zone_manager eval_summary guide1 guide2 --output /repo/bags/guide-summary
+```
+
+## 即時跟隨評估的目標辨識與移動恢復
+
+`follow-eval` schema 2 保留原 `reacquire`：新鮮估測至 FOLLOWING 的 2 秒門檻不變。另增 `target_reacquire`，允許 FOLLOWING、TOO_CLOSE、OBSTACLE_STOP、BLOCKED_WAIT、NAV2_HANDOFF 表示已辨識到仍新鮮的目標；IDLE／LOST 不算成功。兩者分開列出 `tracking_s`／`tracking_state` 與 `following_s`，不能將持續安全停車當作恢復移動，也不能用新指標覆蓋原門檻失敗。原離線 `state_metrics` 的定義保持不變。
+
+過近停止仍檢查真值速度／角速度。腳本人沿指定路徑穿入已停止車體時，零命令不保證外力下真值完全不動；此時須保留真值失敗、命令與幾何接觸證據，不能放寬速度門檻或移除碰撞來通過。本次 stop-go／turns 的原始輪次即觀察到零命令期間的接觸微動。

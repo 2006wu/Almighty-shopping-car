@@ -4,6 +4,7 @@ These checks cover ownership races, not ROS transport or Humble integration.
 """
 import ast
 import math
+import json
 from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -29,7 +30,7 @@ def node_class():
     tree = ast.parse(source.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FollowNode')
     cls.bases = []
-    namespace = dict(math=math, side_clearance=side_clearance,
+    namespace = dict(math=math, json=json, side_clearance=side_clearance,
                      side_speed_factor=side_speed_factor, seconds=lambda node: node.now,
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
                      String=lambda **kwargs: NS(**kwargs),
@@ -374,3 +375,88 @@ def test_frozen_measurement_headers_stop_despite_recent_delivery(fault, nav):
     assert cmd.linear.x == cmd.angular.z == 0
     if nav:
         assert node.cancel_requested
+
+
+def test_guard_stop_requests_existing_handoff_and_stale_cancels_it():
+    node = make_node()
+    node.obstacle = 2.0
+    node.on_guard(NS(data=json.dumps(dict(state='STOP', t=node.now))))
+    node.tick()
+    assert node.supervisor.blocked_since is not None
+    node.on_guard(NS(data=json.dumps(dict(state='STALE', t=node.now))))
+    node.tick()
+    assert node.supervisor.mode == 'DIRECT'
+    assert node.supervisor.blocked_since is None
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
+
+
+@pytest.mark.parametrize('state,age,expected', [
+    ('CLEAR', 0., 1.), ('SLOW', 0., 1.), ('SLOW', .6, .4), ('STALE', 0., .4)])
+def test_live_guard_owns_slowdown_without_duplicating_fallback_side_cap(state, age, expected):
+    node = make_node()
+    node.client = None
+    node.supervisor.route_around = False
+    node.obstacle = 3.
+    node.guard_state, node.guard_time = state, node.now-age
+    node.control.step = Mock(return_value=(.1, 0., 'FOLLOWING', 'tracking'))
+    node.tick()
+    assert node.control.step.call_args.kwargs['speed_factor'] == expected
+    if state == 'STALE':
+        cmd = node.publisher.publish.call_args.args[0]
+        assert cmd.linear.x == cmd.angular.z == 0
+
+
+def test_fresh_guard_stop_still_overrides_direct_motion():
+    node = make_node()
+    node.client = None
+    node.supervisor.route_around = False
+    node.obstacle = 3.
+    node.guard_state, node.guard_time = 'STOP', node.now
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0
+
+
+def map_lookup_node():
+    node = make_node()
+    method = type(node).map_goal_and_los
+    scope = method.__globals__
+    from shopping_uwb_follow.follow_handoff import transform_xy, line_of_sight_clear
+    def time_value(**kwargs):
+        return kwargs['seconds']
+    time_value.from_msg = lambda stamp: stamp
+    scope.update(Time=time_value, TransformException=LookupError, planar_pose=lambda pose: pose,
+                 transform_xy=transform_xy, line_of_sight_clear=line_of_sight_clear,
+                 PoseStamped=lambda: NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
+    node.now = node.target_time = 1.
+    node.robot_half_width, node.los_margin = .25, .35
+    node.scan.header = NS(frame_id='laser_link', stamp='scan-time')
+    node.tf_buffer = Mock()
+    node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: 'now'))
+    node.tf_buffer.lookup_transform.side_effect = [(10., 20., 0.), (0., 0., 0.)]
+    return node, method
+
+
+def test_transient_map_tf_gap_reuses_only_recent_matched_goal():
+    node, lookup = map_lookup_node()
+    pose, _ = lookup(node)
+    assert (pose.pose.position.x, pose.pose.position.y) == (13., 20.)
+    node.now = node.target_time = 1.1
+    node.tf_buffer.lookup_transform.side_effect = [LookupError('future by 20 ms'), (0., 0., 0.)]
+    cached, _ = lookup(node)
+    assert cached is pose and node.cached_map_goal_time == 1.
+    node.now = 1.201
+    node.tf_buffer.lookup_transform.side_effect = LookupError('unavailable')
+    assert lookup(node) == (None, False)
+    node.now = .9
+    assert lookup(node) == (None, False)
+
+
+def test_map_cache_never_hides_missing_laser_transform():
+    node, lookup = map_lookup_node()
+    node.tf_buffer.lookup_transform.side_effect = [(10., 20., 0.), LookupError('laser missing')]
+    assert lookup(node) == (None, False)
+    node.now = 1.1
+    node.tf_buffer.lookup_transform.side_effect = [LookupError('map gap'), LookupError('laser missing')]
+    assert lookup(node) == (None, False)

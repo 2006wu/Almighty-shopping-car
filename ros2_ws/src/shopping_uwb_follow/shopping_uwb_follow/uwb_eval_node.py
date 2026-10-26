@@ -1,6 +1,9 @@
 """Evaluate estimates against simulation truth using the latest odometry pose."""
 import math
+import signal
+
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PointStamped
@@ -52,10 +55,13 @@ class UWBEvaluation(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     node = UWBEvaluation()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()

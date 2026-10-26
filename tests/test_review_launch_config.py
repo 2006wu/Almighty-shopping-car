@@ -16,7 +16,7 @@ def keywords(call):
     return {kw.arg: kw.value for kw in call.keywords}
 
 
-def test_person_is_opt_in_and_only_gates_mover():
+def test_person_is_opt_in_and_gates_mover_and_pose_service():
     path = SRC/'shopping_robot_gazebo/launch/sim.launch.py'
     declaration = next(c for c in calls(path, 'DeclareLaunchArgument')
                        if ast.literal_eval(c.args[0]) == 'person')
@@ -28,6 +28,12 @@ def test_person_is_opt_in_and_only_gates_mover():
     assert condition.func.id == 'IfCondition'
     assert condition.args[0].func.id == 'LaunchConfiguration'
     assert ast.literal_eval(condition.args[0].args[0]) == 'person'
+    bridge = next(c for c in calls(path, 'Node')
+                  if isinstance(keywords(c).get('name'), ast.Constant)
+                  and keywords(c)['name'].value == 'person_pose_service_bridge')
+    assert ast.literal_eval(keywords(bridge)['arguments']) == [
+        '/world/supermarket/set_pose@ros_gz_interfaces/srv/SetEntityPose']
+    assert ast.literal_eval(keywords(bridge)['condition'].args[0].args[0]) == 'person'
 
 
 def test_bringup_person_arguments_and_evaluation_node():

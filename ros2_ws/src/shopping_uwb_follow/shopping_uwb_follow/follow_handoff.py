@@ -172,8 +172,9 @@ class HandoffSupervisor:
                 self.direct_since = self.nav_since = None
             reason = 'Direct only or safety stop'
         elif self.mode == 'NAV2':
-            close = math.hypot(*target) <= self.p.follow_distance+self.p.handoff_margin
-            clear = los_clear and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin
+            distance = math.hypot(*target)
+            close = distance <= self.p.follow_distance+self.p.handoff_margin
+            clear = close and los_clear and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin
             self.clear_since = (now if self.clear_since is None else self.clear_since) if clear else None
             if nav_status in ('failed', 'canceled') or not valid_xy(map_target):
                 self.mode = 'DIRECT'
@@ -181,7 +182,7 @@ class HandoffSupervisor:
                 reason = 'Navigation failed or map transform unavailable'
             elif (nav_status == 'succeeded'
                   or now-self.nav_since >= self.p.min_nav_hold
-                  and (los_clear and close or self.clear_since is not None
+                  and (los_clear and distance <= self.p.follow_distance or self.clear_since is not None
                        and now-self.clear_since >= self.p.resume_delay)):
                 self.mode = 'DIRECT'
                 reason = 'Direct path restored or navigation succeeded'
