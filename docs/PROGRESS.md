@@ -2069,7 +2069,7 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | 開放區域條件 | 側向倍率 | CLEAR／SLOW 可將倍率設為 1 | 側向淨空 ≥0.5 m、掃描有效、有 Nav2 客戶端時 LOS 清楚 |
 | 前方近人／物體上限 | 無獨立參數 | 煞停淨空限制 | 淨空 <1.2 m 時 ≤0.35 m/s，仍取更嚴格煞停限制 |
 | 基礎跟隨距離／停止距離（m） | 1.0／0.6 | 1.2／0.7 | 1.2／0.7；新增估測裕度 0.1，≤0.8 鎖定 |
-| 跟隨距離內命令 | 零前進，仍可轉向 | 零前進，仍可轉向 | 零線速與角速；障礙旋轉及 Nav2 速度亦受此條件限制 |
+| 跟隨距離內命令 | 零前進，仍可轉向 | 零前進，仍可轉向 | 零前進，仍朝人物轉向（`b46c4a2`）；估測 ≤0.8 m 過近鎖定時雙軸歸零；障礙旋轉需目標 >0.8 m；Nav2 速度僅在目標 ≥1.2 m 時放行 |
 | 前饋／時距 | 0／無 | 0.9／0.4 s | 保留 0.9／0.4 s；受限空間（側向 <0.5 m、LOS 不清或掃描無效）時距改為 0 |
 | 障礙停止／煞停反應與減速度 | 0.65 m／無主動公式 | 0.65 m／0.25 s、1.2 m/s² | 保留 |
 | Slow TEB 線速／角速 | 0.3／0.8 | 0.3／0.8 | 0.5／0.8 |
@@ -2089,7 +2089,35 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 - 純 Python 直線檢查：`nice /workspace/scratch/venv-shop/bin/python scripts/eval/follow_loop_sim.py --straight --person-speed 0.9 --duration 60` 完成。最大命令 1.0 m/s、最大間距 2.029 m；暖機後距離絕對誤差平均 0.4506 m、RMSE 0.4506 m（基礎距離 1.2 m，含 0.4 s 時距）。此模型不含真實雷射雜訊、下游 guard、Nav2 或 Fortress 動力學，不能當作貨架或 near_stop 驗收。
 - 限制與下一步：須由維護者重跑無預載地圖的 default 貨架 fault-check、follow_turns、follow_stop_go、四個開放區域速度情境、apt／fork 導覽與跟隨交接，以及 Fortress 多速度偏航。保存真值、估測、最終 Twist 與接觸資料，確認近停 0.5 秒後平面速度 ≤0.03 m/s 且角速絕對值 ≤0.05 rad/s。未修改任何評估／驗收門檻，未執行 Docker、Gazebo、網路或硬體，未提交。
 
-模擬結果（t85）：待填
+### 模擬結果（t85–t88，2026-10-27，Fortress 模擬）
+
+t85（`bce1b07`）發現貨架情境回歸：fault-check 2/7、follow_turns 失敗。之後三個修正：
+
+1. `9dc65ac`：受限空間（側向淨空 <0.5 m、LOS 不清或掃描無效）上限 0.65→0.5 m/s，且不使用時距（前饋保留，與 develop 相同）。
+2. `b46c4a2`：在跟隨距離 1.2 m 內只禁止前進，仍朝人物轉向（同 develop）；僅過近鎖定（估測 ≤0.8 m）雙軸歸零。原因：人物從車旁經過後，車體面對貨架、旋轉淨空不足，加上 guard STOP，導致 Nav2 交接長時間 v=0。
+3. `4f7b752`：fault-check 雜訊試驗的命令上限原寫死為 develop 舊值 0.51/1.01，改為讀取跟隨設定 1.0/1.5（+0.01），並加測試鎖定與 YAML 一致。這是驗收門檻的變更，須維護者確認。
+
+重要：develop 基準 t78 在 apt（RPP）堆疊執行；本分支所在容器預設 `nav2_stack:=auto` 會選 fork（TEB）。因此另外在同一容器以 fork 執行 develop `7729cd1` 的 follow_turns（t87）作基準，並以 `nav2_stack:=apt` 重跑本分支以與 t78 對照。
+
+| 測試 | develop 基準 | 本分支最終 `b46c4a2`（t88，nav/loc 為 t86 `9dc65ac`） |
+| --- | --- | --- |
+| 開放區域 人 0.7 m/s | — | PASS：距離平均 1.71、最大 1.96、誤差 RMSE 0.56 |
+| 開放區域 人 0.9 m/s | — | PASS：平均 1.86、最大 2.38、誤差 RMSE 0.72（t86 為 1.84／2.13／0.70） |
+| 開放區域 人 1.0 m/s | — | PASS：平均 1.92、最大 2.27、誤差 RMSE 0.78（t86 `9dc65ac` FAIL：平均 2.48、最大 4.42） |
+| fault-check（貨架 default，無地圖） | 7/7（t76） | 7/7（t88；t87 `4f7b752` 亦 7/7；t86 `9dc65ac` 6/7，僅舊雜訊上限失敗） |
+| follow_turns（apt） | PASS：距離平均 1.33、最大 2.20、誤差 RMSE 0.59（t78） | **FAIL**：平均 2.01、最大 5.35、誤差 RMSE 1.42（straight PASS、turn FAIL）；near_stop 1 次接觸事件（t87 `4f7b752`：平均 2.25、最大 5.53） |
+| follow_turns（fork） | FAIL：平均 2.44、最大 5.56，near_stop 違規（t87） | 追蹤 PASS：平均 1.83、最大 3.68；near_stop 無違規（t86 `9dc65ac`：FAIL 平均 2.45） |
+| follow_stop_go（apt） | 追蹤 PASS 平均 0.99；near_stop 無違規（t78） | 追蹤 PASS 平均 1.02、最大 1.77；near_stop 無違規 |
+| follow_stop_go（fork） | — | 追蹤 PASS 平均 0.99；near_stop 1 樣本接觸事件（130.12 s） |
+| obstacle 套件 | 4/4 | 4/4 |
+| nav-check default／alt_start（fork） | 6/6／6/6 | 6/6（最終誤差 0.132 m）／6/6（0.105 m） |
+| loc-check | PASS | PASS |
+| pytest | — | 1412 通過、1 略過 |
+| yaw_rate_check `--linear-sweep 0.6,0.8,1.0` | — | 部分：原地旋轉真值／命令比 1.19–1.44（同 t15 的滑移轉向偏差）；0.2/0.3 行速度比 1.01；之後因起點前方淨空不足 ABORT，0.6/0.8/1.0 行未量測 |
+
+結論：未合併。follow_turns 在與 develop 相同的 apt 堆疊仍明顯較差（距離平均 2.01 對 develop 1.33、誤差 RMSE 1.42 對 0.59，develop 誤差 RMSE 0.59）。t86（`9dc65ac`）人 1.0 m/s 失敗（每圈 U 形轉彎在跟隨距離內雙軸停止後才原地轉向，1.0 上限無法追回），`b46c4a2` 恢復跟隨距離內轉向後 t88 通過。near_stop 失敗共三次：turns apt t88 137.6 s、stop_go fork t88 130.1 s（單一樣本），以及 `4f7b752` 上 stop_go apt t87 152.2 s；三次都在過近鎖定、命令 v=w=0 之後，由不避讓的腳本人物從側後方走到 0.43–0.48 m 碰到靜止車體（前方 0.21 m／nan），不是控制命令；但仍是失敗檢查，develop t78 在 apt 無此事件。
+
+剩餘差距的可能來源（未驗證）：前方 <1.2 m 的 0.35 m/s 近物上限會把貨架也算進去（t88 turns apt 270 筆中 33 筆受限於 0.35；develop 無此上限），以及跟隨距離 1.2 m（develop 1.0 m），零命令樣本 94 筆（develop 64 筆）。
 
 | 審查驗證項目 | 結果 |
 | --- | --- |
