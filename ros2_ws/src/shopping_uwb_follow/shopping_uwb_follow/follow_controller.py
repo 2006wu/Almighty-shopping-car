@@ -54,6 +54,7 @@ class ControllerParams:
     stop_release_margin: float = 0.15
     stop_release_time: float = 0.3
     obstacle_stop_distance: float = 0.65
+    obstacle_stop_rotate: bool = True
     lost_timeout: float = 0.5
     max_linear: float = 0.5
     max_angular: float = 1.0
@@ -61,6 +62,10 @@ class ControllerParams:
     max_angular_accel: float = 1.5
     kp_distance: float = 0.7
     kp_bearing: float = 1.5
+    # Optional offline experiment hooks; zero preserves the develop control law.
+    velocity_feedforward: float = 0.0
+    distance_hysteresis_enter: float = 0.0
+    distance_hysteresis_exit: float = 0.0
     rotate_to_target_min_angle: float = math.pi/4
     rotate_to_target_release_angle: float = 0.25
     los_uncertain_speed_factor: float = 0.6
@@ -74,10 +79,13 @@ class ControllerParams:
 class FollowController:
     def __init__(self, params=None):
         self.p = params or ControllerParams()
-        nonnegative = {'side_slow_clearance', 'side_sector_min',
+        nonnegative = {'velocity_feedforward', 'distance_hysteresis_enter',
+                       'distance_hysteresis_exit', 'side_slow_clearance', 'side_sector_min',
                        'side_min_speed_factor', 'los_uncertain_speed_factor'}
+        if not isinstance(self.p.obstacle_stop_rotate, bool):
+            raise ValueError('obstacle_stop_rotate must be boolean')
         if any(not math.isfinite(v) or (v < 0 if k in nonnegative else v <= 0)
-               for k, v in vars(self.p).items()):
+               for k, v in vars(self.p).items() if k != 'obstacle_stop_rotate'):
             raise ValueError('Controller parameters must be finite and within their positive/nonnegative bounds')
         if not 0 < self.p.rotate_to_target_release_angle < self.p.rotate_to_target_min_angle <= math.pi:
             raise ValueError('Invalid target alignment angles')
@@ -88,12 +96,16 @@ class FollowController:
         if (self.p.los_uncertain_speed_factor > 1
                 or not 0 <= self.p.side_sector_min < self.p.side_sector_max <= math.pi):
             raise ValueError('Invalid slowdown factor or side sectors')
+        if not 0 <= self.p.distance_hysteresis_enter <= self.p.distance_hysteresis_exit:
+            raise ValueError('Hysteresis requires enter <= exit')
+        self.holding_distance = False
         self.v = self.w = 0.0
         self.near_latched = False
         self.near_clear_time = 0.0
         self.aligning = False
 
-    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0):
+    def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
+             target_velocity=(0.0, 0.0), rotation_clear=False):
         p = self.p
         valid_target = (target is not None and math.isfinite(age) and 0 <= age <= p.lost_timeout
                         and all(math.isfinite(t) for t in target))
@@ -118,27 +130,118 @@ class FollowController:
             state, reason = 'TOO_CLOSE', 'Target near; waiting for sustained release clearance'
         elif math.isnan(obstacle) or obstacle <= p.obstacle_stop_distance:
             state, reason = 'OBSTACLE_STOP', 'Obstacle or unavailable scan'
-        if state not in ('FOLLOWING', 'OBSTACLE_STOP') or math.isnan(obstacle):
+        if (state == 'OBSTACLE_STOP' and math.isfinite(obstacle)
+                and (not math.isfinite(dt) or dt <= 0)):
+            state, reason = 'IDLE', 'Invalid control interval'
+        if state != 'FOLLOWING':
+            self.holding_distance = False
+            if (state == 'OBSTACLE_STOP' and p.obstacle_stop_rotate
+                    and rotation_clear and math.isfinite(obstacle) and obstacle >= 0
+                    and math.isfinite(dt) and dt > 0):
+                self.v = 0.0
+                w = max(-p.max_angular, min(p.max_angular,
+                        p.kp_bearing*math.atan2(target[1], target[0])))
+                limit = p.max_angular_accel*min(dt, 0.2)
+                self.w += max(-limit, min(limit, w-self.w))
+                return self.v, self.w, state, 'Forward blocked; rotating toward target'
             self.v = self.w = 0.0
             return self.v, self.w, state, reason
         if not math.isfinite(dt) or dt <= 0:
             self.v = self.w = 0.0
             return 0.0, 0.0, 'IDLE', 'Invalid control interval'
-        if state == 'OBSTACLE_STOP':
-            self.v = self.w = 0.0
-            return self.v, self.w, state, reason
         distance, bearing = math.hypot(*target), math.atan2(target[1], target[0])
+        error = distance-p.follow_distance
+        if abs(error) <= p.distance_hysteresis_enter:
+            self.holding_distance = True
+        elif abs(error) >= p.distance_hysteresis_exit:
+            self.holding_distance = False
+        correction = 0.0 if self.holding_distance else p.kp_distance*error
+        # Velocity is the target's absolute velocity expressed in base_link.
+        # Project onto the sight line; odometry compensation belongs upstream.
+        velocity_valid = (len(target_velocity) == 2
+                          and all(math.isfinite(v) for v in target_velocity))
+        radial = (sum(a*b for a, b in zip(target_velocity, target))/distance
+                  if velocity_valid else 0.0)
+        demand = max(0.0, p.velocity_feedforward*radial+correction)
+        cap = p.max_linear*max(0.0, min(1.0, speed_factor))
+        heading = max(0.0, math.cos(bearing))
+        v = min(p.max_linear, demand)*max(0.0, min(1.0, speed_factor))*heading
         if abs(bearing) >= p.rotate_to_target_min_angle:
             self.aligning = True
         elif abs(bearing) <= p.rotate_to_target_release_angle:
             self.aligning = False
-        v = (min(p.max_linear, max(0.0, p.kp_distance*(distance-p.follow_distance)))
-             * max(0.0, min(1.0, speed_factor)) * max(0.0, math.cos(bearing)))
         if self.aligning:
             v = 0.0
-            reason = 'Aligning with target before translating'
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
+        limits = []
+        if demand > cap:
+            limits.append('speed cap')
+        if heading < 0.95:
+            limits.append('heading')
+        if abs(v-self.v) > p.max_linear_accel*dt:
+            limits.append('linear acceleration')
+        if abs(w-self.w) > p.max_angular_accel*dt:
+            limits.append('angular acceleration')
+        if self.holding_distance:
+            limits.append('distance hold')
+        if self.aligning:
+            limits.append('Aligning with target before translating')
+        reason = ', '.join(limits) or 'Tracking target'
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))
         return self.v, self.w, state, reason
+
+
+def rotation_scan_clear(ranges, angle_min, angle_increment, range_min, range_max,
+                        base_in_scan, radius):
+    """Require a full scan to clear a disk around base_link, including margin.
+
+    Test the far intersection of each ray with the disk, rather than distances
+    to return endpoints: an occluder inside the disk cannot establish free space.
+    The scan origin must lie inside the disk. Missing/partial coverage fails shut.
+    """
+    from .follow_handoff import scan_valid
+
+    if (not scan_valid(ranges, angle_min, angle_increment, range_min, range_max)
+            or len(base_in_scan) != 3
+            or not all(math.isfinite(v) for v in (*base_in_scan, radius))
+            or radius <= math.hypot(*base_in_scan[:2])
+            or abs(angle_increment) > 0.05
+            or abs(angle_increment)*(len(ranges)-1) < 2*math.pi-abs(angle_increment)-1e-6):
+        return False
+    x, y = base_in_scan[:2]
+    for i, value in enumerate(ranges):
+        angle = angle_min+i*angle_increment
+        projection = x*math.cos(angle)+y*math.sin(angle)
+        cross = x*math.sin(angle)-y*math.cos(angle)
+        boundary = projection+math.sqrt(max(0.0, radius*radius-cross*cross))
+        if value < range_min or min(value, range_max) <= boundary:
+            return False
+    return True
+
+
+class NavigationGuard:
+    """Filter Nav2 commands without commanding an independent escape motion."""
+    def __init__(self, params):
+        self.p = params
+        self.v = self.w = 0.0
+
+    def step(self, command, obstacle, rotation_clear, dt, safe=True, *, near_latched=False):
+        p = self.p
+        if (near_latched or not safe or command is None or math.isnan(obstacle) or obstacle < 0
+                or not all(math.isfinite(v) for v in (*command, dt)) or dt <= 0):
+            self.v = self.w = 0.0
+            return self.v, self.w
+        dt = min(dt, 0.2)
+        blocked = obstacle <= p.obstacle_stop_distance
+        v = 0.0 if blocked else max(0.0, min(p.max_linear, command[0]))
+        w = (0.0 if blocked and not rotation_clear else
+             max(-p.max_angular, min(p.max_angular, command[1])))
+        # Stops bypass ramps. In particular no residual forward velocity is
+        # permitted at a shelf while a costmap-aware controller turns away.
+        self.v = (0.0 if v == 0 else min(p.max_linear, max(0.0,
+                  self.v+max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v)))))
+        self.w = (0.0 if w == 0 else
+                  self.w+max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w)))
+        return self.v, self.w

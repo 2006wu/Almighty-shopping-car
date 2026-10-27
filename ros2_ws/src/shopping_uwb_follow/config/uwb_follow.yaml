@@ -16,6 +16,7 @@
     stop_release_margin: 0.15
     stop_release_time: 0.3
     obstacle_stop_distance: 0.65
+    obstacle_stop_rotate: true
     max_linear: 0.5
     max_angular: 1.0
     max_linear_accel: 0.4
@@ -35,6 +36,8 @@
     clear_margin: 0.15
     resume_delay: 0.5
     retry_cooldown: 3.0
+    map_invalid_grace: 0.5
+    max_blocked_wait: 4.0
     robot_half_width: 0.25
     # Exclude the 0.25 m person radius plus estimation allowance at the endpoint.
     los_margin: 0.35

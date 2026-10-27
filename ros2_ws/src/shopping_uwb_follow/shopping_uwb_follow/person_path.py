@@ -25,3 +25,15 @@ def _path_position(path, elapsed, delay=0.0):
             return tuple(x+(y-x)*t/duration for x, y in zip(a, b))
         t -= duration
     return tuple(points[0])
+
+
+def model_command_position(path, elapsed, model_lag_compensation_s=0.3):
+    """Predict only the visual model command; UWB truth stays at current time.
+
+    Fortress set_pose has no scheduled application timestamp. Compensation is
+    calibrated in simulation seconds and includes command/hold latency.
+    """
+    if (not math.isfinite(elapsed) or not math.isfinite(model_lag_compensation_s)
+            or model_lag_compensation_s < 0):
+        raise ValueError('Model timing must be finite with nonnegative compensation')
+    return path_position(path, elapsed+model_lag_compensation_s)
