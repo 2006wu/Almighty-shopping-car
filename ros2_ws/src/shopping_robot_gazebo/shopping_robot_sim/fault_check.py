@@ -2,6 +2,11 @@
 from dataclasses import dataclass
 import math
 
+# Noise trials only require the follow command to stay within the configured
+# follow limits (uwb_follow.yaml max_linear / max_angular) plus rounding slack.
+NOISE_MAX_LINEAR = 1.0+0.01
+NOISE_MAX_ANGULAR = 1.5+0.01
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -60,7 +65,8 @@ def evaluate_trial(command, truth, baseline_command, baseline_truth,
         covered = all(stream[0].time <= start+0.25 and stream[-1].time >= end-0.25
                       and all(b.time-a.time <= 0.25 for a, b in zip(stream, stream[1:]))
                       for stream in (command, truth))
-        bounded = all(abs(s.linear) <= 0.51 and abs(s.angular) <= 1.01 for s in command)
+        bounded = all(abs(s.linear) <= NOISE_MAX_LINEAR and abs(s.angular) <= NOISE_MAX_ANGULAR
+                      for s in command)
         return covered and bounded, None, None, 'noise: command limits and telemetry coverage'
     cmd = stop_latency(command, start, end, 0.8)
     gt = stop_latency(truth, start, end, 1.5)

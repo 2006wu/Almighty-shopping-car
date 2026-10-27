@@ -118,7 +118,9 @@ def test_transient_zero_late_motion_and_no_recovery_fail():
 
 def test_noise_checks_limits_not_stop():
     assert trial(command=series(0, 4, 10), noise=True)[0]
-    assert not trial(command=[Sample(i/10, 0.6, 0) for i in range(41)], noise=True)[0]
+    assert trial(command=[Sample(i/10, 0.6, 0) for i in range(41)], noise=True)[0]
+    assert not trial(command=[Sample(i/10, 1.05, 0) for i in range(41)], noise=True)[0]
+    assert not trial(command=[Sample(i/10, 0.5, 1.6) for i in range(41)], noise=True)[0]
     assert not trial(command=series(0, 1, 10), noise=True)[0]
 
 
@@ -178,3 +180,13 @@ def test_stop_check_detects_truth_motion_along_either_planar_axis():
     for vx, vy in ((.1, 0), (0, .1), (0, -.1)):
         samples = [planar_sample(i*.1, vx, vy, 0) for i in range(41)]
         assert stop_latency(samples, 0, 4, .8) is None
+
+
+def test_noise_bounds_track_follow_config():
+    import yaml
+    from shopping_robot_sim import fault_check
+    root = Path(__file__).resolve().parents[1]
+    cfg = yaml.safe_load((root/'ros2_ws/src/shopping_uwb_follow/config/uwb_follow.yaml').read_text())
+    params = next(v['ros__parameters'] for v in cfg.values() if 'max_linear' in v.get('ros__parameters', {}))
+    assert fault_check.NOISE_MAX_LINEAR == pytest.approx(params['max_linear']+0.01)
+    assert fault_check.NOISE_MAX_ANGULAR == pytest.approx(params['max_angular']+0.01)
