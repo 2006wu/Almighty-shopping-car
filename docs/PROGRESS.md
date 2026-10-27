@@ -960,6 +960,124 @@
 - 因此本 PR 只合併 fork 整合層，submodule 仍固定 `bf60ee0`，**預設 `nav2_stack:=apt` 不變**；TEB 修正驗證通過後另開 PR 更新固定版本與參數。
 - 修正分支上 PROGRESS.md 誤刪 develop 既有段落（偏航率／AMCL 調查、micro-ROS 通訊層）的合併錯誤，已還原。
 
+
+## 2026-10-24：t33 Shrink 退出還原與 fork 規劃診斷
+
+### 修改與調查
+
+- 已讀取兩個工作樹與 t25s 四份指定日誌。`(50,50)` 超出成本圖，安全 Shrink 的
+  目標 cost 為無限大，判定失敗是預期結果；日誌沒有必要服務逾時或還原失敗訊息。
+  optional rival／object 的兩輪訊息符合縮小與還原皆有呼叫，不能由 `shrink failed`
+  推論全域成本圖未還原。有效 household 與 drinks 的失敗在全域規劃階段，未進入 TEB。
+- 更正紀錄：提供的 `t25s-check2.txt` 中 household **成功**，map 目標誤差約 0.128 m；
+  drinks 約 7 秒失敗，snacks／produce／checkout／entrance 皆成功。
+- fork 程式僅修改 `/workspace/wt/navfork-t23`：新增 action 退出保護，安全 Shrink 在
+  action 結果送出前還原，初始失敗、例外、shutdown 亦走還原；新增有限服務等待與
+  還原重試、各服務 ACK、robot／goal cost 與還原結果診斷。相容模式不啟用退出 hook。
+  新增無 ROS 的退出保護／dirty state 重試 gtest；實際 action 與服務仍需整合測試。
+- 購物車 `nav2_params_fork.yaml`：必要服務探索及回覆等待各 3 秒、每次還原最多 2 輪；
+  optional 仍為 0.05 秒。`costmap_tolerance` 從 50 改為 98，符合 OccupancyGrid 的
+  可通行成本範圍，仍拒絕內切障礙 99、致命障礙 100、未知與超界格。
+- apt／fork 的 NavFn YAML、footprint、正常 inflation radius／scaling 原本相同，但
+  fork 額外指定 `inscribed_radius_floor=0.40`，成本圖不等同 apt 依 footprint 計算的
+  約 0.26 m。本次保留保守下限。BT 的 Shrink／Wait 與 apt recovery 亦不同。
+- fork NavFn 成本轉換與 Dijkstra 優先門檻不同於 apt；原搜尋預算可能提前耗盡。
+  新增預設關閉的 `GridBased.dijkstra_full_expansion`，購物車明確啟用，將預算從
+  `max(nx*ny/20,nx+ny)` 改為 `nx*ny`，到達端點／佇列清空仍提前結束。
+  新增高成本蛇形走廊與致命牆 gtest，以及搜尋耗盡、goal cost／potential 診斷。
+  **舊日誌沒有當時成本圖與搜尋統計，尚未證實搜尋預算就是本次規劃失敗根因。**
+- Slow／Fast 的 `name_ + ".gentle_*"` 讀取路徑正確。原阻擋診斷是 WARN，沒有被
+  INFO 靜音巨集移除，但必須進入控制器且判定阻擋才會出現；現在改為實際啟用的
+  1 Hz INFO，並在 gentle configure 列出兩個 plugin 的安全參數。新增 pytest 防止
+  Slow／Fast 的 t25 選項遺漏。
+- fork 已更新 `docs/shopping_car_teb.md` 與 Shrink 說明。未修改 submodule 內容或
+  固定版本，未變更 `/cmd_vel` 發布鏈、硬體選項或 ROADMAP 勾選。
+
+### 自行檢查、限制與下一步
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：776 passed，1 個既有
+  xacro DeprecationWarning。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，包含
+  YAML、XML／SDF／xacro、Python／Bash、兩／三錨點與兩種里程計模式的 xacro 展開。
+- 兩個工作樹執行 `git diff --check`。沒有 ROS，因此未編譯 C++、執行 gtest、
+  colcon、容器或 Gazebo；未安裝套件、建立 venv、提交、推送或操作真實硬體。
+- 維護者需將 fork 變更形成版本並同步 submodule、完整重建 NavFn／behavior／TEB，
+  跑 `test_shrink_utils`、`test_dijkstra_budget` 與既有 TEB gtests，再以單一 Gazebo
+  重跑不可達目標 → household → drinks、nav-check 與六區 loc-check。
+  優先收集兩個 plugin 的 configure INFO、Shrink 還原至 0.8 m 的 ACK、NavFn
+  耗盡／goal cost 診斷；若非耗盡，需比對失敗當下 global costmap 與內切下限。
+- 服務斷線或 ROS shutdown 時只能保證嘗試還原，不能保證遠端已套用；同步服務等待
+  中收到取消需等待本次有限等待返回，多個服務及重試的總時間可能大於 3 秒。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| Humble C++ 編譯、新舊 gtest 與 lint | 待驗證 |
+| Shrink 部分失敗／逾時／取消／清理的雙成本圖還原 | 待驗證 |
+| Slow／Fast configure 與 1 Hz INFO | 待驗證 |
+| 單一 Gazebo nav-check 與六區 loc-check | 待驗證 |
+| 全域規劃根因與 apt／fork 成本圖比對 | 待驗證 |
+
+## 2026-10-24：fork inscribed_radius_floor 0.25 模擬複驗（t36s，17:35 台北時間）
+
+- 設定：`nav2_stack:=fork`，local／global costmap `inscribed_radius_floor: 0.25`（前次 0.40），symlink-install 已確認生效。
+- nav-check（`--tolerance-check --max-final-error 0.35 --case-timeout 180`）：unknown zone、unreachable goal、busy policy PASS；cancel and stop「no navigation progress」、valid goal 與 zone tolerance 到 household (0, 4.5) ABORTED → **FAIL**。
+- loc-check：snacks、produce 導航成功並 PASS（前次 0.40 時 drinks 起即失敗）；drinks 仍 navigation_success=false，household 未通過。
+- planner log 仍為「NavFn has no reachable goal within tolerance 0.80 … goal_cost=253」（goal_cell (118,151)／(70,101)），代表 household／drinks 目標附近仍被 fork 的膨脹層視為致命；另有一次 worldToMap 超界（目標座標在 costmap 外）。
+- 結論：0.25 改善部分走道，但 fork 仍未達 apt 的 nav-check 5/5；**不合併**，預設維持 `nav2_stack:=apt`。下一步：比對 fork InflationLayer 與 apt 在 household／drinks 目標格的 cost，檢查 min_inflation_radius≥0.4 與 cost_scaling 是否把目標格推到 253，以及 TEB 控制器在 cancel-stop 不出發的原因。
+
+## 2026-10-24：fork 膨脹成本離線核對（待模擬驗證）
+
+- 讀取子模組 `src/Navigation2/nav2_costmap_2d/plugins/inflation_layer.cpp` 與
+  `include/nav2_costmap_2d/inflation_layer.hpp`：初始化及 footprint 更新皆直接令
+  `inscribed_radius_ = inscribed_radius_floor`，**不採用 footprint 的內切半徑**。
+  正常膨脹半徑為 `max(inflation_radius, min_inflation_radius, inscribed_radius_floor)`；
+  模式服務縮小時將第一項換成 `shrink_to`，數值服務則換成請求半徑，還原時取回
+  YAML 的 `inflation_radius`。目前正常為 0.80 m、縮小為 0.45 m，最小範圍仍為 0.40 m。
+- 令 `r = inscribed_radius_floor`、`d` 為格中心到障礙格中心的距離：障礙格成本 254；
+  `0 < d <= r` 時為 253；其他受膨脹格為 `floor(252 * exp(-1.5 * (d-r)))`。
+  傳播只到 `ceil(膨脹半徑 / resolution)` 格；`min_inflation_radius` 與 `shrink_to`
+  只限制傳播範圍，不會擴大 253 平臺。合併成本時取原格與膨脹成本的最大值，
+  因此既有致命障礙亦不會因調低 floor 消失。這個 0.40 m 下限是膨脹範圍，
+  **不是保證車體與障礙相距 0.40 m 的硬性淨空**。
+- 新增 `tools/nav2_inflation_probe.py`，沿用既有 PGM 讀取與 trinary 門檻，將影像
+  Y 軸反轉為成本圖索引。執行 `/workspace/scratch/venv-shop/bin/python tools/nav2_inflation_probe.py`
+  可重現下表（原始成本圖數值，非 OccupancyGrid 的 0–100）：
+
+| 目標 | 日誌格索引 | 最近佔用格 | 距離 | fork floor=0.25 | fork floor=0.40 | apt |
+| --- | --- | --- | --- | --- | --- | --- |
+| household | (118,151) | (103,151) | 0.75 m | 119 | 149 | 120 |
+| drinks | (70,101) | (54,101) | 0.80 m | 110 | 138 | 112 |
+
+- apt 的 0.60×0.50 m footprint 加上預設 `footprint_padding=0.01`，內切半徑為
+  0.26 m；fork 的 0.25 不含此 padding，故成本略低。指定地圖的 origin 為
+  (-5.92,-3.12)、解析度 0.05 m；NavFn 的四捨五入換算實際得到 (118,152) 與
+  (70,102)，與日誌差一列。腳本也計算這兩格，距離與成本均相同。
+- **目前原始碼、地圖與 YAML 無法重現目標成本 253，故不套用沒有證據的參數修正，
+  `nav2_params_fork.yaml` 保持原值。** 現有設定已使兩格小於 253，連舊 floor=0.40
+  亦如此。新增 pytest 鎖定數值、最小範圍與 253 平臺的差異，取代原先僅檢查
+  floor 大小區間的斷言。縮小後這兩格皆在傳播範圍外，靜態膨脹貢獻為 0。
+- 日誌的 `goal_cost` 取自 NavFn `costarr`，不是原始成本圖；fork `setCostmap`
+  先判斷 `v >= 253`，將 253／254／255 全映為 253，連 `allow_unknown=true`
+  的未知格分支也無法到達。因此不能由該日誌認定是 InflationLayer 的 INSCRIBED。
+  若實測確認原值為 255，候選程式修正是先處理未知格再處理障礙門檻，讓
+  `allow_unknown` 生效；尚無證據證明本次就是未知格，依要求僅記錄、不修改子模組。
+- 自行檢查：指定 pytest 為 **778 passed**，1 個既有 xacro DeprecationWarning；
+  指定 `scripts/check_static.py` PASS（18 YAML/RViz、13 XML/SDF/xacro、110 Python、
+  5 Bash，含兩／三錨點及 ekf／ground_truth 的 xacro 展開）。未執行 git 指令、
+  Docker、ROS 或 Gazebo；未修改子模組，這些檢查不代表模擬驗收。
+- 下一步：在同一次失敗中擷取載入的地圖 origin／尺寸／解析度、兩層 InflationLayer
+  執行期參數、global costmap 原始 0–255 資料及目標附近 scan 障礙，核對執行中
+  函式庫與目前原始碼是否一致，再區分未知格、雷射標記、地圖或參數／建置版本差異。
+  cancel-and-stop 未出發可能是規劃失敗的下游結果，仍須追蹤該次 action 與控制器日誌；
+  目前不能宣稱已修復。維持單一移動流程，重跑 household／drinks、nav-check 與六區測試。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| 公式、地圖數值與離線測試審查 | 待驗證 |
+| 執行期原始成本、參數與地圖差異定位 | 待驗證 |
+| Gazebo 目標導航與取消停止（待模擬驗證） | 待驗證 |
+
+- 補充（17:46 台北時間，審查）：t36s 的 global costmap StaticLayer 每 2 秒重新調整尺寸（236×199 → 237×200），代表 guide 使用即時 SLAM 地圖，household／drinks 附近在探索前多為未知格（255）。這與上方推論一致：fork NavFn `setCostmap` 先以 `v >= 253` 判為障礙，使未知格無法依 `allow_unknown` 通行，而 apt NavFn 可穿越未知格。下一步優先在 fork 修正 NavFn 未知格順序（先判 255 再判障礙門檻），重建 fork 後重跑 nav-check／loc-check。
 ## 2026-10-24：硬體介面設計、預設關閉入口與 UWB 訊息
 
 ### 修改內容
@@ -1285,3 +1403,45 @@
 | Linux amd64 相容性 | 審查端 Linux amd64 Docker：映像建置、colcon build、colcon test 721 tests／0 errors／0 failures／5 skipped；pytest 1034 passed、1 skipped（私有 fork 子模組未取出）。修正 3 個 `setup.py` 的 glob，避免主機 pytest 留下的 `launch/__pycache__` 讓 colcon build 失敗 |
 
 使用者 2026-10-27 授權測試通過後合併至 develop（取代上方「不開 PR／不合併」的原指示）。
+
+## 2026-10-27：合併 develop 與 fork Smac2D 規劃器切換
+
+### 修改與原因
+
+- 解決本文件與 `tests/test_nav2_fork.py` 的內容衝突，保留雙方進度段落，依日期排列；測試同時保留 Shrink 的成本容忍、服務逾時及還原重試斷言。
+- fork 的 NavFn 將未知格 255 先轉為障礙 253，使 `allow_unknown` 無法生效，household／drinks 目標可能失敗。fork GridBased 改為 `nav2_smac_planner/SmacPlanner2D`，與 apt 共用 0.8 m 容差、不降採樣、2 秒規劃時間、2.0 成本倍率及允許未知格；移除 NavFn 專用參數，保留 0.25 m 內切半徑下限與其他 fork 安全設定。apt 仍為預設 stack。
+- 將 `nav2_smac_planner` 加入 fork 建置清單，必須由 checkout `12f06c4` 的原始碼在 `/nav2_ws` 建置。該 Smac 套件標示 1.1.20，fork core／costmap 為 1.1.16；直接載入 apt 1.1.20 Smac 外掛會混用 ABI。合約與 linkage 檢查共用安裝檢查，缺少可用的 fork `libnav2_smac_planner_2d.so` 即明確失敗，不接受 apt 回退。建置前用 `--source-only` 保留首次建置能力，建置後必跑安裝與 linkage 檢查。
+- 查閱 fork Smac 的 CMake／package.xml 與呼叫符號，核對 core 規劃器介面、costmap／publisher／inflation API、util 參數、線段迭代及幾何工具，未發現缺少的 API。Smac 同時編譯 Hybrid／Lattice 共用來源，因此仍需要 OMPL、nlohmann JSON、Eigen、angles 與 OpenMP；Dockerfile 明列 OMPL／JSON／angles／Eigen CMake 相依，既有 Eigen 開發套件保留。未執行安裝或映像建置。
+- 更新 ARCHITECTURE、README 與 ARM64 驗證文件，明確區分既有驗收結果與本次待驗證的 fork 規劃器。
+
+### 自行檢查、限制與下一步
+
+- 指定沙盒純 Python 完整測試：`/workspace/scratch/venv-shop/bin/python -m pytest -q`，結果為 **1041 passed、1 warning**（xacro 的既有 Python 棄用警告）；含私有子模組測試及缺少／失效 Smac 安裝、apt 回退拒絕的回歸案例。
+- `check_static.py` 通過 YAML、XML／SDF／xacro、Python／launch、Bash 與情境檢查；本次未執行 Docker、C++ 編譯或模擬，原始碼 API 核對不能證明 ABI 與導航行為相容。
+- 工作樹已移除衝突標記；嘗試只暫存兩個衝突檔時，Git 無法在唯讀的 `/workspace/repos/Almighty-shopping-car/.git/worktrees/shop-navteb` 建立 `index.lock`，因此索引仍維持未解衝突。維護者須在可寫入索引的環境執行 `git add docs/PROGRESS.md tests/test_nav2_fork.py`。本次未提交或推送。
+- 下一步：原生重建 fork，確認 Smac 從 fork install 載入並通過 linkage，再分開執行 household／drinks、nav-check、loc-check、取消停止與 Shrink 還原模擬回歸。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| 衝突合併、設定一致性與純 Python 回歸 | 審查端（2026-10-27）：pytest 1041 passed；索引衝突已於提交 8d091d4 解決 |
+| Humble colcon build／test 與執行期依賴 | 審查端 Linux amd64：fork nav2-build 含 Smac2D 1 分 5 秒完成，custom_controller gtest 28/0 |
+| fork Smac 安裝來源、動態連結與 ABI | 審查端：linkage 檢查 110 PASS，Smac2D 從 `/nav2_ws` 載入 |
+| Gazebo 導航、未知格、取消停止與 Shrink 還原 | 審查端：fork nav-check 6/6（區域容差 0.043 m）、loc-check 六區全過；取消停止與 Shrink 還原未單獨重測 |
+
+## 2026-10-27：fork 成為預設 Nav2 stack（`nav2_stack:=auto`）
+
+### 修改與原因
+
+- 審查端 fork 模擬驗收：fork guide loc-check 六區全過（最大定位誤差 0.078 m，entrance；其餘 ≤ 0.030 m）；fork follow fault-check 7/7（命令停止 0.114–0.665 s）；fork 障礙物 fault-check 4/4（lidar_front:0.2 命令停止 0.070 s、lidar_drop 0.538 s、lidar_freeze 0.661 s）。同次 develop（apt）障礙物 fault-check 4/4 作為基準。
+- 修正：fork 的 `StopController` BT 裝飾器從每個 navigator 的 client 節點發布絕對 `/cmd_vel`。原本只重映射 `bt_navigator_navigate_to_pose_rclcpp_node`，through-poses client 仍在 `/cmd_vel` 留下第二個發布者，fault-check 以「`/cmd_vel` 必須只有 cmd_vel_watchdog 一個發布者」失敗。新增 `bt_navigator_navigate_through_poses_rclcpp_node:/cmd_vel → /cmd_vel/nav`；重跑後 `ros2 topic info -v /cmd_vel` 只有 cmd_vel_watchdog，障礙物 fault-check 通過。
+- guide／follow／navigation 與拆分容器 `runtime_role` 的 `nav2_stack` 預設由 `apt` 改為 `auto`：已建置 fork underlay 時使用 fork TEB＋Smac2D，沒有私有子模組或未建置時自動回退 apt（Mac／無權限使用者不受影響）。要比對 apt 須明確指定 `nav2_stack:=apt`。
+
+### 限制與下一步
+
+- `auto` 實際選到 fork 的 Gazebo 啟動以及動態情境（aisle_crossing／narrow_pass／checkout_queue）在 fork 下尚未重跑；Mac arm64 fork 建置未驗證。
+- 跟隨 TEB 繞行與 Shrink 還原仍待調參與專門回歸。
+
+| 審查驗證項目 | 狀態 |
+| --- | --- |
+| through-poses `/cmd_vel` 重映射與單一發布者 | 審查端 Linux amd64（2026-10-27）：fork 障礙物 fault-check 4/4，`/cmd_vel` 只有 cmd_vel_watchdog 一個發布者 |
+| 預設 `auto` 選擇與回退 | 審查端：pytest（test_mode_launch 53 項、全套 1041）通過；`auto` 實際載入 fork 的 Gazebo 確認併入合併後動態情境重跑 |

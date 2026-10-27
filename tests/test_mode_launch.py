@@ -76,7 +76,7 @@ def test_scenarios_preserve_nav2_and_optional_mcu_wiring(name, stack):
     actions = load(f'shopping_robot_bringup/launch/{name}.launch.py')['generate_launch_description']()
     declarations = {a.args[0]: a for a in actions if a.kind == 'DeclareLaunchArgument'}
     assert declarations['scenario'].default_value == 'default'
-    assert declarations['nav2_stack'].default_value == 'apt'
+    assert declarations['nav2_stack'].default_value == 'auto'
     assert declarations['nav2_stack'].choices == ['auto', 'fork', 'apt']
     assert declarations['mcu_comm'].default_value == 'false'
     assert declarations['use_mux'].default_value == 'true'
@@ -109,7 +109,8 @@ def test_nav2_velocity_outputs_are_remapped(enabled, monkeypatch):
     remaps = [a for a in group.actions if a.kind == 'SetRemap']
     assert [(a.src, a.dst) for a in remaps] == (
         [('cmd_vel_smoothed', '/cmd_vel/nav'), ('behavior_server:cmd_vel', '/cmd_vel/nav'),
-         ('bt_navigator_navigate_to_pose_rclcpp_node:/cmd_vel', '/cmd_vel/nav')] if enabled == 'true' else [])
+         ('bt_navigator_navigate_to_pose_rclcpp_node:/cmd_vel', '/cmd_vel/nav'),
+         ('bt_navigator_navigate_through_poses_rclcpp_node:/cmd_vel', '/cmd_vel/nav')] if enabled == 'true' else [])
     include = group.actions[-1]
     assert include.args[0].endswith('/nav2_bringup/launch/navigation_launch.py')
     assert dict(include.launch_arguments)['use_composition'] == 'False'
@@ -199,7 +200,7 @@ def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack
                 'start_sim', 'start_navigation', 'start_app', 'start_nav_localization',
                 'start_sim_localization', 'mcu_transport'} | ({'start_uwb_sim'} if name == 'follow' else set())
     assert set(declarations) == expected
-    assert declarations['nav2_stack'].default_value == 'apt'
+    assert declarations['nav2_stack'].default_value == 'auto'
     assert set(declarations['nav2_stack'].choices) == {'apt', 'fork', 'auto'}
     assert declarations['use_mux'].choices == ['true']
     assert declarations['obstacle_guard'].default_value == 'true'
