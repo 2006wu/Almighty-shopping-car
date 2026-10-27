@@ -30,7 +30,7 @@
 - [x] 改用 Regulated Pure Pursuit，調整足跡、膨脹距離與速度平滑。
 - [x] 驗證六個區域與中文別名（即時建圖下連續 10 個目標成功）。
 - [x] 驗證動作拒絕／失敗／取消（2026-10-23，`dev.sh nav-check --tolerance-check` 6/6 通過）。
-- [ ] 驗證窄走道、結帳區、人員穿越與 AMCL 替代定位（2026-10-24：AMCL likelihood_field 參數六區 PASS，snacks 0.096 m；情境部分待驗證）。
+- [ ] 驗證窄走道、結帳區、人員穿越與 AMCL 替代定位（2026-10-24：AMCL likelihood_field 參數六區 PASS，snacks 0.096 m；情境部分待驗證）。（2026-10-27 t76：結帳排隊不在範圍；aisle_crossing 讓行後無接觸但 household 仍 ABORTED 0.584 m（雙方互等死鎖）；narrow_pass 低優先，ABORTED 但無接觸；AMCL 替代定位 loc-check PASS）
 - [x] Nav2 改用使用者私有 fork（`2006wu/Eurobot-2027-Navigation2`，Humble、Nav2 1.1.16）原始碼建置，取代 apt Nav2，以便修改 Nav2 內部；說明引入方式及私有來源對公開 repo 建置的影響（2026-10-23 決定；2026-10-24 接上 fork `shopping-car` bf60ee0，建置／連結／lifecycle 驗證通過，launch 預設仍為 apt，需 `nav2_stack:=fork`）。（2026-10-27：PR #22 合併，`nav2_stack:=auto` 預設使用 fork，未建置私有子模組時回退 apt）
 - [x] 沿用 fork 的 to_pose 行為樹（`navigate_to_pose_w_selector.xml`），只調整恢復：保留 NonStop、保留 Shrink＋Wait、移除 Escape（2026-10-24：to_pose 與 through_poses 樹皆僅 Shrink＋Wait，Shrink safe 模式於模擬中執行並還原）。
 - [x] 控制器改用 fork 的 TEB（比 MPPI 好調），完成四輪差速車參數，並與 apt Nav2 的 guided shopping 結果比較。（2026-10-24：fork nav-check 5/6，終點誤差 0.604 m、loc-check 走道卡住，待 t23 footprint clearance 後再比較）（2026-10-27：fork TEB＋Smac2D nav-check 6/6、區域容差 0.043 m，loc-check 六區全過；apt 基準 nav-check 5/5）

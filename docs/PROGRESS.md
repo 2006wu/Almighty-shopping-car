@@ -1516,3 +1516,28 @@
 | 穿越窗口、TEB 恢復與 checkout 最終旋轉 | 待驗證 |
 | AMCL 信心檢查、假成功拒絕與生命週期 | 待驗證 |
 | 新 bag 三情境與無人物／安全回歸 | 待驗證 |
+
+## 2026-10-27（t76）：dynamic-scenarios f396c2d 模擬驗收
+
+範圍調整（使用者 15:07）：機器人在較寬敞區域只做跟隨／帶路，結帳在機上完成，**checkout_queue 不在範圍內**（不再追 yaw 問題），narrow_pass 降為低優先；aisle_crossing 行人讓行與跟隨／帶路穩定為優先。fork `gentle_resume_margin` 維持 0.05。
+
+環境：Linux amd64 Docker（shopnav2，ROS_DOMAIN_ID 31），fork TEB＋Smac2D（`nav2_stack:=auto`），AMCL＋`supermarket.yaml`，headless。bag：`bags/t76_{aisle,aisle_noyield,narrow}`（不入版控）。
+
+| 項目 | t76 結果 | 對照 |
+| --- | --- | --- |
+| aisle_crossing（讓行開）household | ABORTED，真值誤差 0.584 m，人物最小淨空 0.321 m（無接觸） | t71 TIMEOUT 2.77 m |
+| aisle_crossing（讓行開）entrance | SUCCEEDED 0.094 m | — |
+| aisle_crossing（`pedestrian_yield:=false`）household | 回報 SUCCEEDED 但真值誤差 1.43 m、人物淨空 0（接觸、推移、AMCL 滑移；covariance 檢查未攔下）→ 假成功 | 證明讓行有效 |
+| narrow_pass（低優先）household | ABORTED，2.78 m，人物淨空 0.342 m（無接觸、誠實失敗） | t71 假成功 2.40 m、接觸 |
+| narrow_pass entrance | SUCCEEDED 0.074 m | t71 13.1 m |
+| nav-check default | 6/6 PASS（區域容差 0.145 m） | develop 6/6 |
+| nav-check alt_start | 6/6 PASS（0.119 m） | develop 6/6 |
+| loc-check | PASS（六區，定位 RMSE ≤ 0.072 m） | develop PASS |
+| obstacle fault-check | 4/4 PASS | develop 4/4 |
+| follow fault-check | 7/7 PASS | develop 7/7 |
+
+結論：無人物／安全回歸全部通過；動態情境沒有退步且安全性改善（無接觸、無假成功），但 aisle_crossing household 仍失敗。
+
+根因（aisle_crossing）：互相等待死鎖。機器人停在 (0, 3.92)，行人在 (-0.45, 4.77) 讓行凍結約 124–160 s；雙方都等，Nav2 Shrink 後 ABORTED，行人在機器人離開後才繼續。
+
+下一步：行人模擬加入耐心逾時（受阻超過數秒即沿路徑倒退讓出走道，真值仍只用於模擬行人），重跑 aisle_crossing；AMCL covariance 無法偵測推移後的錯位（noyield 假成功），需另加真值以外的一致性檢查（例如雷射與地圖匹配分數）。
