@@ -2,7 +2,7 @@
 
 這是使用 C、rclc 與 `rmw_microxrcedds` 的 Linux 程式，只模擬輪子，不開啟串列埠、不操作馬達。資料路徑是 Linux client → UDP4 → micro-ROS agent → DDS；與直接加入 DDS 的 Python `sim_mcu_firmware` 不同。
 
-從 repo 根目錄使用 `./scripts/dev.sh comm-e2e-up` 建置／啟動；另一終端使用 `./scripts/dev.sh comm-e2e-check`。完整準備、停止與驗收指令見 [micro-ROS 入門](../../docs/MICROROS_GUIDE.md)。一般 compute 的 colcon 不會建置此目錄；客戶端在自己的映像內建置。
+從 repo 根目錄使用 `./scripts/dev.sh comm-e2e-up` 建置／啟動；另一終端使用 `./scripts/dev.sh comm-e2e-check`。完整準備、停止與驗收指令見 [micro-ROS 入門](../../docs/hardware/MICROROS_GUIDE.md)。一般 compute 的 colcon 不會建置此目錄；客戶端在自己的映像內建置。
 
 ## 原始碼與契約
 

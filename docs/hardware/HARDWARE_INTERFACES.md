@@ -4,7 +4,7 @@
 
 ## Topic、座標與資料責任
 
-以下頻率為介面目標，模擬感測頻率依 ROS 模擬時間；MCU 的發布排程與安全期限依單調壁鐘。[MCU 契約](../ros2_ws/src/shopping_mcu_bridge/config/interface.yaml) 是 MCU topic、輪序、頻率與 QoS 的唯一來源。QoS 格式為 reliability／keep_last depth／durability；未列 durability 時為 volatile。未來驅動必須滿足既有訂閱者的 QoS，不能直接將 reliable 訂閱者接到 best_effort 發布者。
+以下頻率為介面目標，模擬感測頻率依 ROS 模擬時間；MCU 的發布排程與安全期限依單調壁鐘。[MCU 契約](../../ros2_ws/src/shopping_mcu_bridge/config/interface.yaml) 是 MCU topic、輪序、頻率與 QoS 的唯一來源。QoS 格式為 reliability／keep_last depth／durability；未列 durability 時為 volatile。未來驅動必須滿足既有訂閱者的 QoS，不能直接將 reliable 訂閱者接到 best_effort 發布者。
 
 | 介面與 topic | 型別 | frame／單位 | Hz；QoS | 模擬發布者 → 未來實車發布者 |
 | --- | --- | --- | --- | --- |
@@ -94,7 +94,7 @@ xacro 錨點相對 base_link 為 `(0, ±0.22, 0.12)` 與 `(-0.25, 0, 0.12)` m；
 
 實體量測是斜距 r。平面距離應為 `sqrt(r² − (h_tag − h_anchor)²)`；若根號內非正、標籤高度未知或校正超期則拒收，不能取絕對值或直接套現有平面解。近垂直幾何下高度誤差會放大；需要依 r 與高度的不確定度傳播 covariance，不能只沿用模組 range_std_m。先在多個已知距離／角度估計每錨點偏差與標準差，再測人體遮蔽、貨架 NLOS、掉訊與高度變化。
 
-兩錨點有前後交點歧義；現有前半平面初始化與前次位置選解只適用既有配置／假設，不是一般定位保證。三錨點仍可能因幾何、掉訊與 NLOS 翻側；品質分數與低殘差都不能證明沒有 NLOS，見 [UWB_STUDY](UWB_STUDY.md)。
+兩錨點有前後交點歧義；現有前半平面初始化與前次位置選解只適用既有配置／假設，不是一般定位保證。三錨點仍可能因幾何、掉訊與 NLOS 翻側；品質分數與低殘差都不能證明沒有 NLOS，見 [UWB_STUDY](../research/UWB_STUDY.md)。
 
 ### 相容轉接與遷移順序
 

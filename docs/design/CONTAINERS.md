@@ -88,7 +88,7 @@ Mac arm64 CPU 資源較有限，平常邏輯／套件測試與開發優先使用
 ./scripts/dev.sh comm-e2e-up
 ```
 
-另開終端機執行 `./scripts/dev.sh comm-e2e-check`；完成後停止前景 launch，再 `./scripts/dev.sh comm-down`。XRCE C 客戶端的 wheel telemetry 仍使用壁鐘時間戳，不能拿來替代 Gazebo 的 EKF 輸入或宣稱模擬時間驗收通過。完整流程見 [micro-ROS 指南](MICROROS_GUIDE.md)。
+另開終端機執行 `./scripts/dev.sh comm-e2e-check`；完成後停止前景 launch，再 `./scripts/dev.sh comm-down`。XRCE C 客戶端的 wheel telemetry 仍使用壁鐘時間戳，不能拿來替代 Gazebo 的 EKF 輸入或宣稱模擬時間驗收通過。完整流程見 [micro-ROS 指南](../hardware/MICROROS_GUIDE.md)。
 
 若只要讓 UDP agent 待命，可以在 split 堆疊中執行 `./scripts/dev.sh comm-up`，不會新增 firmware 或 watchdog。預設 sim 已含 Python 模擬韌體，勿直接加開 XRCE 客戶端形成兩個韌體發布者；`mcu_transport:=agent` 可明確停用 Python 韌體、保留監測，但 C 客戶端與 Gazebo 整合及時間戳仍待後續驗收。正式的 split 驗收以預設 `sim_ros` 為準。serial override 額外要求明確的 `MICROROS_SERIAL_DEVICE`，且原範本仍沒有 devices mapping；預設不能開啟任何真實裝置。
 
@@ -109,4 +109,4 @@ docker compose -f docker/docker-compose.yaml --profile record run --rm record py
 - app 保持零速時，看 `split-logs app` 與 `split-logs navigation`，確認取消服務與 `/follow/enable` 就緒。若啟動期間通訊監測已觸發 ESTOP，先修復連線，再明確 `dev.sh reset`、`dev.sh mode guide`（或 `follow`）；不自動解除急停。
 - 無法開 noVNC 時，查 display 健康狀態及主機 6080／5910 是否被占用；只有 compute 發布這兩個 port。不要讓多個 Compose 專案共用同一組主機 port。
 
-本文件最初版本僅做離線檢查；2026-10-26 已在 Mac arm64 原生 Docker 完成映像、colcon、DDS 與多項模擬實測。實際完成範圍及未完成項目見 [arm64 驗收](VALIDATION_ARM64.md)，SLAM 的畫面與建圖流程見 [SLAM 操作說明](SLAM.md)。Linux amd64 仍須對本次修改重新回歸。
+本文件最初版本僅做離線檢查；2026-10-26 已在 Mac arm64 原生 Docker 完成映像、colcon、DDS 與多項模擬實測。實際完成範圍及未完成項目見 [arm64 驗收](../hardware/VALIDATION_ARM64.md)，SLAM 的畫面與建圖流程見 [SLAM 操作說明](SLAM.md)。Linux amd64 仍須對本次修改重新回歸。

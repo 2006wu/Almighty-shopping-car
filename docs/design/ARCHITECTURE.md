@@ -286,11 +286,11 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 
 `mcu_link_monitor` 發布 `/pc/heartbeat`，檢查 MCU heartbeat／status／急停；選用 `estop_on_link_loss` 時向既有 `/mode_manager/request` 請求 estop。安全期限使用單調壁鐘，訊息 stamp 使用 ROS 時鐘。失聯恢復需要三筆新 heartbeat，MCU latch 與 PC 模式急停均須明確重設。純邏輯、codec、transport 與 ROS 節點分開測試。
 
-`comm.launch.py` 選 `sim_ros` 或 `serial_loopback`；follow／guide 以預設 false 的 `mcu_comm` 引入並沿用 `use_sim_time`。獨立 `dev.sh comm-sim` 才啟動額外 mux／watchdog。compose `comm` profile 的 agent 預設 UDP4:8888、無裝置映射，僅供未來真正 XRCE client；目前兩種模擬均不經 agent。未來硬體 EKF 接法、serial 的雙重啟用條件與驗收限制見 [MCU_INTERFACE.md](MCU_INTERFACE.md) 與 [MICROROS_GUIDE.md](MICROROS_GUIDE.md)。
+`comm.launch.py` 選 `sim_ros` 或 `serial_loopback`；follow／guide 以預設 false 的 `mcu_comm` 引入並沿用 `use_sim_time`。獨立 `dev.sh comm-sim` 才啟動額外 mux／watchdog。compose `comm` profile 的 agent 預設 UDP4:8888、無裝置映射，僅供未來真正 XRCE client；目前兩種模擬均不經 agent。未來硬體 EKF 接法、serial 的雙重啟用條件與驗收限制見 [MCU_INTERFACE.md](../hardware/MCU_INTERFACE.md) 與 [MICROROS_GUIDE.md](../hardware/MICROROS_GUIDE.md)。
 
 ## 未來硬體介面
 
-雷射、IMU、UWB、輪式里程計、底盤命令與急停的準備規格見 [HARDWARE_INTERFACES](HARDWARE_INTERFACES.md)。`hardware.launch.py` 為預設全部模擬、待機的介面驗證入口；明確選用實體來源會停用對應的模擬 ROS 輸出，未指定未來驅動時只記錄錯誤。新 `shopping_interfaces` 提供 UWB rosidl 訊息，現有模擬／估測仍沿用舊訊息，不代表實車流程已完成。
+雷射、IMU、UWB、輪式里程計、底盤命令與急停的準備規格見 [HARDWARE_INTERFACES](../hardware/HARDWARE_INTERFACES.md)。`hardware.launch.py` 為預設全部模擬、待機的介面驗證入口；明確選用實體來源會停用對應的模擬 ROS 輸出，未指定未來驅動時只記錄錯誤。新 `shopping_interfaces` 提供 UWB rosidl 訊息，現有模擬／估測仍沿用舊訊息，不代表實車流程已完成。
 
 ## 私人 Nav2 fork underlay 與選擇流程
 

@@ -12,7 +12,7 @@
 
 預設維持 `compute`＋`display`。要驗證容器拆分，先執行 `./scripts/dev.sh build compute display`、`./scripts/dev.sh colcon-build`，再執行 `./scripts/dev.sh split-up guide headless:=true`；用 `split-status` 查看狀態、`split-logs navigation` 看日誌、`nav-check --case-timeout 180` 檢查導航，最後 `split-down`。也支援 `split-up follow`，沿用 `nav2_stack:=apt|auto|fork`。
 
-`split` 分別啟動 sim、localization、navigation、app 與既有 display；comm、record 另外明確選用。所有服務共用 compute 網路命名空間與 UDP-only DDS，適用 Mac arm64／Linux。`split-up` 會先停止同一專案的既有服務，避免重複控制節點；切換前先結束錄製工作。Mac 日常開發優先使用預設單容器模式，驗證拆分時保持 headless、暫不啟用額外 profiles。角色表、主題流向、限制與完整維護者驗收命令見 [容器操作說明](docs/CONTAINERS.md)。
+`split` 分別啟動 sim、localization、navigation、app 與既有 display；comm、record 另外明確選用。所有服務共用 compute 網路命名空間與 UDP-only DDS，適用 Mac arm64／Linux。`split-up` 會先停止同一專案的既有服務，避免重複控制節點；切換前先結束錄製工作。Mac 日常開發優先使用預設單容器模式，驗證拆分時保持 headless、暫不啟用額外 profiles。角色表、主題流向、限制與完整維護者驗收命令見 [容器操作說明](docs/design/CONTAINERS.md)。
 
 ## 在 Mac Apple Silicon 與 Linux 上執行
 
@@ -165,7 +165,7 @@ ros2 topic echo /wheel_odom_noisy --once
 ros2 topic echo /imu/with_covariance --once
 ```
 
-`/sim/odom_drift` 每 5 秒發布一次 Float32MultiArray，依序為平移誤差（m）、絕對航向誤差（rad）、累積真值路程（m）、平移誤差／路程（m/m）、航向誤差／路程（rad/m）。未移動時最後兩項為 NaN。監測器依時間插值真值，跨越 0.1 秒以上的資料缺口便略過，不外插；資料過期時不重播舊統計。請從出生點開始整段量測，至少比較直線、轉彎與返回起點；真值模式誤差應接近零（含插值殘差），EKF 應呈現非零漂移，預期比單靠輪速積分的偏航穩定，但尚無容器量測數字或保證門檻。種子 42 只固定輪速噪聲序列，不保證物理模擬完全重現。參數、covariance 與離線 `odom_metrics.py` 介面見[架構文件](docs/ARCHITECTURE.md)。
+`/sim/odom_drift` 每 5 秒發布一次 Float32MultiArray，依序為平移誤差（m）、絕對航向誤差（rad）、累積真值路程（m）、平移誤差／路程（m/m）、航向誤差／路程（rad/m）。未移動時最後兩項為 NaN。監測器依時間插值真值，跨越 0.1 秒以上的資料缺口便略過，不外插；資料過期時不重播舊統計。請從出生點開始整段量測，至少比較直線、轉彎與返回起點；真值模式誤差應接近零（含插值殘差），EKF 應呈現非零漂移，預期比單靠輪速積分的偏航穩定，但尚無容器量測數字或保證門檻。種子 42 只固定輪速噪聲序列，不保證物理模擬完全重現。參數、covariance 與離線 `odom_metrics.py` 介面見[架構文件](docs/design/ARCHITECTURE.md)。
 
 ## 模式管理與速度仲裁
 
@@ -192,7 +192,7 @@ Nav2 平滑器輸出 `/cmd_vel/nav`、直接跟隨輸出 `/cmd_vel/follow`；只
 
 純邏輯與單獨執行 `cmd_vel_mux` 都預設 `IDLE`，程序重啟不自行恢復先前模式。launch 的 `initial_mode` 是明確的便利性例外：重新執行整個 guide／follow launch（或以相同參數重啟節點）會重新請求該模式；有重啟風險的驗收請使用 `initial_mode:=idle`。launch 未設定自動 respawn。若獨立看門狗已鎖定急停，重啟仲裁器不會解除，仍須 `reset`。
 
-`guide`／`follow`／`mode_mux` 已停用 `use_mux:=false` 旁路。障礙防護預設 `obstacle_guard:=true`，Nav2 collision_monitor 預設 `collision_monitor:=false`；幾何、故障注入與無視窗驗收命令見 [障礙安全鏈路](docs/OBSTACLE_SAFETY.md)。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/ARCHITECTURE.md)。
+`guide`／`follow`／`mode_mux` 已停用 `use_mux:=false` 旁路。障礙防護預設 `obstacle_guard:=true`，Nav2 collision_monitor 預設 `collision_monitor:=false`；幾何、故障注入與無視窗驗收命令見 [障礙安全鏈路](docs/design/OBSTACLE_SAFETY.md)。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/design/ARCHITECTURE.md)。
 
 ## 受限網路的 ROS 套件鏡像
 
@@ -248,7 +248,7 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 ./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 20.0, fault: lidar_drop, duration: 3.0}, {time: 40.0, fault: "uwb_noise:0.5", duration: 5.0}]'
 ```
 
-`fault-check` 請使用空排程。工具依序測六種故障，每次保持約 4 秒模擬時間、清除並等待恢復，輸出 PASS／FAIL 表與非零失敗結束碼。使用 `python3 scripts/fault_check.py --help` 可查看等待選項；門檻、預期反應及限制見[架構文件](docs/ARCHITECTURE.md#模擬故障注入與驗收)。目前只有純 Python／靜態測試，尚未取得 Gazebo 故障量測結果。
+`fault-check` 請使用空排程。工具依序測六種故障，每次保持約 4 秒模擬時間、清除並等待恢復，輸出 PASS／FAIL 表與非零失敗結束碼。使用 `python3 scripts/fault_check.py --help` 可查看等待選項；門檻、預期反應及限制見[架構文件](docs/design/ARCHITECTURE.md#模擬故障注入與驗收)。目前只有純 Python／靜態測試，尚未取得 Gazebo 故障量測結果。
 
 ## 安全與驗證狀態
 
@@ -295,7 +295,7 @@ python3 scripts/check_static.py
 
 此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
 
-[模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
+[模擬評估指標與離線報表](docs/design/METRICS.md) · [UWB 錨點離線研究](docs/research/UWB_STUDY.md) · [架構](docs/design/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
 
 ## rosbag 記錄與離線報告（僅模擬）
 
@@ -328,7 +328,7 @@ python3 scripts/check_static.py
 
 `eval-bag` 依序產生 `observations.jsonl`、`observations.jsonl.meta.json`、`report.json` 與 `report.md`；重跑會覆寫這四個檔案。轉換中繼資料揭露缺少人物真值、同時間合併樣本與截止回合，須和報告一起檢視。`eval-bag` 使用目前固定場景的 map→世界 `(0,0,0)` 對齊；自訂地圖原點須改用 `bag_to_eval --map-world-transform X Y YAW`，不能直接套用。
 
-完整時間規則、已支援與無法還原的觀測、固定情境及兩次報告比較方式見 [評估指標](docs/METRICS.md#rosbag-記錄轉換與可重現流程)。沙盒僅驗證純 Python 與靜態配置，ROS／Gazebo 實際錄製回放須由維護者在容器驗證。
+完整時間規則、已支援與無法還原的觀測、固定情境及兩次報告比較方式見 [評估指標](docs/design/METRICS.md#rosbag-記錄轉換與可重現流程)。沙盒僅驗證純 Python 與靜態配置，ROS／Gazebo 實際錄製回放須由維護者在容器驗證。
 
 ### 人物同步與跟隨評估（純模擬）
 
@@ -396,12 +396,12 @@ python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
 另依 `zones.yaml` 與貨架幾何，輸出區域附近一公尺長走道邊緣的橫向平移／旋轉／寬度倍率。snacks 本次為 +0.005 m／0°／1.000，兩側覆蓋皆 100%；平行貨架無法單獨約束沿走道的定位誤差。詳細全店量測與 AMCL 調整理由見 [進度紀錄](docs/PROGRESS.md)。AMCL 此次為待模擬確認的試調，須先用同一提交格網重新啟動 `guide slam_mode:=map_server` 並跑 `loc-check`；尚無證據需要重建地圖。若仍失敗，保留 JSON 並比較誤差方向、AMCL 更新與 EKF 殘差，再考慮重新 map-tour，勿手改格網或移動區域目標來通過門檻。
 ## MCU 通訊（預設模擬，選用啟動）
 
-新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/MICROROS_GUIDE.md)。
+新增 `shopping_mcu_bridge`：標準 ROS 訊息介面、具逾時與急停鎖定的模擬韌體、雙向 heartbeat monitor，以及不用實體裝置的 PTY serial 備援。`./scripts/dev.sh comm-sim` 可在沒有 Gazebo 時獨立啟動；另一終端執行 `./scripts/dev.sh comm-check` 會注入測試運動／故障並列出 PASS／FAIL。先以 `dev.sh up`、`dev.sh colcon-build` 準備容器；兩種傳輸的完整指令見 [micro-ROS 入門](docs/hardware/MICROROS_GUIDE.md)。
 
-`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 只停止 agent；一般 `dev.sh up` 不受影響。模擬韌體直接使用 DDS，**不經過 agent**，尚未驗證真正 micro-ROS client。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/hardware/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
 ## 未來硬體介面（預設全部模擬）
 
-[硬體介面規格](docs/HARDWARE_INTERFACES.md) 定義感測器、底盤、急停與心跳契約，以及 `shopping_interfaces` 的四種 UWB 訊息。`hardware.launch.py` 是含 Gazebo 的待機介面驗證入口，`use_real_lidar`、`use_real_imu`、`use_real_uwb`、`use_real_base` 全部預設 `false`；只有明確選用並提供對應 driver package／launch 才會引入未來驅動，缺設定只記錄錯誤，不探測裝置。入口使用 EKF、待機模式與唯一 `/cmd_vel` watchdog，沒有移動命令來源。現有 UWB 模擬／估測仍使用原訊息；目前沒有實體驅動、裝置連線或完整實車 bringup，guide／follow 也尚未整合硬體選項。
+[硬體介面規格](docs/hardware/HARDWARE_INTERFACES.md) 定義感測器、底盤、急停與心跳契約，以及 `shopping_interfaces` 的四種 UWB 訊息。`hardware.launch.py` 是含 Gazebo 的待機介面驗證入口，`use_real_lidar`、`use_real_imu`、`use_real_uwb`、`use_real_base` 全部預設 `false`；只有明確選用並提供對應 driver package／launch 才會引入未來驅動，缺設定只記錄錯誤，不探測裝置。入口使用 EKF、待機模式與唯一 `/cmd_vel` watchdog，沒有移動命令來源。現有 UWB 模擬／估測仍使用原訊息；目前沒有實體驅動、裝置連線或完整實車 bringup，guide／follow 也尚未整合硬體選項。
 
 ## Nav2 fork、TEB 與 apt 對照
 
@@ -432,7 +432,7 @@ git submodule update --init third_party/eurobot_nav2
 
 fork 使用 `Slow`（0.30 m/s）／`Fast`（0.40 m/s）TEB、`holonomic: false`、`avoidance_mode: gentle` 與 `use_rival_topic: false`，預設 selector 選 `Slow`／`Loose`，不需額外發布者。`Loose` 維持區域目標 0.15 m／0.25 rad 容差；`NonStopGoalChecker` 沿用 fork 中以 `SimpleGoalChecker` 定義、忽略朝向的 profile 名稱，不是獨立 plugin class。Smac2D 的既有 0.8 m 可接受終點容差維持不變，仍須量測原始目標誤差。跟隨交接、區域引導、nav-check 與 map-tour 都使用 `NavigateToPose`，空白 `behavior_tree` 會選新的預設樹。
 
-to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。Shrink 使用 fork 的 `safe_recovery: true`：BT `shrink_to=0.45 m`，下限 0.40 m（大於 0.60 × 0.50 m 車體半對角線約 0.391 m），兩個 costmap 各用自己的 inflation service，結束或取消時還原；缺少的 rival／object layer service 只等待 0.05 s 即略過。詳見 [架構文件](docs/ARCHITECTURE.md)。
+to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。Shrink 使用 fork 的 `safe_recovery: true`：BT `shrink_to=0.45 m`，下限 0.40 m（大於 0.60 × 0.50 m 車體半對角線約 0.391 m），兩個 costmap 各用自己的 inflation service，結束或取消時還原；缺少的 rival／object layer service 只等待 0.05 s 即略過。詳見 [架構文件](docs/design/ARCHITECTURE.md)。
 
 ### 記錄兩種導航的同一路線
 
@@ -452,7 +452,7 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 工具重用 nav-check 的 `ZoneNavigator(enable_interfaces=False)` 與區域清單，先確認執行中的 controller profile 符合 `--stack`，逐一記錄 action 結果、模擬時間、真值軌跡折線長度及終點平面距離誤差，輸出並列表。真值只接受 `/sim/ground_truth_odom` 的 `sim_world`，不退回 EKF odom；缺值、倒退或超過 0.5 模擬秒的取樣缺口會報錯。時間涵蓋送目標前最近一筆至結果後第一筆真值；失敗／逾時也保留結果，逾時會等待取消確認，無法確認則停止後續目標。`SUCCEEDED` 表示 action 成功，未額外保證終點誤差門檻；需一起檢視 error 欄。不同電腦負載、定位漂移與規劃隨機性仍會影響結果，建議重複多輪。JSON 預設例子存入忽略版控的 `output/`。
 
 完整回歸請在各自獨立的模擬場次執行 `dev.sh nav-check --tolerance-check`、`dev.sh loc-check`、mapping 加 map-tour，以及 `dev.sh follow nav2_stack:=fork fault_injection:=true` 加 `dev.sh fault-check`。Nav2 underlay 的 ABI 檢查與限制見架構文件；本機 Python／靜態 PASS 不代表容器或 Gazebo 通過。
-`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 停止 client 與 agent；一般 `dev.sh up` 不受影響。Python 模擬韌體直接使用 DDS，**不經過 agent**。另以 `./scripts/dev.sh comm-e2e-up` 建置／啟動真正 C／rclc Linux XRCE client、agent 與前景 standalone mux／watchdog／monitor；第二終端執行 `./scripts/dev.sh comm-e2e-check`，驗證心跳、輪速、命令逾時與 PC 心跳失聯。C client 只模擬輪子，沒有裝置連線；本次尚未執行 Docker／ROS 驗收。測試前須停止 Gazebo 及其他韌體，結束後 Ctrl-C 前景 launch 再執行 `comm-down`。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
+`dev.sh comm-up` 明確選用 `comm` profile 啟動 UDP4 agent，`comm-down` 停止 client 與 agent；一般 `dev.sh up` 不受影響。Python 模擬韌體直接使用 DDS，**不經過 agent**。另以 `./scripts/dev.sh comm-e2e-up` 建置／啟動真正 C／rclc Linux XRCE client、agent 與前景 standalone mux／watchdog／monitor；第二終端執行 `./scripts/dev.sh comm-e2e-check`，驗證心跳、輪速、命令逾時與 PC 心跳失聯。C client 只模擬輪子，沒有裝置連線；本次尚未執行 Docker／ROS 驗收。測試前須停止 Gazebo 及其他韌體，結束後 Ctrl-C 前景 launch 再執行 `comm-down`。follow／guide 可明確傳入 `mcu_comm:=true`，預設 false；資料保持 `/mcu/*`，不更動 Gazebo／EKF。請勿同時啟動 standalone comm-sim 與既有移動流程，也不要對 Gazebo 執行通訊注入驗收。介面、QoS、停止與恢復規則見 [MCU 介面](docs/hardware/MCU_INTERFACE.md)。所有預設都不開實體串列埠。
 
 
 ## 模擬情境
@@ -468,8 +468,8 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 ./scripts/dev.sh eval-bag aisle_crossing_01
 ```
 
-錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
+錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/design/SCENARIOS.md) 及 [評估指標](docs/design/METRICS.md#模擬情境與動態行人)。
 
 情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設為 `auto`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
 
-SLAM 建圖、專用 RViz 視圖、四檔儲存與重載定位的完整操作見 [SLAM 操作說明](docs/SLAM.md)；Mac arm64 的本次實測記錄見 [驗收報告](docs/VALIDATION_ARM64.md)。
+SLAM 建圖、專用 RViz 視圖、四檔儲存與重載定位的完整操作見 [SLAM 操作說明](docs/design/SLAM.md)；Mac arm64 的本次實測記錄見 [驗收報告](docs/hardware/VALIDATION_ARM64.md)。

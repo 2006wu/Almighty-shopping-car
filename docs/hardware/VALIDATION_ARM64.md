@@ -64,6 +64,6 @@ docker compose --env-file .env -f docker/docker-compose.yaml run --rm --no-deps 
 
 模擬與故障驗收命令見 CONTAINERS、SCENARIOS 與 README。每次僅有一個控制工作階段；建置期間先停止模擬。micro-ROS 的 C client 以 `comm-e2e-up` 明確選用，不開啟任何硬體裝置。
 
-SLAM 的建圖、檢視、儲存與重載步驟見 [SLAM 操作說明](SLAM.md)。依使用者建議，apt 規劃器已改為 Humble 的 `nav2_smac_planner/SmacPlanner2D`，保留原 0.8 m 終點搜尋容差；fork 現亦改用其原始碼建置的 Smac2D，避免混用不同 underlay 的 C++ 外掛；此變更的建置與模擬驗收待重新執行，上方既有建置結果不涵蓋此次切換。[Humble Smac2D 實作](https://api.nav2.org/nav2-humble/html/smac__planner__2d_8cpp_source.html)。
+SLAM 的建圖、檢視、儲存與重載步驟見 [SLAM 操作說明](../design/SLAM.md)。依使用者建議，apt 規劃器已改為 Humble 的 `nav2_smac_planner/SmacPlanner2D`，保留原 0.8 m 終點搜尋容差；fork 現亦改用其原始碼建置的 Smac2D，避免混用不同 underlay 的 C++ 外掛；此變更的建置與模擬驗收待重新執行，上方既有建置結果不涵蓋此次切換。[Humble Smac2D 實作](https://api.nav2.org/nav2-humble/html/smac__planner__2d_8cpp_source.html)。
 
 使用者已授權提交及推送，並明確要求不開 PR。本次僅推送功能分支，不合併 `develop`。所有審查者欄位保留待驗證。

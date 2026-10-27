@@ -88,7 +88,7 @@ def evaluate_log(rows, boxes, *, target=1.0, band=0.2, too_close=0.6,
 def markdown_report(report):
     """Render all results, including pending events, in a compact Markdown table."""
     lines = ['# 模擬離線評估報告', '',
-             '定義、單位與建議門檻見 docs/METRICS.md；缺資料以「無資料」呈現。', '',
+             '定義、單位與建議門檻見 docs/design/METRICS.md；缺資料以「無資料」呈現。', '',
              '| 指標／欄位 | 值 |', '| --- | --- |']
 
     def emit(value, key):
