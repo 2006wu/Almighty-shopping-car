@@ -88,7 +88,7 @@ def test_fork_params_and_tree():
         assert p['plugin'] == 'teb_controller::TebController'
         assert p['holonomic'] is False and p['avoidance_mode'] == 'gentle'
         assert p['use_rival_topic'] is False and p['min_v'] == 0.0
-        assert p['max_v'] == (1.0 if name == 'Fast' else 0.3)
+        assert p['max_v'] == (0.8 if name == 'Fast' else 0.5)
         assert p['max_acc_v'] == (0.6 if name == 'Fast' else 0.4)
         assert p['gentle_max_speed_near_people'] == 0.15
         assert 0 < p['gentle_stop_dist'] < p['gentle_slowdown_dist']

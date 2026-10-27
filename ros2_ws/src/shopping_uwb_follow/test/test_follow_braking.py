@@ -9,7 +9,7 @@ from shopping_uwb_follow.follow_controller import ControllerParams, FollowContro
 def settled(params, distance, velocity, obstacle=math.inf):
     control = FollowController(params)
     for _ in range(100):
-        result = control.step((distance, 0), 0, obstacle, .05, target_velocity=velocity)
+        result = control.step((distance, 0), 0, obstacle, .05, target_velocity=velocity, clearance=math.inf)
     return result[0]
 
 
@@ -77,3 +77,51 @@ def test_slow_guard_retains_headway_without_feedforward():
         v, _, _, _ = control.step((2, 0), 0, math.inf, .05,
                                   target_velocity=(1, 0), feedforward_enabled=False)
     assert v == pytest.approx(2-1.2-.4)
+
+
+@pytest.mark.parametrize('clearance,valid,los,expected', [
+    (.5, True, True, 1.0), (math.inf, True, True, 1.0),
+    (.49, True, True, .65), (math.nan, True, True, .65),
+    (1., False, True, .65), (1., True, False, .65)])
+def test_absolute_open_area_cap_applies_even_during_ramp_down(clearance, valid, los, expected):
+    control = FollowController()
+    control.v = 1.0
+    v, _, _, _ = control.step((5, 0), 0, math.inf, .05,
+                              clearance=clearance, scan_valid=valid, los_clear=los)
+    assert v == pytest.approx(expected)
+
+
+@pytest.mark.parametrize('obstacle,expected', [(1.19, .35), (1.2, 1.0)])
+def test_near_person_absolute_cap_is_immediate(obstacle, expected):
+    control = FollowController()
+    control.v = 1.0
+    v = control.step((5, 0), 0, obstacle, .05, clearance=math.inf)[0]
+    assert v <= expected
+    if obstacle < 1.2:
+        assert v == pytest.approx(.35)
+
+
+@pytest.mark.parametrize('distance', [.79, .8])
+def test_margin_stops_both_axes_and_requires_sustained_release(distance):
+    control = FollowController()
+    control.v, control.w = 1., .8
+    assert control.step((distance, 0), 0, math.inf, .05)[:3] == (0, 0, 'TOO_CLOSE')
+    for _ in range(20):
+        assert control.step((.9, 0), 0, math.inf, .05)[:3] == (0, 0, 'TOO_CLOSE')
+    for _ in range(7):
+        control.step((1.4, 0), 0, math.inf, .05)
+    assert not control.near_latched
+
+
+@pytest.mark.parametrize('obstacle', [math.inf, .6])
+def test_inside_follow_distance_cannot_track_bearing_or_escape_rotate(obstacle):
+    control = FollowController()
+    control.v, control.w = .5, 1.
+    assert control.step((.9, .4), 0, obstacle, .05, rotation_clear=True)[:2] == (0, 0)
+
+
+@pytest.mark.parametrize('field', ['constrained_max_linear', 'open_side_clearance',
+    'near_person_distance', 'near_person_max_linear', 'too_close_margin'])
+def test_new_safety_parameters_reject_invalid_values(field):
+    with pytest.raises(ValueError):
+        FollowController(ControllerParams(**{field: math.nan}))

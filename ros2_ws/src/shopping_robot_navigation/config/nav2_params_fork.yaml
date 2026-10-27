@@ -149,7 +149,7 @@ controller_server:
       holonomic: false
       avoidance_mode: gentle
       use_rival_topic: false
-      max_v: 0.3
+      max_v: 0.5
       min_v: 0.0
       max_w: 0.8
       max_acc_v: 0.4
@@ -186,9 +186,9 @@ controller_server:
       holonomic: false
       avoidance_mode: gentle
       use_rival_topic: false
-      max_v: 1.0
+      max_v: 0.8
       min_v: 0.0
-      max_w: 1.5
+      max_w: 1.2
       max_acc_v: 0.6
       max_acc_w: 1.5
       lookahead_dist: 0.6
@@ -292,7 +292,7 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: OPEN_LOOP
-    max_velocity: [1.2, 0.0, 1.5]
+    max_velocity: [0.8, 0.0, 1.2]
     min_velocity: [0.0, 0.0, -1.0]
     max_accel: [0.8, 0.0, 1.5]
     max_decel: [-0.8, 0.0, -1.5]

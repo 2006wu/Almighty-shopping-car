@@ -30,8 +30,8 @@ class ModeMuxNode(Node):
                       [('safety_stop', 0.5), ('teleop', 0.5), ('follow', 0.3), ('nav', 0.5)]},
             priorities={s: self.declare_parameter(s+'_priority', v).value for s, v in
                         [('safety_stop', 100), ('teleop', 30), ('follow', 20), ('nav', 10)]},
-            max_linear=self.declare_parameter('max_linear', 1.3).value,
-            max_angular=self.declare_parameter('max_angular', 1.8).value,
+            max_linear=self.declare_parameter('max_linear', 1.1).value,
+            max_angular=self.declare_parameter('max_angular', 1.5).value,
             zero_period=0.05)
         self.limiter = VelocityLimiter(
             self.declare_parameter('linear_acceleration', 0.8).value,

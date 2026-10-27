@@ -189,3 +189,17 @@ def test_local_aisle_uses_geometry_and_only_constrains_lateral_position():
     assert result['scale_x'] == pytest.approx(1)
     assert 'dy' not in result
     assert geom.analyze_aisle(grid, boxes, {'name': 'outside', 'x': 0, 'y': 3}, 0.3) is None
+
+
+def test_linear_sweep_parsing_and_default_commands():
+    assert yaw.parse_linear_sweep('0.6, 0.8,1.0') == (.6, .8, 1.)
+    assert yaw.sweep_commands() == yaw.COMMANDS
+    assert yaw.sweep_commands((.6, .8, 1.)) == yaw.COMMANDS+((.6, .3), (.8, .3), (1., .3))
+    assert yaw.sweep_commands((.6,), True) == yaw.COMMANDS[:4]
+
+
+@pytest.mark.parametrize('value', ['', '0.6,', 'nan', 'inf', '-0.1', '0', 'abc'])
+def test_linear_sweep_rejects_invalid_speeds(value):
+    import argparse
+    with pytest.raises(argparse.ArgumentTypeError):
+        yaw.parse_linear_sweep(value)

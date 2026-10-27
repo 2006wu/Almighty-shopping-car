@@ -105,9 +105,9 @@ def test_nonfinite_input_is_flagged_zero(value, axis):
 def test_clamp_reverse_and_bad_configuration():
     mux = VelocityMux()
     mux.receive('nav', 3, -4, 0)
-    assert mux.select('GUIDE', 0).velocity == (1.3, -1.8)
+    assert mux.select('GUIDE', 0).velocity == (1.1, -1.5)
     mux.receive('nav', -3, 4, 1)
-    assert mux.select('GUIDE', 1).velocity == (0, 1.8)
+    assert mux.select('GUIDE', 1).velocity == (0, 1.5)
     assert mux.select('GUIDE', 0).velocity == ZERO  # Future stamps fail closed.
     with pytest.raises(ValueError):
         VelocityMux(max_linear=math.nan)
@@ -161,9 +161,9 @@ def test_follow_requires_guarded_relay_even_after_its_command_expires():
 def test_watchdog_independently_clamps_fast_commands_and_stops_invalid_input():
     watchdog = OutputWatchdog()
     watchdog.receive((100., -100.), 0.)
-    assert watchdog.output(0.) == (1.3, -1.8)
-    # Reverse stays the mux policy; the watchdog only bounds magnitude.
+    assert watchdog.output(0.) == (1.1, -1.5)
+    # Rear visibility requires an independent conservative reverse limit.
     watchdog.receive((-1., 0.), .1)
-    assert watchdog.output(.1) == (-1., 0.)
+    assert watchdog.output(.1) == (-0.3, 0.)
     watchdog.receive((math.nan, 1.), .2)
     assert watchdog.output(.2) == ZERO

@@ -2046,3 +2046,56 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | 估速前饋、停止狀態與參數契約 | 待驗證 |
 | 高速情境、資訊指標與純 Python 比較 | 待驗證 |
 | Fortress 偏航、煞停與 apt／fork 整合 | 待驗證 |
+
+### 速度依據（研究）
+
+本節接續 `codex/faster-follow` 的貨架回歸修正。依專題負責人決定，以購物步速及既有商場機器人作為速度選擇參考；保留完整方向的障礙掃掠、旋轉淨空、失效停止及所有驗收門檻。以下數值與來源由使用者提供，本次依要求不連網，未重新查核原文；研究值不是本車安全認證或實測性能。
+
+| 來源 | 提供的速度／結論 | 本次採用方式 |
+| --- | --- | --- |
+| Weidmann（1993），《Transporttechnik der Fussgänger》 | 購物者約 1.04 m/s | 開放區域跟隨上限 1.0 m/s |
+| [吉隆坡商場步行研究（2019）](https://doi.org/10.30880/ijie.2019.11.04.025) | 購物步速約 0.8–1.05 m/s；高齡者約 0.7–0.9 m/s 為本輪提供的背景範圍 | 新增 0.7／0.9 m/s 情境，不將一般步速視為窄走道允許速度 |
+| [KeJia 商場導覽機器人](https://wufeng02.github.io/doc/pdf/CWSijars17.pdf) | 0.3–0.6 m/s | 跟隨繞行 0.5 m/s；受限空間上限 0.65 m/s |
+| [TOOMAS 購物導覽機器人](https://www.tu-ilmenau.de/fileadmin/Bereiche/IA/neurob/Publikationen/journals/Doering-JSR-2015.pdf) | 1.0 m/s | 開放區域上限參考 |
+| [Robotnik ELI 跟隨購物車](https://robotnik.eu/products/customization/rb-eli/) | 1.25 m/s | 僅作產品能力比較，未採用為本車工作上限 |
+| [人機互動舒適度研究](https://nielsvanberkel.com/files/publications/tohri2021a.pdf) | 近人偏好低速 | 前方物體小於 1.2 m 時上限 0.35 m/s；無法辨識是否為人，一律保守處理 |
+
+近人降速也符合使用者提供的 ISO 3691-4 類型原則；本次未宣稱符合或通過該標準。1.2 m/s 人物情境保留為壓力測試，不能要求 1.0 m/s 車體持續追回。
+
+| 參數／行為 | develop `7729cd1` | 本分支前輪 | 本次 |
+| --- | --- | --- | --- |
+| 跟隨線速上限（m/s） | 0.5 | 1.2 | 1.0 |
+| 受限空間絕對上限（m/s） | 無 | 無；CLEAR／SLOW 可略過側向倍率 | 0.65；不受 guard 狀態略過 |
+| 開放區域條件 | 側向倍率 | CLEAR／SLOW 可將倍率設為 1 | 側向淨空 ≥0.5 m、掃描有效、有 Nav2 客戶端時 LOS 清楚 |
+| 前方近人／物體上限 | 無獨立參數 | 煞停淨空限制 | 淨空 <1.2 m 時 ≤0.35 m/s，仍取更嚴格煞停限制 |
+| 基礎跟隨距離／停止距離（m） | 1.0／0.6 | 1.2／0.7 | 1.2／0.7；新增估測裕度 0.1，≤0.8 鎖定 |
+| 跟隨距離內命令 | 零前進，仍可轉向 | 零前進，仍可轉向 | 零線速與角速；障礙旋轉及 Nav2 速度亦受此條件限制 |
+| 前饋／時距 | 0／無 | 0.9／0.4 s | 保留 0.9／0.4 s |
+| 障礙停止／煞停反應與減速度 | 0.65 m／無主動公式 | 0.65 m／0.25 s、1.2 m/s² | 保留 |
+| Slow TEB 線速／角速 | 0.3／0.8 | 0.3／0.8 | 0.5／0.8 |
+| Fast TEB 線速／角速 | 0.4／0.8 | 1.0／1.5 | 0.8／1.2 |
+| Slow／Fast 線加速度（m/s²） | 0.4／0.4 | 0.4／0.6 | 保留 0.4／0.6 |
+| TEB 近人速度（m/s） | 0.15 | 0.15 | 保留 0.15，障礙距離不變 |
+| BT 預設／交接選擇 | Slow／既有主題 | Fast／未區分用途 | 預設 Slow；每次跟隨目標前送 Slow、導覽目標前送 Fast |
+| apt RPP YAML／follow／guide（m/s） | 0.4／0.5／0.8 | 0.8／0.8／0.8 | 0.8／0.5／0.8；覆寫範圍 (0,1.0] |
+| smoother 線速／角速上限 | 0.5／1.0 | 1.2／1.5 | 0.8／1.2；線加減速度保留 ±0.8 |
+| mux 線速／角速上限 | 0.6／1.2 | 1.3／1.8 | 1.1／1.5 |
+| watchdog 線速／角速上限 | 無獨立夾限 | 1.3／1.8 | 1.1／1.5；獨立倒車上限 0.3 m/s，mux 倒車政策不變 |
+| Gazebo／MCU 線速／角速上限 | 0.6／1.2 | 1.3／1.8 | 1.1／1.5；加速度不變，MCU 產生式標頭同步 |
+
+- near_stop 程式檢查：原本 `distance < follow_distance` 僅清除線速，角速度仍朝人物追蹤；估測距離必須 ≤0.7 才鎖定，真值已低於門檻但估測稍大時可能繼續旋轉。這是可確認的程式路徑，尚不能據此認定 t84 每個真值違規的唯一原因。本次跟隨距離內雙軸停止，≤0.8 提前鎖定並立即清除角速度；解除需距離 >0.95 m 持續 0.3 秒。
+- 既有交接 supervisor 已在 near_latched 時取消目標，NavigationGuard 也立即雙軸歸零；新增節點替身測試證明估測 0.79 m、Nav2 正在輸出線／角速度時，會取消並阻擋速度。新增 CLEAR guard 不可略過 0.65 上限、近人 0.35 上限、邊界 0.8 m 鎖定、解除遲滯與跟隨距離內禁止旋轉的測試。
+- 兩個節點在每次 NavigateToPose 送出前，以 `/controller_type` 發布 String，QoS 為 depth 1、reliable、transient_local；apt 單 FollowPath 不使用此主題。BT 沒有新增檔案。新增 0.7／0.9 m/s 情境與偏航檢查 `--linear-sweep` 解析／命令測試；預設命令維持不變。
+- 純 Python 直線檢查：`nice /workspace/scratch/venv-shop/bin/python scripts/eval/follow_loop_sim.py --straight --person-speed 0.9 --duration 60` 完成。最大命令 1.0 m/s、最大間距 2.029 m；暖機後距離絕對誤差平均 0.4506 m、RMSE 0.4506 m（基礎距離 1.2 m，含 0.4 s 時距）。此模型不含真實雷射雜訊、下游 guard、Nav2 或 Fortress 動力學，不能當作貨架或 near_stop 驗收。
+- 限制與下一步：須由維護者重跑無預載地圖的 default 貨架 fault-check、follow_turns、follow_stop_go、四個開放區域速度情境、apt／fork 導覽與跟隨交接，以及 Fortress 多速度偏航。保存真值、估測、最終 Twist 與接觸資料，確認近停 0.5 秒後平面速度 ≤0.03 m/s 且角速絕對值 ≤0.05 rad/s。未修改任何評估／驗收門檻，未執行 Docker、Gazebo、網路或硬體，未提交。
+
+模擬結果（t85）：待填
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| 新增絕對上限、過近裕度、Nav2 取消與雙軸停止 | 待驗證 |
+| Slow／Fast 選擇、apt 速度、下游與 MCU 契約 | 待驗證 |
+| 完整 pytest、靜態檢查及純 Python 直線結果 | 待驗證 |
+| 貨架故障、near_stop、全向避障與 Fortress 偏航 | 待驗證 |
+
+本次自行檢查：完整 `nice -n 10 /workspace/scratch/venv-shop/bin/python -m pytest -q` 為 **1408 passed、1 skipped、1 warning**（既有 xacro 棄用警告）；`/workspace/scratch/venv-shop/bin/python scripts/checks/check_static.py` 為 **PASS**，包含 36 YAML/RViz、15 XML/SDF/xacro、158 Python、7 Bash、11 情境，以及兩／三錨點 × ekf／ground_truth 四種 xacro 展開。`git diff --check` 通過。以上為自行離線檢查，審查驗證欄仍維持「待驗證」。

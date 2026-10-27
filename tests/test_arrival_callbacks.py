@@ -82,3 +82,22 @@ def test_guide_forwards_explicit_actor_yield_flag():
     argument = dict(sim.launch_arguments)['pedestrian_yield']
     for value in ('true', 'false'):
         assert resolve(argument, {'pedestrian_yield': value}) == value
+
+
+def test_guide_selects_fast_before_each_navigation_goal():
+    from unittest.mock import Mock
+    node = navigator(None, require=False)
+    apply = type(node).apply
+    scope = apply.__globals__
+    scope['String'] = lambda **kw: NS(**kw)
+    scope['NavigateToPose'] = NS(Goal=lambda: NS(pose=NS(header=NS(), pose=NS(
+        position=NS(), orientation=NS()))))
+    events = []
+    node.controller_type = NS(publish=lambda msg: events.append(msg.data))
+    node.client = NS(send_goal_async=lambda *args, **kw: (events.append('goal') or Mock()))
+    node.send_count = 0
+    node.response_futures = {}
+    effect = NS(kind='send', generation=1, zone=Zone('goal', (), 1., 2., 0., 'map'))
+    node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: 'stamp'))
+    apply(node, [effect, effect])
+    assert events == ['Fast', 'goal', 'Fast', 'goal']

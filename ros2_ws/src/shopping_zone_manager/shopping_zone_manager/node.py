@@ -7,7 +7,7 @@ from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 from std_msgs.msg import String, Empty
 from std_srvs.srv import Trigger
@@ -51,6 +51,9 @@ class ZoneNavigator(Node):
         self.send_count = 0
         self.status = self.create_publisher(String, '/shopping/zone_status', 10)
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.controller_type = self.create_publisher(
+            String, '/controller_type', QoSProfile(depth=1,
+                reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.markers = self.create_publisher(MarkerArray, '/shopping/zone_markers', qos)
         if enable_interfaces:
             self.create_subscription(String, '/shopping/goto_zone', lambda msg: self.navigate(msg.data), 10)
@@ -122,6 +125,7 @@ class ZoneNavigator(Node):
                 self.last_feedback = -float('inf')
                 self.send_count += 1
                 try:
+                    self.controller_type.publish(String(data='Fast'))
                     future = self.client.send_goal_async(
                         goal, feedback_callback=lambda msg, g=generation: self.feedback(g, msg))
                     self.response_futures[generation] = future

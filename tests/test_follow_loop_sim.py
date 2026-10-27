@@ -74,7 +74,7 @@ def test_feedforward_target_motion_and_physical_speed_cap():
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     assert settle(control, 1.2, (0.35, 0))[0] == pytest.approx(0.35)
     assert settle(control, 1.2)[0] == 0
-    assert settle(control, 4, (100, 0), 0.4)[0] == pytest.approx(0.48)
+    assert settle(control, 4, (100, 0), 0.4)[0] == pytest.approx(0.4)
     assert settle(control, 1.2, (-0.3, 0))[0] == 0  # Never reverse.
     assert settle(control, 1.2, (math.nan, 0))[0] == 0
 
@@ -170,17 +170,17 @@ def test_controller_reports_active_limits_without_changing_safety_reason():
     assert control.step((2, 0), 0, 0.5, 0.05) == (0, 0, 'OBSTACLE_STOP', 'Obstacle or unavailable scan')
 
 
-@pytest.mark.parametrize('speed', [1.0, 1.2])
+@pytest.mark.parametrize('speed', [0.7, 0.9, 1.0, 1.2])
 def test_fast_straight_runtime_defaults_and_informational_gap(speed):
     path = dict(speed=speed, waypoints=[[1.5, 0], [1000, 0]])
     before = loop.simulate(path=path, legacy=True, duration=60)
     after = loop.simulate(path=path, duration=60)
     error = after['performance']['steady_state_distance_error_m']
     assert error['mean'] < before['performance']['steady_state_distance_error_m']['mean']
-    assert after['limits']['max_command_linear'] <= 1.2
+    assert after['limits']['max_command_linear'] <= 1.0
     assert after['performance']['person_speed_m_s'] == speed
     assert after['performance']['follow_distance_m'] == 1.2
-    if speed == 1.0:
+    if speed < ControllerParams().max_linear:
         no_ff = loop.simulate(path=path, duration=60, feedforward=False)
         # Default headway intentionally adds 0.4 m at 1 m/s; compare the
         # residual proportional lag after accounting for that requested gap.

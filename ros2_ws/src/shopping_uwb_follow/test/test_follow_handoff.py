@@ -440,7 +440,7 @@ def test_configured_safety_envelope_and_speed_budget():
     assert person['speed'] < follow['max_linear']*follow['side_min_speed_factor'] < 1.0
     assert controller['regulated_linear_scaling_min_speed'] < person['speed']
     assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
-    assert smoother['max_velocity'][0] == follow['max_linear']
+    assert smoother['max_velocity'][0] == 0.8 < follow['max_linear']
     assert smoother['max_accel'][0] == follow['max_linear_accel']
 
 

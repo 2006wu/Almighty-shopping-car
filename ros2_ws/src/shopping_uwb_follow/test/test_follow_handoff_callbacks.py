@@ -74,6 +74,7 @@ def make_node():
     node.publisher = Mock()
     node.state = Mock()
     node.goal_publisher = Mock()
+    node.controller_type = Mock()
     node.get_logger = Mock()
     pose = NS(pose=NS(position=NS(x=3, y=5)))
     node.map_goal_and_los = lambda: (pose, False)
@@ -922,3 +923,36 @@ def test_target_velocity_callback_uses_timestamped_odom_tf_and_resets_on_failure
     node.on_target(NS(header=NS(frame_id='base_link', stamp=stamp), point=NS(x=2.12, y=0.)))
     assert not node.velocity_estimator.valid
     assert node.target_velocity(.1) == (0, 0)
+
+
+def test_margin_cancels_active_handoff_and_blocks_both_nav_axes():
+    node = make_node()
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    node.goal_response(completed(Mock(accepted=True)), node.goals.generation)
+    node.controller_type.publish.assert_called_with(NS(data='Slow'))
+    node.target = (.79, .01)
+    node.now = node.target_time = node.scan_time = 1.05
+    node.last_nav_command = (node.now, .5, .8)
+    node.tick()
+    output = node.publisher.publish.call_args.args[0]
+    assert output.linear.x == output.angular.z == 0
+    assert node.control.near_latched and node.supervisor.mode == 'DIRECT'
+    node.goal_handle.cancel_goal_async.assert_called_once()
+
+
+def test_clear_guard_cannot_bypass_constrained_absolute_cap():
+    node = make_node()
+    node.client = None
+    node.supervisor.route_around = False
+    node.obstacle = math.inf
+    node.target = (5., 0.)
+    node.scan.ranges, node.scan.angle_min = [.45], math.pi/2
+    for i in range(80):
+        node.now = node.target_time = node.scan_time = i*.05
+        node.guard_state, node.guard_time = 'CLEAR', node.now
+        node.tick()
+        output = node.publisher.publish.call_args.args[0]
+        assert output.linear.x <= .65
+    assert output.linear.x == pytest.approx(.65)

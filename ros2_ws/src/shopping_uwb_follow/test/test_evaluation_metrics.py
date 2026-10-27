@@ -334,7 +334,7 @@ def test_informational_performance_uses_config_distance_excludes_settle_and_paus
 
 
 @pytest.mark.parametrize('mode', ['sync', 'follow'])
-@pytest.mark.parametrize('scenario,speed', [('follow_fast_1_0', 1.), ('follow_fast_1_2', 1.2)])
+@pytest.mark.parametrize('scenario,speed', [('follow_fast_0_7', .7), ('follow_fast_0_9', .9), ('follow_fast_1_0', 1.), ('follow_fast_1_2', 1.2)])
 def test_evaluation_scenario_path_and_headway_info(mode, scenario, speed):
     from pathlib import Path
     from shopping_uwb_follow.evaluation_node import load_person_path, parser

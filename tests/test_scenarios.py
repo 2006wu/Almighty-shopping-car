@@ -25,7 +25,7 @@ NAMES = sorted(p.stem for p in (CONFIG/'scenarios').glob('*.yaml'))
 def test_required_scenarios_and_canonical_default():
     assert set(NAMES) == {'default', 'aisle_crossing', 'narrow_pass', 'checkout_queue',
                           'follow_turns', 'follow_stop_go', 'alt_start',
-                          'follow_fast_1_0', 'follow_fast_1_2'}
+                          'follow_fast_0_7', 'follow_fast_0_9', 'follow_fast_1_0', 'follow_fast_1_2'}
     assert load_scenario(CONFIG, 'default')['person_path'] == yaml.safe_load((CONFIG/'person_path.yaml').read_text())
     for t in (0, 1, 10, 100, 1000):
         assert path_position(load_scenario(CONFIG, 'default')['person_path'], t) == trajectory_position(load_scenario(CONFIG, 'default')['person_path'], t)
@@ -336,7 +336,7 @@ def test_actor_robot_observer_uses_stamped_world_odometry_and_bounds_history():
     assert mover.robot_history == [(1., 1., 2.)]
 
 
-@pytest.mark.parametrize('name,speed', [('follow_fast_1_0', 1.0), ('follow_fast_1_2', 1.2)])
+@pytest.mark.parametrize('name,speed', [('follow_fast_0_7', 0.7), ('follow_fast_0_9', 0.9), ('follow_fast_1_0', 1.0), ('follow_fast_1_2', 1.2)])
 def test_fast_follow_paths_stay_in_open_world_strip(name, speed):
     scenario = load_scenario(CONFIG, name)
     path = scenario['person_path']

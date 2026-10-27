@@ -90,7 +90,7 @@ def test_uncertain_and_side_factors_cap_speed_with_acceleration_and_safety():
         v, _, state, _ = slow.step((4, 0), 0, 3, 0.05, speed_factor=factor)
         normal.step((4, 0), 0, 3, 0.05)
     assert state == 'FOLLOWING'
-    assert v == pytest.approx(1.2*0.6*0.4) and v < normal.v
+    assert v == pytest.approx(1.0*0.6*0.4) and v < normal.v
     # Emergency stops ignore both the speed cap and acceleration ramp.
     for kwargs in [dict(target=None), dict(age=1), dict(target=(0.1, 0)),
                    dict(enabled=False), dict(obstacle=math.nan)]:

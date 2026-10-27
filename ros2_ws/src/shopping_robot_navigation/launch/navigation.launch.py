@@ -21,8 +21,8 @@ def start(context):
         raise ValueError('Selected localization mode requires map:=...')
     stack = select_stack(LaunchConfiguration('nav2_stack').perform(context), get_packages_with_prefixes())
     speed = float(LaunchConfiguration('rpp_desired_speed', default='0.8').perform(context))
-    if not 0 < speed <= 1.3:
-        raise ValueError('rpp_desired_speed must be finite and within (0, 1.3] m/s')
+    if not 0 < speed <= 1.0:
+        raise ValueError('rpp_desired_speed must be finite and within (0, 1.0] m/s')
     share = get_package_share_directory('shopping_robot_navigation')
     if stack == 'apt' and '/nav2_ws/' in os.environ.get('AMENT_PREFIX_PATH', ''):
         # Re-exec so both Python ament lookup and spawned binaries use apt.

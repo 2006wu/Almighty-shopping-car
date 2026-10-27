@@ -157,6 +157,7 @@ def simulate(path=None, params=None, *, legacy=False, world=False, duration=None
             target_velocity = velocity_filter.update(estimated, pose, now)
             measured_time = now
         obstacle, factor, los = math.inf, speed_factor, True
+        clearance = math.inf
         if world:
             # Model the URDF's laser origin (0.18 m ahead of base_link).
             laser_pose = (pose[0]+0.18*math.cos(pose[2]),
@@ -181,7 +182,8 @@ def simulate(path=None, params=None, *, legacy=False, world=False, duration=None
         limits['bearing_gate_samples'] += bearing_factor < 0.95
         limits['person_faster_than_instantaneous_cap_samples'] += path['speed'] > params.max_linear*factor*bearing_factor
         v, w, state, _ = controller.step(estimated, now-measured_time, obstacle, dt, speed_factor=factor,
-                                        target_velocity=target_velocity if feedforward else (0, 0))
+                                        target_velocity=target_velocity if feedforward else (0, 0),
+                                        **({} if legacy else dict(clearance=clearance, los_clear=los)))
         if los_filter.blocked:
             v = w = controller.v = controller.w = 0.0
         sample = FollowSample(now, estimated, pose, person)

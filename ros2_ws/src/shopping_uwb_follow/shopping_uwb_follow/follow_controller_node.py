@@ -17,7 +17,7 @@ from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 from .follow_controller import (
@@ -88,6 +88,9 @@ class FollowNode(Node):
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.last_own_publish = -math.inf
         self.state = self.create_publisher(String, '/follow/state', 10)
+        self.controller_type = self.create_publisher(
+            String, '/controller_type', QoSProfile(depth=1,
+                reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.goal_publisher = self.create_publisher(PoseStamped, '/follow/handoff_goal', 10)
         self.observed_cmd_vel_topic = self.declare_parameter('observed_cmd_vel_topic', '/cmd_vel').value
         self.create_subscription(Twist, self.observed_cmd_vel_topic, self.on_cmd_vel, 10)
@@ -248,6 +251,7 @@ class FollowNode(Node):
         goal.pose = pose
         self.goal_publisher.publish(pose)
         try:
+            self.controller_type.publish(String(data='Slow'))
             future = self.client.send_goal_async(goal)
             self.supervisor.record_goal(seconds(self),
                                         (pose.pose.position.x, pose.pose.position.y))
@@ -364,7 +368,8 @@ class FollowNode(Node):
                              and self.guard_state in ('CLEAR', 'SLOW') else (0.0, 0.0)),
             # SLOW retains time headway but cannot add velocity feedforward.
             feedforward_enabled=(guard_fresh and self.guard_state == 'CLEAR'),
-            velocity_age=age,
+            velocity_age=age, clearance=clearance, scan_valid=valid,
+            los_clear=(self.client is None or los),
             rotation_clear=(valid and self.rotation_clear
                             and (not self.supervisor.route_around or self.client is None
                                  or not self.client.server_is_ready())))
@@ -442,13 +447,18 @@ class FollowNode(Node):
             command = getattr(self, 'last_nav_command', None)
             nav_command = (command[1:] if command is not None and 0 <= now-command[0] <= 0.2
                            else None)
-            safe = (valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
+            safe = (valid and self.target is not None
+                    and math.hypot(*self.target) >= p.follow_distance
+                    and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
                     and decision.mode == 'NAV2' and self.nav_status == 'active'
                     and pose is not None and not self.drain.active
                     and not (guard_fresh and self.guard_state in ('STOP', 'STALE')))
             commanded_v, commanded_w = self.nav_guard.step(
                 nav_command, obstacle, self.rotation_clear, dt, safe=safe,
                 near_latched=self.control.near_latched)
+            commanded_v = min(commanded_v, self.control.linear_cap(
+                obstacle, clearance, valid, self.client is None or los))
+            self.nav_guard.v = commanded_v
             # Relay the guarded Nav2 command on the higher-priority follow input.
             # Raw Nav2 must never bypass the front gate or command expiry.
             cmd = Twist()

@@ -19,15 +19,15 @@ def test_pass_through_stays_stopped_until_sustained_release(front, sign):
                             rotation_clear=True)[:3] == (0, 0, 'TOO_CLOSE')
         assert control.near_latched
     for _ in range(5):
-        assert control.step((-0.9, sign*0.01), 0, front, 0.05,
+        assert control.step((-1.3, sign*0.01), 0, front, 0.05,
                             rotation_clear=True)[:3] == (0, 0, 'TOO_CLOSE')
     # A dip below the release margin restarts the sustained-clearance timer.
     assert control.step((-0.70, sign*0.01), 0, front, 0.05,
                         rotation_clear=True)[:2] == (0, 0)
     for _ in range(5):
-        assert control.step((-0.9, sign*0.01), 0, front, 0.05,
+        assert control.step((-1.3, sign*0.01), 0, front, 0.05,
                             rotation_clear=True)[:2] == (0, 0)
-    v, w, state, _ = control.step((-0.9, sign*0.01), 0, front, 0.05,
+    v, w, state, _ = control.step((-1.3, sign*0.01), 0, front, 0.05,
                                    rotation_clear=True)
     assert not control.near_latched and v == 0 and sign*w > 0
     assert state == ('FOLLOWING' if front == math.inf else 'OBSTACLE_STOP')
@@ -143,8 +143,8 @@ def test_default_runtime_uses_configured_proportional_tracking_without_velocity(
         for _ in range(60):
             v, _, state, _ = control.step((distance, 0), 0, math.inf, 0.05,
                                            speed_factor=0.6)
-        assert state == 'FOLLOWING'
-        assert v == pytest.approx(min(1.2, max(0, 1.0*(distance-1.2)))*0.6)
+        assert state == ('TOO_CLOSE' if distance <= .8 else 'FOLLOWING')
+        assert v == pytest.approx(min(1.0, max(0, 1.0*(distance-1.2)))*0.6)
 
 
 def test_direct_rotation_recovers_from_fixed_shelf_in_closed_loop():

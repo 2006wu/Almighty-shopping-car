@@ -141,11 +141,11 @@ def test_stop_boundaries_and_resume(target, age, obstacle, state):
 def test_deceleration_turn_sign_and_clock_guard():
     control = FollowController()
     for _ in range(50):
-        control.step((5, 1), 0, 5, 0.1)
+        control.step((5, 1), 0, 5, 0.1, clearance=math.inf)
     old_v, old_w = control.v, control.w
-    v, w, _, _ = control.step((1.3, -0.2), 0, 5, 0.1)
+    v, w, _, _ = control.step((1.2, -0.2), 0, 5, 0.1, clearance=math.inf)
     # A newly reduced clearance overrides the ordinary deceleration ramp.
-    available = math.hypot(1.3, -.2)-control.p.stop_distance
+    available = math.hypot(1.2, -.2)-control.p.stop_distance
     a, reaction = control.p.braking_deceleration, control.p.braking_reaction
     assert v == pytest.approx(math.sqrt((a*reaction)**2+2*a*available)-a*reaction)
     assert old_v-v > 0.08 and old_w-w <= 0.15+1e-12

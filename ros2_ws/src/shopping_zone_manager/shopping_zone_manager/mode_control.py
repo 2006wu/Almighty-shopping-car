@@ -50,8 +50,8 @@ class MuxResult:
 
 
 class VelocityMux:
-    def __init__(self, timeouts=None, priorities=None, max_linear=1.3,
-                 max_angular=1.8, zero_period=0.2, allow_reverse=False):
+    def __init__(self, timeouts=None, priorities=None, max_linear=1.1,
+                 max_angular=1.5, zero_period=0.2, allow_reverse=False):
         self.timeouts = dict(timeouts or {'safety_stop': 0.5, 'teleop': 0.5,
                                         'follow': 0.3, 'nav': 0.5})
         self.priorities = dict(priorities or {'safety_stop': 100, 'teleop': 30,
@@ -106,16 +106,17 @@ class VelocityMux:
 
 
 class OutputWatchdog:
-    def __init__(self, timeout=0.25, max_linear=1.3, max_angular=1.8):
-        if any(not math.isfinite(v) or v <= 0 for v in (timeout, max_linear, max_angular)):
+    def __init__(self, timeout=0.25, max_linear=1.1, max_angular=1.5, max_reverse_linear=0.3):
+        if any(not math.isfinite(v) or v <= 0 for v in (timeout, max_linear, max_angular, max_reverse_linear)):
             raise ValueError('Watchdog timeout must be positive and finite')
+        self.max_reverse_linear = min(max_reverse_linear, max_linear)
         self.timeout = timeout
         self.max_linear, self.max_angular = max_linear, max_angular
         self.stamp = None
         self.velocity = ZERO
 
     def receive(self, velocity, now):
-        self.velocity = ((max(-self.max_linear, min(self.max_linear, velocity[0])),
+        self.velocity = ((max(-self.max_reverse_linear, min(self.max_linear, velocity[0])),
                           max(-self.max_angular, min(self.max_angular, velocity[1])))
                          if all(math.isfinite(v) for v in velocity) else ZERO)
         self.stamp = now

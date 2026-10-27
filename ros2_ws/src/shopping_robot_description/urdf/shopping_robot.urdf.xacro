@@ -63,7 +63,7 @@
          Keep 2.0 pending the multi-speed scripts/checks/yaw_rate_check.py simulation sweep. -->
       <wheel_separation>${(width-wheel_width)*skid_track_factor}</wheel_separation><wheel_radius>${wheel_radius}</wheel_radius>
       <topic>cmd_vel</topic><odom_topic>wheel_odom</odom_topic><tf_topic>wheel_tf</tf_topic><frame_id>odom</frame_id><child_frame_id>base_footprint</child_frame_id><odom_publish_frequency>50</odom_publish_frequency>
-      <max_linear_velocity>1.3</max_linear_velocity><max_angular_velocity>1.8</max_angular_velocity>
+      <max_linear_velocity>1.1</max_linear_velocity><max_angular_velocity>1.5</max_angular_velocity>
       <!-- Strong command braking preserves the fault-stop time budget at 1.2 m/s.
            Physical skid-steer stopping still requires a Fortress regression. -->
       <max_linear_acceleration>0.8</max_linear_acceleration><min_linear_acceleration>-2.0</min_linear_acceleration>

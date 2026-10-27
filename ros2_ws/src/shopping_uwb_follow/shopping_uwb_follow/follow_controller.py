@@ -54,12 +54,17 @@ class ControllerParams:
     braking_reaction: float = 0.25
     braking_deceleration: float = 1.2
     stop_distance: float = 0.7
+    too_close_margin: float = 0.1
     stop_release_margin: float = 0.15
     stop_release_time: float = 0.3
     obstacle_stop_distance: float = 0.65
     obstacle_stop_rotate: bool = True
     lost_timeout: float = 0.5
-    max_linear: float = 1.2
+    max_linear: float = 1.0
+    constrained_max_linear: float = 0.65
+    open_side_clearance: float = 0.5
+    near_person_distance: float = 1.2
+    near_person_max_linear: float = 0.35
     max_angular: float = 1.5
     max_linear_accel: float = 0.8
     max_angular_accel: float = 1.5
@@ -92,8 +97,8 @@ class FollowController:
             raise ValueError('Controller parameters must be finite and within their positive/nonnegative bounds')
         if not 0 < self.p.rotate_to_target_release_angle < self.p.rotate_to_target_min_angle <= math.pi:
             raise ValueError('Invalid target alignment angles')
-        if self.p.stop_distance >= self.p.follow_distance:
-            raise ValueError('Stop distance must be below follow distance')
+        if self.p.stop_distance+self.p.too_close_margin >= self.p.follow_distance:
+            raise ValueError('Stop distance plus near margin must be below follow distance')
         side_speed_factor(0, self.p.side_slow_clearance, self.p.side_free_clearance,
                           self.p.side_min_speed_factor)
         if (self.p.los_uncertain_speed_factor > 1
@@ -107,19 +112,28 @@ class FollowController:
         self.near_clear_time = 0.0
         self.aligning = False
 
+    def linear_cap(self, obstacle, clearance=math.nan, scan_valid=True, los_clear=True):
+        """Absolute caps remain authoritative regardless of guard slowdown state."""
+        p = self.p
+        cap = p.max_linear if (scan_valid and los_clear and not math.isnan(clearance)
+                               and clearance >= p.open_side_clearance) else min(p.max_linear, p.constrained_max_linear)
+        if obstacle < p.near_person_distance:
+            cap = min(cap, p.near_person_max_linear)
+        return cap
+
     def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
              target_velocity=(0.0, 0.0), rotation_clear=False, velocity_age=0.0,
-             feedforward_enabled=True):
+             feedforward_enabled=True, clearance=math.nan, scan_valid=True, los_clear=True):
         p = self.p
         valid_target = (target is not None and math.isfinite(age) and 0 <= age <= p.lost_timeout
                         and all(math.isfinite(t) for t in target))
         if not enabled or not valid_target:
             self.near_clear_time = 0.0
-        elif math.hypot(*target) <= p.stop_distance:
+        elif math.hypot(*target) <= p.stop_distance+p.too_close_margin+1e-12:
             self.near_latched = True
             self.near_clear_time = 0.0
         elif self.near_latched:
-            clear = (math.hypot(*target) > p.stop_distance+p.stop_release_margin
+            clear = (math.hypot(*target) > p.stop_distance+p.too_close_margin+p.stop_release_margin
                      and math.isfinite(dt) and dt > 0)
             self.near_clear_time = self.near_clear_time+min(dt, 0.2) if clear else 0.0
             if self.near_clear_time >= p.stop_release_time:
@@ -140,6 +154,7 @@ class FollowController:
         if state != 'FOLLOWING':
             self.holding_distance = False
             if (state == 'OBSTACLE_STOP' and p.obstacle_stop_rotate
+                    and math.hypot(*target) >= p.follow_distance
                     and rotation_clear and math.isfinite(obstacle) and obstacle >= 0
                     and math.isfinite(dt) and dt > 0):
                 self.v = 0.0
@@ -168,7 +183,8 @@ class FollowController:
         correction = 0.0 if self.holding_distance else p.kp_distance*error
         forward = estimated_forward if feedforward_enabled and distance >= p.follow_distance else 0.0
         demand = max(0.0, p.velocity_feedforward*forward+correction)
-        cap = p.max_linear*max(0.0, min(1.0, speed_factor))
+        absolute_cap = self.linear_cap(obstacle, clearance, scan_valid, los_clear)
+        cap = min(absolute_cap, p.max_linear*max(0.0, min(1.0, speed_factor)))
         heading = max(0.0, math.cos(bearing))
         v = min(p.max_linear, demand)*max(0.0, min(1.0, speed_factor))*heading
         if abs(bearing) >= p.rotate_to_target_min_angle:
@@ -182,7 +198,7 @@ class FollowController:
         available = max(0.0, min(distance, obstacle)-p.stop_distance)
         ar = p.braking_deceleration*p.braking_reaction
         braking_cap = math.sqrt(ar*ar+2*p.braking_deceleration*available)-ar
-        v = min(v, braking_cap)
+        v = min(v, braking_cap, cap)
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
         limits = []
@@ -204,10 +220,10 @@ class FollowController:
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))
         # Clearance reductions must cap even a ramp-down command immediately.
-        self.v = min(self.v, braking_cap)
+        self.v = min(self.v, braking_cap, cap)
         # Do not carry ramp-down motion into the person's requested separation.
         if distance < p.follow_distance:
-            self.v = 0.0
+            self.v = self.w = 0.0
         return self.v, self.w, state, reason
 
 

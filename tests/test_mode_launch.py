@@ -231,7 +231,7 @@ def test_follow_and_guide_use_faster_defaults_with_bounded_override(monkeypatch)
     actions = load('shopping_robot_bringup/launch/follow.launch.py')['generate_launch_description']()
     navigation = next(a for a in actions if a.kind == 'IncludeLaunchDescription'
                       and a.args[0].endswith('/shopping_robot_navigation/launch/navigation.launch.py'))
-    assert dict(navigation.launch_arguments)['rpp_desired_speed'] == '0.8'
+    assert dict(navigation.launch_arguments)['rpp_desired_speed'] == '0.5'
     start = load('shopping_robot_navigation/launch/navigation.launch.py')['start']
     base = dict(use_mux='true', slam_mode='mapping', map='', nav2_stack='apt')
     guide = start(base)[-1].actions[-1]
@@ -240,7 +240,7 @@ def test_follow_and_guide_use_faster_defaults_with_bounded_override(monkeypatch)
     assert dict(follow.launch_arguments)['params_file'].param_rewrites == {'desired_linear_vel': '0.5'}
 
 
-@pytest.mark.parametrize('speed', ['0', '-0.1', '1.31', 'nan', 'inf', 'invalid'])
+@pytest.mark.parametrize('speed', ['0', '-0.1', '1.01', 'nan', 'inf', 'invalid'])
 def test_navigation_speed_override_rejects_unsafe_values(speed):
     start = load('shopping_robot_navigation/launch/navigation.launch.py')['start']
     with pytest.raises(ValueError):
