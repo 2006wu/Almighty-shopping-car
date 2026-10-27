@@ -60,7 +60,7 @@
       <!-- Effective command track for simulated skid steer (geometric track: 0.46 m).
          DiffDrive multiplies commanded yaw by this track to produce wheel speeds.
          Increasing it increases yaw drive; lateral scrub makes the response nonlinear.
-         Keep 2.0 pending the multi-speed scripts/yaw_rate_check.py simulation sweep. -->
+         Keep 2.0 pending the multi-speed scripts/checks/yaw_rate_check.py simulation sweep. -->
       <wheel_separation>${(width-wheel_width)*skid_track_factor}</wheel_separation><wheel_radius>${wheel_radius}</wheel_radius>
       <topic>cmd_vel</topic><odom_topic>wheel_odom</odom_topic><tf_topic>wheel_tf</tf_topic><frame_id>odom</frame_id><child_frame_id>base_footprint</child_frame_id><odom_publish_frequency>50</odom_publish_frequency>
       <max_linear_velocity>0.6</max_linear_velocity><max_angular_velocity>1.2</max_angular_velocity>

@@ -221,7 +221,7 @@ def render_markdown(rows, trials, seed, elapsed, quick=False):
     lines = ['# UWB 錨點與噪聲離線研究', '', '## 方法與重現', '',
              f'種子 {seed}；每靜態點 {trials} 次獨立試驗；模式：{"快速" if quick else "完整"}；單次實測執行時間 {elapsed:.2f} 秒（依主機而異）。',
              '以 Python 標準函式庫與 PyYAML 執行，不需 ROS、Docker 或硬體。',
-             '`/workspace/scratch/venv-shop/bin/python scripts/uwb_study.py --trials '
+             '`/workspace/scratch/venv-shop/bin/python scripts/eval/uwb_study.py --trials '
              f'{trials} --seed {seed}' + (' --quick' if quick else '') + '`', '',
              '重用 RangeSimulator、trilaterate 與 TargetFilter；品質低於門檻（預設 0.15）、ValueError 或非有限解皆拒收。',
              '靜態點位於 base_link；網格涵蓋 0.6、1、2、3、4 公尺與 -180 至 165 度、每 15 度一點（快速模式為三個半徑、每 60 度）；每點等權。',

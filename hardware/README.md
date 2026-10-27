@@ -8,4 +8,4 @@
 - 雷射安裝位置與 TF
 - MCU 型號（STM32 H7／F446RE 等，待確認）；介面見 [docs/hardware/MCU_INTERFACE.md](../docs/hardware/MCU_INTERFACE.md)
 
-軟體介面與驗證文件在 [docs/hardware/](../docs/hardware/)。
+軟體介面與驗證文件在 [docs/hardware/](../docs/hardware)。

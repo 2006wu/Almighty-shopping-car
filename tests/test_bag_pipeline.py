@@ -156,7 +156,7 @@ def test_manifest_and_entry_points_and_pure_imports():
 
 
 def test_recorder_uses_manifest_and_graceful_duration(monkeypatch):
-    spec = importlib.util.spec_from_file_location('record_bag', ROOT/'scripts/record_bag.py')
+    spec = importlib.util.spec_from_file_location('record_bag', ROOT/'scripts/eval/record_bag.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     calls = []

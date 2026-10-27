@@ -111,7 +111,7 @@ xacro 錨點相對 base_link 為 `(0, ±0.22, 0.12)` 與 `(-0.25, 0, 0.12)` m；
 ```bash
 # Repo root, no ROS required
 /workspace/scratch/venv-shop/bin/python -m pytest -q
-/workspace/scratch/venv-shop/bin/python scripts/check_static.py
+/workspace/scratch/venv-shop/bin/python scripts/checks/check_static.py
 
 # Maintainer host, build all packages including generated messages
 ./scripts/dev.sh build compute

@@ -8,9 +8,9 @@ import sys
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from scripts.map_geometry_check import load_grid
+from scripts.checks.map_geometry_check import load_grid
 
 NAV = ROOT / 'ros2_ws/src/shopping_robot_navigation'
 

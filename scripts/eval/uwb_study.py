@@ -7,7 +7,7 @@ import time
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'ros2_ws/src/shopping_uwb_follow'))
 from shopping_uwb_follow.uwb_study import render_csv, render_markdown, run_study
 

@@ -135,7 +135,7 @@ NavigateToPose 目標為人物本身的 map 座標，朝向由車體指向人物
 
 遲滯用穩定性換取恢復延遲：一般情況暢通確認再加 resume_delay 約需 1.1 秒，導航最短保持時間與此計時並行；近距離僅需 0.6 秒暢通確認，導航成功不等待。加寬走廊若仍擦到貨架，恢復可能更久。人物 map 目標與 0.8 公尺規劃器容差保持原設定；取消排空時間也仍存在。直接速度 0.5 m/s 已等於 Nav2 平滑器上限且高於人物 0.35 m/s；apt follow 的 RPP desired speed 明確設為 0.5 m/s，guide 保持 0.4 m/s，fork TEB profile 不變；比例追蹤即使沒有停車仍有約 0.5 公尺等速誤差。這些條件不保證距離一定縮短，需由下一輪 240 秒模擬比較切換率、停留時間、真實距離與停滯窗。
 
-`follow_metrics.state_statistics` 接受嚴格遞增的 `(t, state)`，計算每分鐘切換次數與每狀態的停留統計，最後區間僅到最後觀測時間。`scripts/follow_state_stats.py` 解析 `/follow/state` 的 `data: STATE: 原因`，支援同行時間戳；無時間戳時依指定取樣週期估計，預設 20 Hz，拒絕混用時鐘。比較前後版本時應使用相同紀錄方式，僅記錄變更事件時務必附時間戳。
+`follow_metrics.state_statistics` 接受嚴格遞增的 `(t, state)`，計算每分鐘切換次數與每狀態的停留統計，最後區間僅到最後觀測時間。`scripts/eval/follow_state_stats.py` 解析 `/follow/state` 的 `data: STATE: 原因`，支援同行時間戳；無時間戳時依指定取樣週期估計，預設 20 Hz，拒絕混用時鐘。比較前後版本時應使用相同紀錄方式，僅記錄變更事件時務必附時間戳。
 
 速度互斥以動作生命週期執行：NAV2 期間直接控制器不發布一般 `/cmd_vel/follow` 命令，由 Nav2 的 velocity_smoother 輸出；安全事件切回 DIRECT 後可立即發布零命令。取消回覆不代表已停止，須等終止結果；若仍在等待送出回覆，收到接受結果後補送取消。僅 NAV2→DIRECT 交接進入速度排空等待；確認目標終止後，若外部導航命令已安靜至少 0.3 秒，或最新外部命令符合 `|v| < 0.02 m/s` 且 `|w| < 0.05 rad/s`，便可恢復直接發布。終止確認後最多再等 2 秒，即使仍收到非零命令也恢復；此上限不允許略過目標終止確認。沒有收到命令時自交接開始計算安靜時間。節點以 `observed_cmd_vel_topic` 選擇觀察來源，仲裁模式設為 `/cmd_vel/nav`，可直接接收 Nav2 的零速；舊接線預設 `/cmd_vel`，Humble 回呼只有訊息，故以自身發布後 0.2 秒內的零命令近似排除自身訊息，沒有使用 GID 或新版回呼 API。排空判斷放在不匯入 ROS 的 `VelocityDrain`，安全事件在排空中仍立即發布零速。第一筆直接命令為零，控制器內部速度也歸零；目標更新不啟動此等待。傳輸例外而無法確定遠端是否仍執行時，保留控制權並記錄錯誤，禁止自行恢復直接移動；需操作者停止該流程並檢查動作服務。外層速度仲裁見下節；follow 執行時仍不得另送導航目標。只啟動一個 bringup，以模式請求切換鍵盤／引導／跟隨。
 
@@ -255,7 +255,7 @@ Fortress 外掛與感測器依據 [Fortress 感測器文件](https://gazebosim.o
 
 UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數；新增 `monitor_odom` 預設 false，只有故障模式 follow 自動啟用，以固定 0.5 秒里程計新鮮度門檻檢查。它共用 OBSTACLE_STOP／取消路徑，狀態不區分里程計與雷射失效；不是全域模式仲裁器或獨立命令看門狗。Nav2 非同步取消期間仍可能覆寫零命令，故驗收工具必須量測實際命令及真值，不能僅憑狀態宣告停車。
 
-`scripts/fault_check.py`／`dev.sh fault-check` 對同一個已啟動的 follow 模擬，依序注入六種故障，每次保留 4 秒模擬時間並 clear。開始前必須收到 `/clock`、fault_status 且無活動故障；不可同時執行排程或另一個注入者。每次均要求注入前命令與真值有移動，清除後兩者均恢復移動；找不到移動基準或自然路徑暫停太久會 FAIL，不能用原本停著的車體冒充成功。預設等待移動／恢復最多 90 秒牆鐘，可設 `--motion-timeout`；每次故障保持階段另有 60 秒牆鐘上限，模擬暫停也會失敗。
+`scripts/eval/fault_check.py`／`dev.sh fault-check` 對同一個已啟動的 follow 模擬，依序注入六種故障，每次保留 4 秒模擬時間並 clear。開始前必須收到 `/clock`、fault_status 且無活動故障；不可同時執行排程或另一個注入者。每次均要求注入前命令與真值有移動，清除後兩者均恢復移動；找不到移動基準或自然路徑暫停太久會 FAIL，不能用原本停著的車體冒充成功。預設等待移動／恢復最多 90 秒牆鐘，可設 `--motion-timeout`；每次故障保持階段另有 60 秒牆鐘上限，模擬暫停也會失敗。
 
 | 驗收項目 | 提案門檻 |
 | --- | --- |
@@ -269,7 +269,7 @@ UWB timeout 與 scan timeout 已使用來源時間戳，這次沿用原有參數
 
 ## rosbag 離線評估資料流
 
-`dev.sh record` 透過 `scripts/record_bag.py` 載入區域管理套件的 `config/record_topics.yaml`，以 Humble sqlite3 和模擬接收時間保存至主機共用的 `bags/`。不錄雷射與 TF，使用獨立 `sim_world` 真值及既有區域狀態還原指標。`bag_to_eval.py` 是讀取 ROS 訊息的薄層；`bag_converter.py` 以純 Python 進行有界時間同步、區域回合還原與保護狀態事件轉換，再交給既有 `eval_report`。`eval-bag` 產生觀測 JSONL、轉換中繼資料與 JSON／Markdown 報告；固定場景採 map→世界零位移與零旋轉，其他對齊須明確提供。完整來源、缺資料與回放隔離規則見 [評估指標](METRICS.md#rosbag-記錄轉換與可重現流程)。這是旁路資料處理，不新增命令來源或改動 TF 所有權。
+`dev.sh record` 透過 `scripts/eval/record_bag.py` 載入區域管理套件的 `config/record_topics.yaml`，以 Humble sqlite3 和模擬接收時間保存至主機共用的 `bags/`。不錄雷射與 TF，使用獨立 `sim_world` 真值及既有區域狀態還原指標。`bag_to_eval.py` 是讀取 ROS 訊息的薄層；`bag_converter.py` 以純 Python 進行有界時間同步、區域回合還原與保護狀態事件轉換，再交給既有 `eval_report`。`eval-bag` 產生觀測 JSONL、轉換中繼資料與 JSON／Markdown 報告；固定場景採 map→世界零位移與零旋轉，其他對齊須明確提供。完整來源、缺資料與回放隔離規則見 [評估指標](METRICS.md#rosbag-記錄轉換與可重現流程)。這是旁路資料處理，不新增命令來源或改動 TF 所有權。
 
 ## 人物同步與跟隨量測
 
@@ -306,7 +306,7 @@ compute 唯讀掛載 `../third_party/eurobot_nav2/src → /nav2_ws/src`，`nav2_
 
 `nav2_amcl`、`nav2_bringup`、RPP、collision_monitor 與其他未 fork 套件留在 apt。覆蓋 `nav2_util`、`nav2_msgs`、`nav2_costmap_2d`／core 後，apt shared libraries 可能在執行時載入 fork 版本；即使同為 Humble／1.1.x，也可能有 ABI、訊息型別或行為不一致。`--allow-overriding` 只是承認覆蓋，不能證明相容。
 
-`nav2-build` 成功後 source underlay，以 `scripts/check_nav2_linkage.py` 對 fork shared libraries、apt `libnav2*.so`（含 RPP／collision monitor）及 AMCL 執行 `ldd -r`，缺 library、未定義 symbol 或非零結束碼都使建置失敗，通過才寫 build commit。這能攔截動態連結缺失，無法偵測 C++ layout／vtable 語意變化或 DDS 訊息相容問題；維護者仍須以當前 image apt 版本執行 colcon、AMCL lifecycle 啟動、action／取消／recovery 與 Gazebo 真值回歸。若失敗，回報精確 symbol 與套件版本，決定在 fork 修正 ABI 或增加必要的原始碼重建範圍，不能略過檢查假裝通過。display 不掛 fork，沿用 apt RViz plugins；跨容器 action／訊息仍要驗證。
+`nav2-build` 成功後 source underlay，以 `scripts/nav2/check_nav2_linkage.py` 對 fork shared libraries、apt `libnav2*.so`（含 RPP／collision monitor）及 AMCL 執行 `ldd -r`，缺 library、未定義 symbol 或非零結束碼都使建置失敗，通過才寫 build commit。這能攔截動態連結缺失，無法偵測 C++ layout／vtable 語意變化或 DDS 訊息相容問題；維護者仍須以當前 image apt 版本執行 colcon、AMCL lifecycle 啟動、action／取消／recovery 與 Gazebo 真值回歸。若失敗，回報精確 symbol 與套件版本，決定在 fork 修正 ABI 或增加必要的原始碼重建範圍，不能略過檢查假裝通過。display 不掛 fork，沿用 apt RViz plugins；跨容器 action／訊息仍要驗證。
 
 `nav2_stack:=apt|fork|auto` 預設 `auto`（2026-10-27 起）：容器內已建置 fork 時使用 fork TEB＋Smac2D，否則回退 apt；比對 apt 須明確選用 `apt`。選擇 helper 不匯入 ROS。`auto` 以 ament index 同時出現 `custom_controller` 與 `custom_nav_to_pose` 選 fork；明確 `fork` 缺套件就失敗；`apt` 保留原參數與 RPP。只換 YAML 並不能換回 apt binaries，所以在 fork underlay 存在而選 apt 時，launch 用移除 `/nav2_ws` 搜尋路徑的環境啟動子程序，source apt 與應用層的 `local_setup.bash`（不重播已記錄的 underlay），再執行相同導航 launch。guide／follow 將選擇參數傳入導航，其他 SLAM、EKF、模擬、模式管理流程不變；AMCL 仍是 apt 套件。一次只執行一個 bringup。若曾建置 fork，未初始化的主機 checkout 不會自動刪除既有 underlay volumes；`auto` 仍依容器 index 判定，要比對 apt 請明確選 apt。
 

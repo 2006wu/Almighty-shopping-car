@@ -102,10 +102,10 @@ def test_markdown_sections_and_csv_schema(path):
     assert len({r['case'] for r in rows if r['group'] == 'nlos'}) == 8
 
 
-@pytest.mark.skipif(not (ROOT/'scripts/uwb_study.py').exists(), reason='repository scripts not mounted')
+@pytest.mark.skipif(not (ROOT/'scripts/eval/uwb_study.py').exists(), reason='repository scripts not mounted')
 def test_cli_quick(tmp_path):
     md, csv_path = tmp_path/'report.md', tmp_path/'report.csv'
-    result = subprocess.run([sys.executable, str(ROOT/'scripts/uwb_study.py'), '--quick',
+    result = subprocess.run([sys.executable, str(ROOT/'scripts/eval/uwb_study.py'), '--quick',
                              '--out-md', str(md), '--out-csv', str(csv_path)],
                             capture_output=True, text=True, check=True)
     assert 'runtime:' in result.stdout

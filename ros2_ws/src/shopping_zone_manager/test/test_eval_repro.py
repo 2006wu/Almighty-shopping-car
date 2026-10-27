@@ -24,7 +24,7 @@ def repo_root():
 
 
 def recorder():
-    spec = importlib.util.spec_from_file_location('record_bag', repo_root()/'scripts/record_bag.py')
+    spec = importlib.util.spec_from_file_location('record_bag', repo_root()/'scripts/eval/record_bag.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -156,8 +156,8 @@ def test_recorder_writes_manifest_after_graceful_stop(tmp_path, monkeypatch):
     module = recorder()
     root = repo_root()
     # Give the command its own repository tree, without touching real bags.
-    script = tmp_path/'scripts/record_bag.py'
-    script.parent.mkdir()
+    script = tmp_path/'scripts/eval/record_bag.py'
+    script.parent.mkdir(parents=True)
     script.write_text('')
     monkeypatch.setattr(module, '__file__', str(script))
     config = tmp_path/'ros2_ws/src/shopping_zone_manager/config'

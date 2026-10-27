@@ -248,7 +248,7 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 ./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 20.0, fault: lidar_drop, duration: 3.0}, {time: 40.0, fault: "uwb_noise:0.5", duration: 5.0}]'
 ```
 
-`fault-check` 請使用空排程。工具依序測六種故障，每次保持約 4 秒模擬時間、清除並等待恢復，輸出 PASS／FAIL 表與非零失敗結束碼。使用 `python3 scripts/fault_check.py --help` 可查看等待選項；門檻、預期反應及限制見[架構文件](docs/design/ARCHITECTURE.md#模擬故障注入與驗收)。目前只有純 Python／靜態測試，尚未取得 Gazebo 故障量測結果。
+`fault-check` 請使用空排程。工具依序測六種故障，每次保持約 4 秒模擬時間、清除並等待恢復，輸出 PASS／FAIL 表與非零失敗結束碼。使用 `python3 scripts/eval/fault_check.py --help` 可查看等待選項；門檻、預期反應及限制見[架構文件](docs/design/ARCHITECTURE.md#模擬故障注入與驗收)。目前只有純 Python／靜態測試，尚未取得 Gazebo 故障量測結果。
 
 ## 安全與驗證狀態
 
@@ -277,8 +277,8 @@ NAV2 至少保持 1.5 秒，然後以遲滯確認暢通的 LOS 加上前方淨�
 可直接分析 `ros2 topic echo /follow/state` 文字紀錄，不需 rosbag：
 
 ```bash
-python3 scripts/follow_state_stats.py follow-state.log
-python3 scripts/follow_state_stats.py follow-state.log --sample-period 0.05
+python3 scripts/eval/follow_state_stats.py follow-state.log
+python3 scripts/eval/follow_state_stats.py follow-state.log --sample-period 0.05
 ```
 
 工具解析 `data: STATE: 原因` 或 `state: STATE` 紀錄，可在同一行前綴 `[秒數]` 或 `秒數 `。有時間戳時須有限且嚴格遞增；無時間戳時依序假設每筆 0.05 秒（20 Hz），遺漏樣本或僅記錄狀態變更時須提供時間戳，否則每分鐘切換率與停留時間僅為估算。混用有／無時間戳會拒絕分析。輸出切換總數、每分鐘切換率與各狀態停留次數／總計／平均／最小／最大秒數；首尾停留區間只計算觀測範圍，最後一筆不外推。亦可呼叫 ROS-free 的 `follow_metrics.state_statistics([(t, state), ...])`。
@@ -290,7 +290,7 @@ guide／follow 預設啟用全域模式管理、速度仲裁與獨立輸出看�
 ```bash
 python3 -m pytest -q
 ./scripts/run_unit_tests.sh python3
-python3 scripts/check_static.py
+python3 scripts/checks/check_static.py
 ```
 
 此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
@@ -384,11 +384,11 @@ ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eva
 離線幾何工具不需 ROS，僅需既有 Python 與 PyYAML：
 
 ```bash
-python3 scripts/map_geometry_check.py
-python3 scripts/map_geometry_check.py --map ros2_ws/src/shopping_robot_navigation/maps/supermarket.yaml --json /tmp/map_geometry.json
+python3 scripts/checks/map_geometry_check.py
+python3 scripts/checks/map_geometry_check.py --map ros2_ws/src/shopping_robot_navigation/maps/supermarket.yaml --json /tmp/map_geometry.json
 # Or, inside the existing compute container:
 ./scripts/dev.sh shell compute
-python3 /repo/scripts/map_geometry_check.py --json /tmp/map_geometry.json
+python3 /repo/scripts/checks/map_geometry_check.py --json /tmp/map_geometry.json
 ```
 
 工具讀取 P2／P5（含 16 位元）PGM、YAML 的解析度／原點／旋轉／占用門檻，直接使用淨空測試所依據的 world SDF 碰撞盒。每個面在預測邊緣附近 `--search 0.3` 公尺內，以切向格子各取最近占用格中心、排除角落並擬合直線；搜尋距離另限制小於物件半厚度，避免把內牆面誤當外牆面。輸出四面偏移中位數、覆蓋率、物件中心平移、旋轉與尺寸倍率，JSON 另有每面旋轉及擬合 RMS。平移／尺寸要求兩面覆蓋至少 50%，缺面標為 `missing`，不補零。這是有對應搜尋範圍限制的估計，單面、厚邊／重影、遮蔽與未知格都限制推論；格中心約有半格量化誤差，不等同量到實際物體表面。

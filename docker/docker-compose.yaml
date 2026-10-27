@@ -79,9 +79,9 @@ services:
     network_mode: service:compute
     depends_on:
       compute: {condition: service_healthy}
-    command: [bash, /repo/scripts/split_role.sh, sim]
+    command: [bash, /repo/scripts/container/split_role.sh, sim]
     healthcheck:
-      test: [CMD, python3, /repo/scripts/sim_health.py]
+      test: [CMD, python3, /repo/scripts/container/sim_health.py]
       interval: 5s
       timeout: 4s
       retries: 24
@@ -93,7 +93,7 @@ services:
     network_mode: service:compute
     depends_on:
       sim: {condition: service_healthy}
-    command: [bash, /repo/scripts/split_role.sh, localization]
+    command: [bash, /repo/scripts/container/split_role.sh, localization]
   navigation:
     <<: *runtime
     profiles: [split]
@@ -102,7 +102,7 @@ services:
     depends_on:
       sim: {condition: service_healthy}
       localization: {condition: service_started}
-    command: [bash, /repo/scripts/split_role.sh, navigation]
+    command: [bash, /repo/scripts/container/split_role.sh, navigation]
   app:
     <<: *runtime
     profiles: [split]
@@ -112,7 +112,7 @@ services:
       sim: {condition: service_healthy}
       localization: {condition: service_started}
       navigation: {condition: service_started}
-    command: [bash, /repo/scripts/split_role.sh, app]
+    command: [bash, /repo/scripts/container/split_role.sh, app]
   record:
     <<: *runtime
     profiles: [record]

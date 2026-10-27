@@ -59,7 +59,7 @@ cp .env.example .env  # Only for a new checkout without .env.
 ./scripts/dev.sh test
 ./scripts/dev.sh up
 ./scripts/dev.sh novnc
-docker compose --env-file .env -f docker/docker-compose.yaml run --rm --no-deps compute python3 /repo/scripts/check_ros_shutdown.py
+docker compose --env-file .env -f docker/docker-compose.yaml run --rm --no-deps compute python3 /repo/scripts/checks/check_ros_shutdown.py
 ```
 
 模擬與故障驗收命令見 CONTAINERS、SCENARIOS 與 README。每次僅有一個控制工作階段；建置期間先停止模擬。micro-ROS 的 C client 以 `comm-e2e-up` 明確選用，不開啟任何硬體裝置。

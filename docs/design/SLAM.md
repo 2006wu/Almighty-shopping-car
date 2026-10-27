@@ -60,7 +60,7 @@
 
 ```bash
 # Execute inside compute, with the repository's Python dependencies available.
-python3 /repo/scripts/map_geometry_check.py \
+python3 /repo/scripts/checks/map_geometry_check.py \
   --map /ws/src/shopping_robot_navigation/maps/store_trial.yaml \
   --json /repo/output/slam-map-geometry.json
 ```

@@ -11,7 +11,7 @@ import yaml
 import xacro
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT/'ros2_ws/src'
 
 
@@ -117,7 +117,7 @@ def main():
         for plugin in generated.findall('.//plugin'):
             assert plugin.get('filename').startswith('ignition-gazebo-')
             assert plugin.get('name').startswith('ignition::gazebo::systems::')
-    shell_files = sorted([*ROOT.glob('scripts/*.sh'), *ROOT.glob('docker/*-entrypoint')])
+    shell_files = sorted([*ROOT.glob('scripts/**/*.sh'), *ROOT.glob('docker/**/*entrypoint')])
     for path in shell_files:
         subprocess.run(['bash', '-n', str(path)], check=True)
     print(f'PASS: {message_count} rosidl messages and dependency contracts; {len(yaml_files)} YAML/RViz, {len(xml_files)} XML/SDF/xacro, '

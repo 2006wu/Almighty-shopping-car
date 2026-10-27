@@ -139,7 +139,7 @@ def test_fork_params_and_tree():
 
 
 def inflation_probe():
-    spec = importlib.util.spec_from_file_location('inflation_probe', ROOT/'tools/nav2_inflation_probe.py')
+    spec = importlib.util.spec_from_file_location('inflation_probe', ROOT/'scripts/nav2/nav2_inflation_probe.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -192,7 +192,7 @@ def test_build_configuration():
             'custom_controller', 'custom_nav_to_pose'} <= set(packages)
     assert not any(p.startswith(('opennav_', 'custom_layer')) for p in packages)
     assert not {'navigation2_run', 'camera_offset_publisher', 'nav2_rviz_plugins', 'nav2_amcl'} & set(packages)
-    build = (ROOT/'scripts/nav2_build.sh').read_text()
+    build = (ROOT/'scripts/nav2/nav2_build.sh').read_text()
     assert '--packages-up-to "${packages[@]}"' in build
     assert '-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF' in build
     assert '--parallel-workers "${NAV2_PARALLEL_WORKERS:-2}"' in build
@@ -216,7 +216,7 @@ def test_missing_submodule_fails_before_docker(tmp_path):
 
 
 def test_contract_preflight():
-    spec = importlib.util.spec_from_file_location('contract', ROOT/'scripts/check_nav2_contract.py')
+    spec = importlib.util.spec_from_file_location('contract', ROOT/'scripts/nav2/check_nav2_contract.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.missing_parameters('') == list(module.PARAMETERS)
@@ -225,7 +225,7 @@ def test_contract_preflight():
 
 @pytest.mark.parametrize('layout', ['nav2_smac_planner/lib', 'lib'])
 def test_smac_requires_fork_2d_library(tmp_path, monkeypatch, layout):
-    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    monkeypatch.syspath_prepend(str(ROOT/'scripts/nav2'))
     import check_nav2_contract as contract
     import check_nav2_linkage as linkage
 
@@ -249,7 +249,7 @@ def test_smac_requires_fork_2d_library(tmp_path, monkeypatch, layout):
 
 
 def test_linkage_rejects_missing_smac_before_ldd(tmp_path, monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    monkeypatch.syspath_prepend(str(ROOT/'scripts/nav2'))
     import check_nav2_linkage as linkage
 
     monkeypatch.setattr(linkage, 'FORK_PARAMS', NAV/'config/nav2_params_fork.yaml')

@@ -158,7 +158,7 @@ def test_role_runner_preserves_spaces_and_never_evaluates_arguments(tmp_path):
     arg = f'map:=/map with spaces/$(touch {marker}).yaml'
     env = dict(os.environ, PATH=str(tmp_path)+os.pathsep+os.environ['PATH'],
                SPLIT_MODE='guide', SPLIT_LAUNCH_ARGS=arg)
-    result = subprocess.check_output(['bash', str(ROOT/'scripts/split_role.sh'), 'navigation'],
+    result = subprocess.check_output(['bash', str(ROOT/'scripts/container/split_role.sh'), 'navigation'],
                                      env=env, text=True)
     assert json.loads(result) == ['launch', 'shopping_robot_bringup', 'navigation.launch.py', 'mode:=guide', arg]
     assert not marker.exists()
@@ -199,6 +199,6 @@ def test_sim_health_requires_world_clock_without_ros(tmp_path):
     env = dict(os.environ, PATH=str(tmp_path)+os.pathsep+os.environ['PATH'])
     for topics, status in (('', 1), ('/other/clock', 1),
                            ('/world/supermarket/clock\n/scan', 0)):
-        result = subprocess.run([os.sys.executable, str(ROOT/'scripts/sim_health.py')],
+        result = subprocess.run([os.sys.executable, str(ROOT/'scripts/container/sim_health.py')],
                                 env=dict(env, FAKE_TOPICS=topics))
         assert result.returncode == status

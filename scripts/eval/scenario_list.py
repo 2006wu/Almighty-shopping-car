@@ -5,7 +5,7 @@ from shopping_robot_sim.scenarios import load_scenario
 
 
 def main():
-    config = Path(__file__).resolve().parents[1]/'ros2_ws/src/shopping_robot_gazebo/config'
+    config = Path(__file__).resolve().parents[2]/'ros2_ws/src/shopping_robot_gazebo/config'
     for path in sorted((config/'scenarios').glob('*.yaml')):
         data = load_scenario(config, path.stem)
         pose = data['robot_pose']

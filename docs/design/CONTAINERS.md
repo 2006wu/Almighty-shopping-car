@@ -95,7 +95,7 @@ Mac arm64 CPU 資源較有限，平常邏輯／套件測試與開發優先使用
 錄製另用一次性 `record` 容器，不新增控制節點；在 split 堆疊運作時執行，產物位於 repo 的 `bags/`：
 
 ```bash
-docker compose -f docker/docker-compose.yaml --profile record run --rm record python3 /repo/scripts/record_bag.py split_guide --duration 60
+docker compose -f docker/docker-compose.yaml --profile record run --rm record python3 /repo/scripts/eval/record_bag.py split_guide --duration 60
 ```
 
 `record` 也可以 `--profile record up -d record` 啟動閒置工具容器後用 `exec` 操作；它本身不自動開始錄製。原有 `dev.sh record`、`eval-bag` 仍可透過 compute 對拆分堆疊使用。
