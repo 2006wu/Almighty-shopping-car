@@ -13,8 +13,10 @@ from std_msgs.msg import String, Empty
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 from nav2_msgs.action import NavigateToPose
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from .goal_tracker import GoalTracker, State
 from .zones import load_zones, lookup, arrived
+from .localization_health import amcl_healthy
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformListener, TransformException
 
@@ -28,10 +30,16 @@ class ZoneNavigator(Node):
         self.pose_listener = TransformListener(self.pose_buffer, self)
         # Margin over the Nav2 goal checker (0.15 m / 0.25 rad) so coasting and
         # AMCL jitter after Nav2 SUCCEEDED do not flip a real arrival to ABORTED;
-        # still rejects the metre-scale false successes seen in narrow_pass.
+        # Covariance is checked separately: TF alone cannot detect AMCL slip.
         self.arrival_xy_tolerance = float(self.declare_parameter('arrival_xy_tolerance', 0.25).value)
         self.arrival_yaw_tolerance = float(self.declare_parameter('arrival_yaw_tolerance', 0.35).value)
         self.arrival_max_age = float(self.declare_parameter('arrival_max_tf_age', 0.5).value)
+        self.require_amcl = self.declare_parameter('require_amcl', False).value
+        self.amcl_xy_std = float(self.declare_parameter('arrival_max_xy_std', 0.15).value)
+        self.amcl_yaw_std = float(self.declare_parameter('arrival_max_yaw_std', 0.35).value)
+        self.amcl_max_age = float(self.declare_parameter('arrival_max_amcl_age', 5.0).value)
+        self.amcl_sample = None
+        self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_amcl, 10)
         self.client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.tracker = GoalTracker(self.declare_parameter('response_timeout', 5.0).value)
         self.declare_parameter('preempt', False)
@@ -51,6 +59,18 @@ class ZoneNavigator(Node):
         self.create_timer(0.1, lambda: self.apply(self.tracker.tick(time.monotonic())),
                           clock=Clock(clock_type=ClockType.STEADY_TIME))
         self.create_timer(1.0, self.publish_markers)
+
+    def on_amcl(self, message):
+        if message.header.frame_id == 'map':
+            self.amcl_sample = (Time.from_msg(message.header.stamp).nanoseconds/1e9,
+                                tuple(message.pose.covariance))
+
+    def localization_healthy(self):
+        if self.amcl_sample is None:
+            return not self.require_amcl
+        stamp, covariance = self.amcl_sample
+        return amcl_healthy(covariance, self.get_clock().now().nanoseconds/1e9-stamp,
+                            self.amcl_xy_std, self.amcl_yaw_std, self.amcl_max_age)
 
     def publish_markers(self):
         markers = []
@@ -189,9 +209,12 @@ class ZoneNavigator(Node):
                     xy_tolerance=self.arrival_xy_tolerance,
                     yaw_tolerance=self.arrival_yaw_tolerance,
                     max_age=self.arrival_max_age)
+                if not self.localization_healthy():
+                    arrival_valid = False
+                    self.get_logger().warning('Cannot verify arrival: AMCL confidence missing, stale or excessive')
                 if not arrival_valid:
                     self.get_logger().warning(
-                        f'Nav2 success outside zone tolerance or stale TF: '
+                        f'Nav2 success failed final pose/confidence verification: '
                         f'{zone.name}, distance={math.hypot(t.x-zone.x, t.y-zone.y):.3f}, '
                         f'age={age:.3f}')
             except TransformException as exc:

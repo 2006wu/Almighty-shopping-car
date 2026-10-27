@@ -1480,3 +1480,39 @@
 | 全域雷射障礙標記與清除 | 待驗證 |
 | 區域終點定位驗證與失敗處理 | 待驗證 |
 | 三種動態情境、無人物與安全回歸 | 待驗證 |
+
+## 2026-10-27：t71 fork 動態情境根因、行人讓行與定位信心檢查
+
+### 修改與證據
+
+- 依限制唯讀 t71 原始 SQLite／observations／report 與啟動日誌，分析腳本僅放 `/tmp`；沒有執行 ROS、Docker、Gazebo、容器建置、提交或推送。完整時序與參數依據見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md) 的 t71 節。
+- narrow_pass：額外行人是 Fortress VelocityControl 實體圓柱，不是 set_pose。三次淨空小於 0.3 m 的區間約 106.84–112.08、129.58–136.22、152.84–156.98 秒；其中零命令樣本分別 241/263、304/333、192/208，零命令時真值速度仍達約 0.297 m/s。受推後 AMCL 落後約 0.92 m，再累積至 2.20 m；household 假成功誤差 2.396 m。入口回程駛過有限地板南界 y=−3 後墜落，最後平面誤差 13.114 m、z 約 −7565 m，AMCL 仍在目標附近。
+- aisle_crossing：人物全程留在 x≈±0.45、y=3，TEB band 提前受阻；42 次 replan、8 次 progress failure，household 真值誤差 2.768 m，最低人物淨空 0.637 m。guard 沒有 STOP，AMCL 最大誤差僅 0.022 m。兩份地圖抽查有移動標記與清除；局部地圖轉回 map 後未見持續橫向殘影，不以清圖或放寬 progress checker 掩蓋占道。
+- checkout_queue：t≈126–200 的 1,576 筆命令全零、guard 沒有 STOP。卡在距路徑終點約 0.13 m 的最後平移，尚未進 TEB 0.10 m 純旋轉階段；band 淨空約 0.173／0.190 m，無法越過 0.20 m 恢復門檻。不是旋轉命令振盪或 guard 阻轉；終點誤差 0.135 m／0.334 rad，38 次 replan、7 次 progress failure。
+- 新增 `shopping_robot_sim/pedestrian_yield.py` 純邏輯；`pedestrian_mover.py` 使用帶時間戳的既有機器人模擬里程真值，行人預測線段遇機器人外接圓便停等、凍結排程後續走，缺資料也停止。真值只進模擬演員，不進導航或機器人控制。`scenario_launch.py`、sim／guide launch 提供預設 true 的 `pedestrian_yield`，false 還原舊不避讓行為。
+- `scenarios.py` 允許行人 pauses；aisle_crossing 保留原穿越段，增加 y=5.8 的北側段及各 8 秒停留，使相遇段確實清空。自由循環約 40.7 秒，讓行會延長；這是情境版本變更，舊 t71 與新結果須分開比較，單改旗標不還原舊路徑。
+- （已撤回）原提案把 `nav2_params_fork.yaml` 的 Slow／Fast 恢復遲滯改為 0.02 m；因使用者確認 checkout 在機器人上進行、`checkout_queue` 不在範圍內，維持 0.05 m。原提案內容：0.15 m STOP＋0.02=0.17 m，容許 t71 的 0.173 m 淨空解除停等；保留停止距離、footprint／前推／旋轉掃掠、速度／加速度、goal checker、guard 與評估門檻。未修改 fork 子模組。較小遲滯可能增加切換，必須模擬驗證。
+- 新增 `shopping_zone_manager/localization_health.py` 純邏輯；`node.py` 抵達時檢查 AMCL 平面最大主軸標準差 ≤0.15 m、yaw 標準差 ≤0.35 rad、年齡 0…5 秒及 covariance 有效性。guide 的 map_server 模式要求 AMCL，SLAM-only 不強制；已有 AMCL 樣本的呼叫者同樣檢查。t71 household y 方差 0.02761 m²（標準差至少 0.166 m）、入口 x 方差約 1.70 m²，皆拒絕成功並回報 ABORTED。5 秒容許 AMCL 運動觸發更新，原 t71 household 最近樣本距結果 1.963 秒；不修改既有抵達 TF 容差 0.25 m／0.35 rad。
+- 更新 [情境程序](SCENARIOS.md) 的行人規則、旗標、情境版本、錄製覆蓋與定位失敗處理；新增／擴充純邏輯、結果回呼、真值時間配對、launch 轉送、設定合約等 pytest。
+
+### 自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：**1091 passed、1 skipped、1 warning**，8.29 秒；警告為既有 xacro DeprecationWarning。
+- `scripts/check_static.py` PASS：4 rosidl、37 YAML／RViz、15 XML／SDF／xacro、154 Python、7 Bash、7 情境；含 2／3 錨點與 ekf／ground_truth 的 xacro 展開。`git diff --check` 通過。
+- 靜態檢查與 pytest 不代表容器、模擬或硬體驗收；本次沒有新增執行期模擬結果。
+
+### 限制與下一步
+
+- covariance 只能拒絕不確定的抵達；第一次受推時 y 方差僅約 0.00816 m²，仍可能低信心指標卻錯位，不能宣稱完整 kidnap 偵測。檢查只在結果成功時執行，沒有行進中自動取消、重定位或重試。
+- 讓行不保證通行；迎面雙方停等可能仍有界逾時，沒有自動側移。新的穿越窗口與 TEB 恢復調整也尚未證明可通過。人物碰撞與真值評估保留；不得將不相遇、零命令或 action 成功視為無接觸／真值抵達。
+- 維護者須另錄新 bag，驗證三情境、清空後恢復與 checkout yaw、AMCL 超限 ABORTED、人物缺真值停止、暫停後續走與 aggressive 模式，並獨立做 default／alt_start／無人物 nav-check／follow 障礙故障回歸。保留所有舊失敗與原位置、角度、淨空及停止延遲門檻。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| t71 時序、行人推撞、定位與墜落根因 | 待驗證 |
+| 行人讓行、時間暫停／恢復與 aggressive 旗標 | 待驗證 |
+| 穿越窗口、TEB 恢復與 checkout 最終旋轉 | 待驗證 |
+| AMCL 信心檢查、假成功拒絕與生命週期 | 待驗證 |
+| 新 bag 三情境與無人物／安全回歸 | 待驗證 |

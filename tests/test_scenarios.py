@@ -12,6 +12,7 @@ import yaml
 
 from shopping_robot_sim.scenarios import load_scenario, generate_world, validate_path
 from shopping_robot_sim.trajectory import trajectory_position, tracking_velocity
+from shopping_robot_sim.pedestrian_yield import YieldingTrajectory
 from shopping_uwb_follow.person_path import path_position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +50,8 @@ def test_bad_names(name):
     lambda d: d['pedestrians'][0].update(radius=0),
     lambda d: d['pedestrians'][0].update(speed=-1),
     lambda d: d['pedestrians'][0].update(start_delay=float('inf')),
+    lambda d: d['pedestrians'][0].update(pauses=[0]),
+    lambda d: d['pedestrians'][0].update(pauses=[0, -1, 0, 0]),
     lambda d: d['pedestrians'][0].update(name='person'),
     lambda d: d['pedestrians'].append(deepcopy(d['pedestrians'][0])),
 ])
@@ -269,18 +272,20 @@ def test_pedestrian_merges_stamped_model_messages_without_using_scene_time():
     tree = ast.parse(path.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
     cls.bases = []
-    scope = dict(math=math, tracking_velocity=tracking_velocity,
+    scope = dict(math=math, YieldingTrajectory=YieldingTrajectory,
                  Twist=lambda: NS(linear=NS(x=0., y=0.)),
                  Pose=lambda: NS(position=NS(x=0., y=0., z=0.)),
                  PoseArray=lambda: NS(header=NS(), poses=[]))
     exec(compile(ast.Module(body=[cls], type_ignores=[]), str(path), 'exec'), scope)
     mover = scope['PedestrianMover'].__new__(scope['PedestrianMover'])
-    mover.people = [dict(name=name, speed=.3, start_delay=0,
+    mover.people = [dict(name=name, speed=.3, radius=.25, start_delay=0,
                          waypoints=[[0, 0], [1, 0]]) for name in ('a', 'b')]
     commands, arrays = [], []
     mover.publishers_by_name = {name: NS(publish=commands.append) for name in ('a', 'b')}
     mover.truth = NS(publish=arrays.append)
     mover.last, mover.measured = None, {}
+    mover.trajectories = {p['name']: YieldingTrajectory() for p in mover.people}
+    mover.yield_to_robot, mover.robot_history = False, []
 
     def message(name, sec, nsec=0):
         return NS(transforms=[NS(child_frame_id=name, header=NS(stamp=NS(sec=sec, nanosec=nsec)),
@@ -298,3 +303,33 @@ def test_pedestrian_merges_stamped_model_messages_without_using_scene_time():
     assert all(math.hypot(c.linear.x, c.linear.y) <= .3 for c in commands)
     mover.on_poses(message('a', 3))
     assert len(arrays) == 1  # Never combine old and new measurements as fresh truth.
+    # An ahead-of-actor odometry sample must not mask the preceding close robot.
+    mover.yield_to_robot = True
+    mover.robot_history = [(2.9, .7, 0.), (3.02, 10., 10.)]
+    mover.on_poses(message('b', 3, 20_000_000))
+    assert len(arrays) == 2
+    assert all(c.linear.x == c.linear.y == 0. for c in commands[-2:])
+
+
+def test_actor_robot_observer_uses_stamped_world_odometry_and_bounds_history():
+    from types import SimpleNamespace as NS
+    path = SRC/'shopping_robot_gazebo/shopping_robot_sim/pedestrian_mover.py'
+    cls = next(n for n in ast.parse(path.read_text()).body if isinstance(n, ast.ClassDef))
+    cls.bases = []
+    scope = {}
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), str(path), 'exec'), scope)
+    mover = scope['PedestrianMover'].__new__(scope['PedestrianMover'])
+    mover.robot_history = []
+
+    def odom(sec, frame='sim_world'):
+        return NS(header=NS(frame_id=frame, stamp=NS(sec=sec, nanosec=0)),
+                  pose=NS(pose=NS(position=NS(x=1., y=2.))))
+
+    mover.on_robot(odom(1, 'odom'))
+    assert not mover.robot_history
+    for sec in range(1, 40):
+        mover.on_robot(odom(sec))
+    assert len(mover.robot_history) == 32
+    assert mover.robot_history[-1] == (39., 1., 2.)
+    mover.on_robot(odom(1))
+    assert mover.robot_history == [(1., 1., 2.)]

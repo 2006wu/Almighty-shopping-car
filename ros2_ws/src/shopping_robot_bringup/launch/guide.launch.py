@@ -3,8 +3,9 @@ from shopping_robot_sim.scenario_launch import prepare_scenario
 from launch.conditions import IfCondition
 from launch.actions import OpaqueFunction, DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -20,6 +21,7 @@ def generate_launch_description():
         DeclareLaunchArgument('start_app', default_value='true'),
         DeclareLaunchArgument('mcu_transport', default_value='sim_ros', choices=['sim_ros', 'agent']),
         DeclareLaunchArgument('scenario', default_value='default'),
+        DeclareLaunchArgument('pedestrian_yield', default_value='true', choices=['true', 'false']),
         OpaqueFunction(function=prepare_scenario),
         DeclareLaunchArgument('mcu_comm', default_value='false', choices=['true', 'false']),
         DeclareLaunchArgument('fault_injection', default_value='false'),
@@ -41,7 +43,10 @@ def generate_launch_description():
         DeclareLaunchArgument('map', default_value=''),
         DeclareLaunchArgument('nav2_stack', default_value='auto', choices=['auto', 'fork', 'apt']),
         DeclareLaunchArgument('slam_mode', default_value='mapping'),
-        include('shopping_robot_gazebo', 'sim.launch.py', {'fault_injection': LaunchConfiguration('fault_injection'), 'fault_schedule': LaunchConfiguration('fault_schedule'), 'scenario': LaunchConfiguration('scenario'), 'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person'), 'start_localization': LaunchConfiguration('start_sim_localization')}, IfCondition(LaunchConfiguration('start_sim'))),
+        include('shopping_robot_gazebo', 'sim.launch.py', {'fault_injection': LaunchConfiguration('fault_injection'), 'fault_schedule': LaunchConfiguration('fault_schedule'), 'scenario': LaunchConfiguration('scenario'), 'pedestrian_yield': LaunchConfiguration('pedestrian_yield'), 'odom_source': LaunchConfiguration('odom_source'), 'use_sim_time': time, 'headless': LaunchConfiguration('headless'), 'person': LaunchConfiguration('person'), 'start_localization': LaunchConfiguration('start_sim_localization')}, IfCondition(LaunchConfiguration('start_sim'))),
         include('shopping_robot_navigation', 'navigation.launch.py', {'use_mux': LaunchConfiguration('use_mux'), 'nav2_stack': LaunchConfiguration('nav2_stack'), 'slam_mode': LaunchConfiguration('slam_mode'), 'map': LaunchConfiguration('map'), 'use_sim_time': time, 'start_localization': LaunchConfiguration('start_nav_localization')}, IfCondition(LaunchConfiguration('start_navigation'))),
         include('shopping_robot_bringup', 'mode_mux.launch.py', {'use_mux': LaunchConfiguration('use_mux'), 'obstacle_guard': LaunchConfiguration('obstacle_guard'), 'collision_monitor': LaunchConfiguration('collision_monitor'), 'initial_mode': LaunchConfiguration('initial_mode'), 'use_sim_time': time}, IfCondition(LaunchConfiguration('start_app'))),
-        Node(package='shopping_zone_manager', executable='zone_navigator', condition=IfCondition(LaunchConfiguration('start_app')), parameters=[{'use_sim_time': time}], output='screen')])
+        Node(package='shopping_zone_manager', executable='zone_navigator', condition=IfCondition(LaunchConfiguration('start_app')), parameters=[{
+            'use_sim_time': time,
+            'require_amcl': ParameterValue(PythonExpression([
+                "'", LaunchConfiguration('slam_mode'), "' == 'map_server'"]), value_type=bool)}], output='screen')])

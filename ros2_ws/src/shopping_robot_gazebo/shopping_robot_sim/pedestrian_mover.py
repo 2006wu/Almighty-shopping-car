@@ -9,10 +9,11 @@ import rclpy
 from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, PoseArray, Twist
+from nav_msgs.msg import Odometry
 from tf2_msgs.msg import TFMessage
 import yaml
 
-from shopping_robot_sim.trajectory import tracking_velocity
+from shopping_robot_sim.pedestrian_yield import YieldingTrajectory
 
 
 class PedestrianMover(Node):
@@ -20,6 +21,10 @@ class PedestrianMover(Node):
         super().__init__('pedestrian_mover')
         file = self.declare_parameter('scenario_file', '').value
         self.people = yaml.safe_load(Path(file).read_text())['pedestrians']
+        self.yield_to_robot = self.declare_parameter('yield_to_robot', True).value
+        self.trajectories = {p['name']: YieldingTrajectory() for p in self.people}
+        self.robot_history = []
+        self.create_subscription(Odometry, '/sim/ground_truth_odom', self.on_robot, 10)
         self.publishers_by_name = {p['name']: self.create_publisher(
             Twist, f"/model/{p['name']}/cmd_vel", 10) for p in self.people}
         self.truth = self.create_publisher(PoseArray, '/sim/pedestrians', 10)
@@ -27,6 +32,16 @@ class PedestrianMover(Node):
         self.last = None
         self.measured = {}
         self.create_timer(0.1, self.watchdog)
+
+    def on_robot(self, message):
+        if message.header.frame_id == 'sim_world':
+            stamp = message.header.stamp
+            p = message.pose.pose.position
+            sample = (stamp.sec+stamp.nanosec*1e-9, p.x, p.y)
+            if self.robot_history and sample[0] < self.robot_history[-1][0]:
+                self.robot_history.clear()
+            self.robot_history.append(sample)
+            self.robot_history = self.robot_history[-32:]
 
     def on_poses(self, message):
         # Preserve simulator time; never label planned positions as ground truth.
@@ -43,6 +58,9 @@ class PedestrianMover(Node):
         if latest-now > 0.1 or (self.last is not None and now <= self.last):
             return
         self.last = now
+        # The 50 Hz odometry callback may be ahead of the 30 Hz actor poses.
+        # Use a preceding stamped sample rather than accepting future truth.
+        robot = next((r for r in reversed(self.robot_history) if r[0] <= now), None)
         transforms = {name: self.measured[name][1] for name in names}
         stamp = min(self.measured.values(), key=lambda item: item[0])[1].header.stamp
         array = PoseArray()
@@ -53,7 +71,9 @@ class PedestrianMover(Node):
             q = transform.rotation
             yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
             position = transform.translation
-            vx, vy = tracking_velocity(person, now, (position.x, position.y), yaw)
+            vx, vy = self.trajectories[person['name']].velocity(
+                person, now, (position.x, position.y), yaw, robot,
+                enabled=self.yield_to_robot)
             command = Twist()
             command.linear.x, command.linear.y = vx, vy
             self.publishers_by_name[person['name']].publish(command)
