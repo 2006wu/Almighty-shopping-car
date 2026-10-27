@@ -126,10 +126,18 @@ def test_margin_stops_both_axes_and_requires_sustained_release(distance):
 
 
 @pytest.mark.parametrize('obstacle', [math.inf, .6])
-def test_inside_follow_distance_cannot_track_bearing_or_escape_rotate(obstacle):
+def test_inside_follow_distance_never_translates_but_turns_toward_person(obstacle):
     control = FollowController()
     control.v, control.w = .5, 1.
-    assert control.step((.9, .4), 0, obstacle, .05, rotation_clear=True)[:2] == (0, 0)
+    v, w = control.step((.9, .4), 0, obstacle, .05, rotation_clear=True)[:2]
+    assert v == 0 and w > 0
+
+
+@pytest.mark.parametrize('obstacle', [math.inf, .6])
+def test_too_close_latch_zeroes_both_axes(obstacle):
+    control = FollowController()
+    control.v, control.w = .5, 1.
+    assert control.step((.75, .2), 0, obstacle, .05, rotation_clear=True)[:2] == (0, 0)
 
 
 @pytest.mark.parametrize('field', ['constrained_max_linear', 'open_side_clearance',

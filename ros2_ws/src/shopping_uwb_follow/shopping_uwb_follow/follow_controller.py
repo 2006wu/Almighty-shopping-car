@@ -159,7 +159,7 @@ class FollowController:
         if state != 'FOLLOWING':
             self.holding_distance = False
             if (state == 'OBSTACLE_STOP' and p.obstacle_stop_rotate
-                    and math.hypot(*target) >= p.follow_distance
+                    and math.hypot(*target) > p.stop_distance+p.too_close_margin
                     and rotation_clear and math.isfinite(obstacle) and obstacle >= 0
                     and math.isfinite(dt) and dt > 0):
                 self.v = 0.0
@@ -230,8 +230,11 @@ class FollowController:
         # Clearance reductions must cap even a ramp-down command immediately.
         self.v = min(self.v, braking_cap, cap)
         # Do not carry ramp-down motion into the person's requested separation.
+        # Keep turning toward the person (as develop does) so the cart is not left
+        # facing a shelf when the person walks past; the TOO_CLOSE latch at
+        # stop_distance+too_close_margin still zeroes both axes.
         if distance < p.follow_distance:
-            self.v = self.w = 0.0
+            self.v = 0.0
         return self.v, self.w, state, reason
 
 
