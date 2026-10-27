@@ -300,6 +300,17 @@ def test_available_fork_libraries_and_nonrecovery_structure():
     assert structure(original) == structure(shopping)
 
 
+@pytest.mark.parametrize('filename', ['nav2_params.yaml', 'nav2_params_fork.yaml'])
+def test_obstacle_sources_accept_laser_height_in_both_costmaps(filename):
+    params = yaml.safe_load((NAV/'config'/filename).read_text())
+    for name in ('local_costmap', 'global_costmap'):
+        scan = params[name][name]['ros__parameters']['obstacle_layer']['scan']
+        # The simulated laser plane is base_joint.z + laser_link.z = 0.36 m.
+        assert scan.get('min_obstacle_height', 0.0) < 0.36 < scan['max_obstacle_height']
+        assert scan['clearing'] and scan['marking']
+        assert scan['raytrace_max_range'] > scan['obstacle_max_range']
+
+
 def test_gentle_slow_and_fast_enable_the_same_safety_options():
     params = yaml.safe_load((NAV/'config/nav2_params_fork.yaml').read_text())
     controller = params['controller_server']['ros__parameters']

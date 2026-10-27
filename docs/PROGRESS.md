@@ -1445,3 +1445,99 @@
 | --- | --- |
 | through-poses `/cmd_vel` 重映射與單一發布者 | 審查端 Linux amd64（2026-10-27）：fork 障礙物 fault-check 4/4，`/cmd_vel` 只有 cmd_vel_watchdog 一個發布者 |
 | 預設 `auto` 選擇與回退 | 審查端：pytest（test_mode_launch 53 項、全套 1041）通過；`auto` 實際載入 fork 的 Gazebo 確認併入合併後動態情境重跑 |
+
+
+## 2026-10-27：Linux 動態情境離線根因分析與修正
+
+### 修改與證據
+
+- 遵照本次限制，僅以 `/tmp` 的純 Python 分析腳本唯讀既有 t64 bag／日誌，未啟動 Docker、模擬或重型程序，未提交／推送。完整數據、方法、參數理由與 PR 說明見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md)。
+- 找到 apt／fork 全域 costmap 的 `scan.max_obstacle_height` 缺漏：Humble 觀測來源預設 0.0，會排除高度 0.36 m 的雷射。t≈99 局部地圖有行人致命格，全域行人附近卻無致命格，路徑仍沿 x=0.005 穿越 y=3。兩份設定補為 2.0，與局部相同；不放寬測試或安全門檻。
+- aisle_crossing：household 真值終點誤差 2.346 m、僅移動 2.157 m；goto 120 秒逾時，bag episode 為 107.786 模擬秒。AMCL 最大誤差僅 0.068 m；92 次路徑輸出的間隔中位數 0.953 秒，持續走原中線。2,401 個 guard 樣本有 1,443 個 STOP，全部仍收到非零 mux 命令，最終輸出零；progress checker／清圖／旋轉／後退反覆失敗。主要問題是全域漏標與局部／安全層阻擋的交互作用。
+- narrow_pass：household 35.079 秒回報成功但真值誤差 1.804 m。t≈102.802 接觸時最終命令已為零，真值速度仍約 0.296 m/s；行人將底盤從 y≈3.13 推至 y≈1.20，AMCL 卻維持 y≈3.02，最大誤差 1.827 m。接觸後雷射出現 `-inf`，guard 保守停車並有 178 個 STALE 樣本。最後路徑端點距原目標僅 0.007 m，因此不能將 1.8 m 誤差單歸咎 Smac 0.8 m 搜尋容差；原 zone_navigator 完全未驗證終點。
+- checkout_queue：checkout 誤差 0.135 m／0.168 rad；入口耗時 79.745 秒、誤差 0.129 m。AMCL 兩段最大誤差 0.043／0.056 m。返回時 guard 將 0.4 m/s 縮至約 0.011 或零，最低人物淨空仍為 0.077 m；最近接近點已靜止，仍未達建議 0.10 m。
+- 區域導航新增 ROS-free `arrived()`，Nav2 成功後另檢查區域座標系的定位 TF（標準區域為 map）：0.15 m／0.25 rad、年齡 0…0.5 秒；缺資料、非有限值、過期或超差則 ABORTED，已完成 action 可重新發目標。生命週期預設不接受未驗證成功，保留取消、舊 generation 與逾時隔離；新增 pytest。控制／導航沒有使用真值。
+- SCENARIOS 錄製範例增加 AMCL／plan，補終點驗證的失敗處理及真值驗收限制。
+
+### 自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：1049 passed、1 skipped（另有既有 xacro DeprecationWarning）。
+- `scripts/check_static.py`：PASS（34 YAML/RViz、15 XML/SDF/xacro、148 Python、7 Bash、7 情境，含 ekf／ground_truth、2／3 錨點 xacro 展開）；`git diff --check` 通過。以上不視為容器／模擬驗收。
+
+### 限制與下一步
+
+- 未盲調 AMCL：資料顯示先接觸推移、再定位落後，沒有證據支持 beam skipping／量測權重能解決未被輪式里程計量到的滑移。
+- 本輪先修全域標記，未新增停等協定或放寬 progress checker；人物持續占道時等待也不保證通過。既有 guard／watchdog 的零命令無法阻止行人推撞。新的終點檢查也無法偵測所有 AMCL 錯位，不能宣稱 narrow_pass 已修復或無接觸。
+- 必須重新獨立錄製三情境，確認兩份 costmap 都標記／清除行人、路徑安全繞行或有界失敗、離開後恢復；保留原 0.20 m／0.20 rad 真值門檻、淨空與停止延遲要求。另驗證終點超差／缺失或過期 TF 回報 ABORTED，以及 default／alt_start／follow 障礙故障回歸。fork 功能也須另測，這批 bag 僅為 apt。
+
+- 審查端調整：`zone_navigator` 的終點驗證容差改為參數 `arrival_xy_tolerance`（預設 0.25 m）、`arrival_yaw_tolerance`（0.35 rad）、`arrival_max_tf_age`（0.5 s）。Nav2 goal checker 為 0.15 m／0.25 rad，留餘量避免成功後的滑行與 AMCL 抖動把真正抵達判成 ABORTED，仍可擋下 narrow_pass 1.8 m 外的假成功。已合併 develop（PR #22，fork 成為預設 stack），pytest 1055 passed、1 skipped。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 離線數字與根因交叉檢查 | 待驗證 |
+| 全域雷射障礙標記與清除 | 待驗證 |
+| 區域終點定位驗證與失敗處理 | 待驗證 |
+| 三種動態情境、無人物與安全回歸 | 待驗證 |
+
+## 2026-10-27：t71 fork 動態情境根因、行人讓行與定位信心檢查
+
+### 修改與證據
+
+- 依限制唯讀 t71 原始 SQLite／observations／report 與啟動日誌，分析腳本僅放 `/tmp`；沒有執行 ROS、Docker、Gazebo、容器建置、提交或推送。完整時序與參數依據見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md) 的 t71 節。
+- narrow_pass：額外行人是 Fortress VelocityControl 實體圓柱，不是 set_pose。三次淨空小於 0.3 m 的區間約 106.84–112.08、129.58–136.22、152.84–156.98 秒；其中零命令樣本分別 241/263、304/333、192/208，零命令時真值速度仍達約 0.297 m/s。受推後 AMCL 落後約 0.92 m，再累積至 2.20 m；household 假成功誤差 2.396 m。入口回程駛過有限地板南界 y=−3 後墜落，最後平面誤差 13.114 m、z 約 −7565 m，AMCL 仍在目標附近。
+- aisle_crossing：人物全程留在 x≈±0.45、y=3，TEB band 提前受阻；42 次 replan、8 次 progress failure，household 真值誤差 2.768 m，最低人物淨空 0.637 m。guard 沒有 STOP，AMCL 最大誤差僅 0.022 m。兩份地圖抽查有移動標記與清除；局部地圖轉回 map 後未見持續橫向殘影，不以清圖或放寬 progress checker 掩蓋占道。
+- checkout_queue：t≈126–200 的 1,576 筆命令全零、guard 沒有 STOP。卡在距路徑終點約 0.13 m 的最後平移，尚未進 TEB 0.10 m 純旋轉階段；band 淨空約 0.173／0.190 m，無法越過 0.20 m 恢復門檻。不是旋轉命令振盪或 guard 阻轉；終點誤差 0.135 m／0.334 rad，38 次 replan、7 次 progress failure。
+- 新增 `shopping_robot_sim/pedestrian_yield.py` 純邏輯；`pedestrian_mover.py` 使用帶時間戳的既有機器人模擬里程真值，行人預測線段遇機器人外接圓便停等、凍結排程後續走，缺資料也停止。真值只進模擬演員，不進導航或機器人控制。`scenario_launch.py`、sim／guide launch 提供預設 true 的 `pedestrian_yield`，false 還原舊不避讓行為。
+- `scenarios.py` 允許行人 pauses；aisle_crossing 保留原穿越段，增加 y=5.8 的北側段及各 8 秒停留，使相遇段確實清空。自由循環約 40.7 秒，讓行會延長；這是情境版本變更，舊 t71 與新結果須分開比較，單改旗標不還原舊路徑。
+- （已撤回）原提案把 `nav2_params_fork.yaml` 的 Slow／Fast 恢復遲滯改為 0.02 m；因使用者確認 checkout 在機器人上進行、`checkout_queue` 不在範圍內，維持 0.05 m。原提案內容：0.15 m STOP＋0.02=0.17 m，容許 t71 的 0.173 m 淨空解除停等；保留停止距離、footprint／前推／旋轉掃掠、速度／加速度、goal checker、guard 與評估門檻。未修改 fork 子模組。較小遲滯可能增加切換，必須模擬驗證。
+- 新增 `shopping_zone_manager/localization_health.py` 純邏輯；`node.py` 抵達時檢查 AMCL 平面最大主軸標準差 ≤0.15 m、yaw 標準差 ≤0.35 rad、年齡 0…5 秒及 covariance 有效性。guide 的 map_server 模式要求 AMCL，SLAM-only 不強制；已有 AMCL 樣本的呼叫者同樣檢查。t71 household y 方差 0.02761 m²（標準差至少 0.166 m）、入口 x 方差約 1.70 m²，皆拒絕成功並回報 ABORTED。5 秒容許 AMCL 運動觸發更新，原 t71 household 最近樣本距結果 1.963 秒；不修改既有抵達 TF 容差 0.25 m／0.35 rad。
+- 更新 [情境程序](SCENARIOS.md) 的行人規則、旗標、情境版本、錄製覆蓋與定位失敗處理；新增／擴充純邏輯、結果回呼、真值時間配對、launch 轉送、設定合約等 pytest。
+
+### 自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：**1091 passed、1 skipped、1 warning**，8.29 秒；警告為既有 xacro DeprecationWarning。
+- `scripts/check_static.py` PASS：4 rosidl、37 YAML／RViz、15 XML／SDF／xacro、154 Python、7 Bash、7 情境；含 2／3 錨點與 ekf／ground_truth 的 xacro 展開。`git diff --check` 通過。
+- 靜態檢查與 pytest 不代表容器、模擬或硬體驗收；本次沒有新增執行期模擬結果。
+
+### 限制與下一步
+
+- covariance 只能拒絕不確定的抵達；第一次受推時 y 方差僅約 0.00816 m²，仍可能低信心指標卻錯位，不能宣稱完整 kidnap 偵測。檢查只在結果成功時執行，沒有行進中自動取消、重定位或重試。
+- 讓行不保證通行；迎面雙方停等可能仍有界逾時，沒有自動側移。新的穿越窗口與 TEB 恢復調整也尚未證明可通過。人物碰撞與真值評估保留；不得將不相遇、零命令或 action 成功視為無接觸／真值抵達。
+- 維護者須另錄新 bag，驗證三情境、清空後恢復與 checkout yaw、AMCL 超限 ABORTED、人物缺真值停止、暫停後續走與 aggressive 模式，並獨立做 default／alt_start／無人物 nav-check／follow 障礙故障回歸。保留所有舊失敗與原位置、角度、淨空及停止延遲門檻。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| t71 時序、行人推撞、定位與墜落根因 | 待驗證 |
+| 行人讓行、時間暫停／恢復與 aggressive 旗標 | 待驗證 |
+| 穿越窗口、TEB 恢復與 checkout 最終旋轉 | 待驗證 |
+| AMCL 信心檢查、假成功拒絕與生命週期 | 待驗證 |
+| 新 bag 三情境與無人物／安全回歸 | 待驗證 |
+
+## 2026-10-27（t76）：dynamic-scenarios f396c2d 模擬驗收
+
+範圍調整（使用者 15:07）：機器人在較寬敞區域只做跟隨／帶路，結帳在機上完成，**checkout_queue 不在範圍內**（不再追 yaw 問題），narrow_pass 降為低優先；aisle_crossing 行人讓行與跟隨／帶路穩定為優先。fork `gentle_resume_margin` 維持 0.05。
+
+環境：Linux amd64 Docker（shopnav2，ROS_DOMAIN_ID 31），fork TEB＋Smac2D（`nav2_stack:=auto`），AMCL＋`supermarket.yaml`，headless。bag：`bags/t76_{aisle,aisle_noyield,narrow}`（不入版控）。
+
+| 項目 | t76 結果 | 對照 |
+| --- | --- | --- |
+| aisle_crossing（讓行開）household | ABORTED，真值誤差 0.584 m，人物最小淨空 0.321 m（無接觸） | t71 TIMEOUT 2.77 m |
+| aisle_crossing（讓行開）entrance | SUCCEEDED 0.094 m | — |
+| aisle_crossing（`pedestrian_yield:=false`）household | 回報 SUCCEEDED 但真值誤差 1.43 m、人物淨空 0（接觸、推移、AMCL 滑移；covariance 檢查未攔下）→ 假成功 | 證明讓行有效 |
+| narrow_pass（低優先）household | ABORTED，2.78 m，人物淨空 0.342 m（無接觸、誠實失敗） | t71 假成功 2.40 m、接觸 |
+| narrow_pass entrance | SUCCEEDED 0.074 m | t71 13.1 m |
+| nav-check default | 6/6 PASS（區域容差 0.145 m） | develop 6/6 |
+| nav-check alt_start | 6/6 PASS（0.119 m） | develop 6/6 |
+| loc-check | PASS（六區，定位 RMSE ≤ 0.072 m） | develop PASS |
+| obstacle fault-check | 4/4 PASS | develop 4/4 |
+| follow fault-check | 7/7 PASS | develop 7/7 |
+
+結論：無人物／安全回歸全部通過；動態情境沒有退步且安全性改善（無接觸、無假成功），但 aisle_crossing household 仍失敗。
+
+根因（aisle_crossing）：互相等待死鎖。機器人停在 (0, 3.92)，行人在 (-0.45, 4.77) 讓行凍結約 124–160 s；雙方都等，Nav2 Shrink 後 ABORTED，行人在機器人離開後才繼續。
+
+下一步：行人模擬加入耐心逾時（受阻超過數秒即沿路徑倒退讓出走道，真值仍只用於模擬行人），重跑 aisle_crossing；AMCL covariance 無法偵測推移後的錯位（noyield 假成功），需另加真值以外的一致性檢查（例如雷射與地圖匹配分數）。

@@ -25,7 +25,7 @@ def test_results(status, expected):
     assert tracker.state == State.IDLE
     generation = active(tracker)
     assert tracker.state == State.ACTIVE
-    effects = tracker.result(generation, status)
+    effects = tracker.result(generation, status, arrival_valid=True)
     assert tracker.state.value == expected
     assert effects[0].status.code == expected
     assert not tracker.busy
@@ -56,7 +56,7 @@ def test_timeout_late_acceptance_is_canceled_and_quarantined():
     assert tracker.cancel_request()[0].status.code == 'TIMEOUT'
     assert kinds(tracker.response(1, True)) == ['cancel']
     assert tracker.cancel_response(1, True) == []
-    assert tracker.result(1, 5)[0].status.code == 'TIMEOUT'
+    assert tracker.result(1, 5, arrival_valid=True)[0].status.code == 'TIMEOUT'
     assert not tracker.busy
     assert 'send' in kinds(tracker.request(B))
 
@@ -70,10 +70,10 @@ def test_timeout_late_rejection_and_stale_generations():
     tracker.request(B)
     assert tracker.generation == 2
     assert tracker.response(1, True) == []
-    assert tracker.result(1, 4) == []
+    assert tracker.result(1, 4, arrival_valid=True) == []
     assert tracker.cancel_response(1, False) == []
     assert tracker.state == State.PENDING
-    assert tracker.result(2, 4) == []  # Results cannot precede acceptance.
+    assert tracker.result(2, 4, arrival_valid=True) == []  # Results cannot precede acceptance.
     tracker.response(2, True)
     assert tracker.response(2, False) == []
     assert tracker.tick(500) == []
@@ -98,7 +98,7 @@ def test_busy_and_cancel(pending):
         assert kinds(tracker.response(1, True)) == ['cancel']
     assert tracker.cancel_response(1, True) == []
     assert tracker.state == State.CANCELING
-    tracker.result(1, 5)
+    tracker.result(1, 5, arrival_valid=True)
     assert tracker.state == State.CANCELED
 
 
@@ -115,12 +115,12 @@ def test_preempt_waits_for_old_result(pending, result):
     if pending:
         tracker.response(1, True)
     assert tracker.cancel_response(1, True) == []
-    effects = tracker.result(1, result)
+    effects = tracker.result(1, result, arrival_valid=True)
     assert kinds(effects) == ['status', 'next']
     assert effects[-1].zone == B
     tracker.request(effects[-1].zone, now=20)
     assert tracker.generation == 2 and tracker.deadline == 25
-    assert tracker.result(1, 5) == []
+    assert tracker.result(1, 5, arrival_valid=True) == []
 
 
 def test_preempt_pending_rejection_and_cancel_failure():
@@ -145,7 +145,7 @@ def test_pending_cancel_timeout_and_idle_noop():
     assert kinds(tracker.response(1, True)) == ['cancel']
     assert tracker.cancel_response(1, False)[0].status.code == 'CANCEL_FAILED'
     assert tracker.state == State.TIMEOUT and tracker.busy
-    tracker.result(1, 5)
+    tracker.result(1, 5, arrival_valid=True)
     assert tracker.cancel_request()[0].status.code == 'IDLE'
 
 
@@ -170,7 +170,7 @@ def test_cancel_can_retry_after_lost_cancel_response_even_after_timeout():
     tracker.response(1, True)
     assert kinds(tracker.cancel_request()) == ['status', 'cancel']
     assert tracker.busy and tracker.state == State.TIMEOUT
-    tracker.result(1, 5)
+    tracker.result(1, 5, arrival_valid=True)
     assert tracker.cancel_request()[0].status.code == 'IDLE'
 
 
@@ -181,5 +181,26 @@ def test_explicit_cancel_discards_preempted_goal():
     assert tracker.queued == B
     tracker.cancel_request()
     assert tracker.queued is None
-    assert kinds(tracker.result(generation, 5)) == ['status']
+    assert kinds(tracker.result(generation, 5, arrival_valid=True)) == ['status']
+    assert not tracker.busy
+
+
+def test_success_requires_verified_arrival_and_releases_goal():
+    tracker = GoalTracker()
+    generation = active(tracker)
+    effects = tracker.result(generation, 4)
+    assert tracker.state == State.ABORTED
+    assert not tracker.busy
+    assert 'unverified' in effects[0].status.text
+    assert kinds(tracker.request(B)) == ['status', 'send']
+
+
+def test_unverified_late_success_preserves_timeout_quarantine_outcome():
+    tracker = GoalTracker()
+    tracker.request(A)
+    tracker.tick(5)
+    tracker.response(1, True)
+    effects = tracker.result(1, 4)
+    assert tracker.state == State.TIMEOUT
+    assert effects[0].status.code == 'TIMEOUT'
     assert not tracker.busy

@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 import pytest
 import yaml
@@ -75,3 +76,22 @@ def test_normalization_unicode_casefold_and_nearest_tie(tmp_path):
     path.write_text(yaml.safe_dump({'zones': entries}))
     with pytest.raises(ValueError):
         load_zones(path)
+
+
+@pytest.mark.parametrize('pose,age,expected', [
+    ((0.0, 4.5, 1.5708), 0.0, True),
+    ((0.0, 4.36, 1.5708), 0.5, True),
+    ((0.0, 4.34, 1.5708), 0.0, False),
+    ((0.0, 2.7, 1.5708), 0.0, False),
+    ((0.0, 4.5, 1.9), 0.0, False),
+    ((0.0, 4.5, 1.5708+2*math.pi), 0.0, True),
+    ((0.0, 4.5, 1.5708), 0.501, False),
+    ((0.0, 4.5, 1.5708), -0.1, False),
+    ((float('nan'), 4.5, 1.5708), 0.0, False),
+    ((0.0, 4.5, 1.5708), float('nan'), False),
+    (None, 0.0, False),
+])
+def test_arrival_requires_fresh_localized_zone_pose(pose, age, expected):
+    from shopping_zone_manager.zones import arrived, Zone
+    zone = Zone('household', (), 0.0, 4.5, 1.5708, 'map')
+    assert arrived(zone, pose, age) is expected

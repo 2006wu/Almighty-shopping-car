@@ -29,6 +29,7 @@ def generate_launch_description():
         return PythonExpression(["'/sim/raw", topic, "' if '", fault, "'.lower() == 'true' else '", topic, "'"])
     return LaunchDescription([
         DeclareLaunchArgument('scenario', default_value='default'),
+        DeclareLaunchArgument('pedestrian_yield', default_value='true', choices=['true', 'false']),
         DeclareLaunchArgument('world', default_value=share+'/worlds/supermarket.sdf'),
         OpaqueFunction(function=prepare_scenario),
         DeclareLaunchArgument('start_sim', default_value='true'),

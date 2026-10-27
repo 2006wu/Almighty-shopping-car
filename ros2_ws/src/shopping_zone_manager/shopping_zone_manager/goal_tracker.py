@@ -93,13 +93,17 @@ class GoalTracker:
         self.state = State.ACTIVE
         return self.emit('ACTIVE', self.zone.name)
 
-    def result(self, generation, status):
+    def result(self, generation, status, arrival_valid=False):
         if generation != self.generation or not self.outstanding or not self.accepted:
             return []
         outcome = {4: State.SUCCEEDED, 5: State.CANCELED, 6: State.ABORTED}.get(status)
         if outcome is None:
             # An unexpected result must not silently become success.
             outcome = State.ABORTED
+        if outcome == State.SUCCEEDED and not arrival_valid and self.state != State.TIMEOUT:
+            effects = self._finish(State.ABORTED)
+            effects[0] = self.emit('ABORTED', f'{self.zone.name}: final zone pose unverified')[0]
+            return effects
         return self._finish(outcome)
 
     def _finish(self, outcome):

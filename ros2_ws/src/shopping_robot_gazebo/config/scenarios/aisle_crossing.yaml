@@ -10,6 +10,12 @@ pedestrians:
     - 3
   - - 0.45
     - 3
+  # Leave the encounter segment and dwell beyond the shelf end before returning.
+  - - 0.45
+    - 5.8
+  - - -0.45
+    - 5.8
+  pauses: [0, 0, 8, 8]
   speed: 0.3
   radius: 0.25
   start_delay: 8

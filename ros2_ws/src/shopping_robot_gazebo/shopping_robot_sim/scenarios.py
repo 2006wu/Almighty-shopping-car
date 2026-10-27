@@ -63,12 +63,12 @@ def load_scenario(config, name):
         raise ValueError('pedestrians must be a list')
     names = set()
     for person in people:
-        keys(person, ('name', 'waypoints', 'speed', 'radius', 'start_delay'))
+        keys(person, ('name', 'waypoints', 'speed', 'radius', 'start_delay'), ('pauses',))
         name_value = person['name']
         if not isinstance(name_value, str) or not re.fullmatch(r'ped_[a-z0-9_]+', name_value) or name_value in names:
             raise ValueError('Expected unique ped_ model name')
         names.add(name_value)
-        validate_path({k: person[k] for k in ('waypoints', 'speed')}, static=True)
+        validate_path({k: person[k] for k in ('waypoints', 'speed', 'pauses') if k in person}, static=True)
         if not 0 < number(person['radius']) <= 0.5:
             raise ValueError('Pedestrian radius must be in (0, 0.5]')
         number(person['start_delay'], 0)
