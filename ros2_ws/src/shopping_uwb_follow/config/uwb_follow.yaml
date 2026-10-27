@@ -11,6 +11,10 @@
     seed: 42
     lost_timeout: 0.5
     follow_distance: 1.2
+    follow_time_headway: 0.4
+    # Keep these consistent with ObstacleGuard; re-measure on real hardware.
+    braking_reaction: 0.25
+    braking_deceleration: 1.2
     stop_distance: 0.7
     # Stop immediately; require sustained clearance before any translation or turn.
     stop_release_margin: 0.15

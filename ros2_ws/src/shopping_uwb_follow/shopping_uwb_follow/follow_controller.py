@@ -50,6 +50,9 @@ def side_speed_factor(clearance, slow=0.45, free=0.9, minimum=0.4):
 @dataclass
 class ControllerParams:
     follow_distance: float = 1.2
+    follow_time_headway: float = 0.4
+    braking_reaction: float = 0.25
+    braking_deceleration: float = 1.2
     stop_distance: float = 0.7
     stop_release_margin: float = 0.15
     stop_release_time: float = 0.3
@@ -79,7 +82,7 @@ class ControllerParams:
 class FollowController:
     def __init__(self, params=None):
         self.p = params or ControllerParams()
-        nonnegative = {'velocity_feedforward', 'distance_hysteresis_enter',
+        nonnegative = {'follow_time_headway', 'velocity_feedforward', 'distance_hysteresis_enter',
                        'distance_hysteresis_exit', 'side_slow_clearance', 'side_sector_min',
                        'side_min_speed_factor', 'los_uncertain_speed_factor'}
         if not isinstance(self.p.obstacle_stop_rotate, bool):
@@ -105,7 +108,8 @@ class FollowController:
         self.aligning = False
 
     def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
-             target_velocity=(0.0, 0.0), rotation_clear=False, velocity_age=0.0):
+             target_velocity=(0.0, 0.0), rotation_clear=False, velocity_age=0.0,
+             feedforward_enabled=True):
         p = self.p
         valid_target = (target is not None and math.isfinite(age) and 0 <= age <= p.lost_timeout
                         and all(math.isfinite(t) for t in target))
@@ -150,19 +154,19 @@ class FollowController:
             self.v = self.w = 0.0
             return 0.0, 0.0, 'IDLE', 'Invalid control interval'
         distance, bearing = math.hypot(*target), math.atan2(target[1], target[0])
-        error = distance-p.follow_distance
+        # Velocity is absolute target velocity expressed in base_link.
+        velocity_valid = (target_velocity is not None and len(target_velocity) == 2
+                          and math.isfinite(velocity_age) and 0 <= velocity_age <= p.lost_timeout
+                          and all(math.isfinite(v) for v in target_velocity))
+        estimated_forward = target_velocity[0] if velocity_valid else 0.0
+        effective_distance = p.follow_distance+p.follow_time_headway*max(0.0, estimated_forward)
+        error = distance-effective_distance
         if abs(error) <= p.distance_hysteresis_enter:
             self.holding_distance = True
         elif abs(error) >= p.distance_hysteresis_exit:
             self.holding_distance = False
         correction = 0.0 if self.holding_distance else p.kp_distance*error
-        # Velocity is the target's absolute velocity expressed in base_link.
-        # Project onto robot heading, never onto the sight line. Stale estimates
-        # and targets inside the requested separation cannot add forward demand.
-        velocity_valid = (target_velocity is not None and len(target_velocity) == 2
-                          and math.isfinite(velocity_age) and 0 <= velocity_age <= p.lost_timeout
-                          and all(math.isfinite(v) for v in target_velocity))
-        forward = target_velocity[0] if velocity_valid and distance >= p.follow_distance else 0.0
+        forward = estimated_forward if feedforward_enabled and distance >= p.follow_distance else 0.0
         demand = max(0.0, p.velocity_feedforward*forward+correction)
         cap = p.max_linear*max(0.0, min(1.0, speed_factor))
         heading = max(0.0, math.cos(bearing))
@@ -173,11 +177,19 @@ class FollowController:
             self.aligning = False
         if self.aligning:
             v = 0.0
+        # Invert reaction*v + v^2/(2*a) using the nearest measured clearance.
+        # The downstream footprint guard remains authoritative for all geometry.
+        available = max(0.0, min(distance, obstacle)-p.stop_distance)
+        ar = p.braking_deceleration*p.braking_reaction
+        braking_cap = math.sqrt(ar*ar+2*p.braking_deceleration*available)-ar
+        v = min(v, braking_cap)
         w = max(-p.max_angular, min(p.max_angular, p.kp_bearing*bearing))
         dt = min(0.2, max(0.0, dt)) if math.isfinite(dt) else 0.0
         limits = []
         if demand > cap:
             limits.append('speed cap')
+        if demand > braking_cap:
+            limits.append('braking clearance')
         if heading < 0.95:
             limits.append('heading')
         if abs(v-self.v) > p.max_linear_accel*dt:
@@ -191,6 +203,8 @@ class FollowController:
         reason = ', '.join(limits) or 'Tracking target'
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))
+        # Clearance reductions must cap even a ramp-down command immediately.
+        self.v = min(self.v, braking_cap)
         # Do not carry ramp-down motion into the person's requested separation.
         if distance < p.follow_distance:
             self.v = 0.0

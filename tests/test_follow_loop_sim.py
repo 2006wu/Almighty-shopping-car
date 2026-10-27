@@ -28,13 +28,13 @@ def world_runs():
             loop.simulate(path=historical_path(), world=True, params=replace(
                 ControllerParams(), follow_distance=1.0, stop_distance=0.6,
                 max_linear=0.5, max_angular=1.0, max_linear_accel=0.4,
-                kp_distance=0.7, velocity_feedforward=1.0,
+                kp_distance=0.7, velocity_feedforward=1.0, follow_time_headway=0.0,
                 distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08)))
 
 
 def test_open_path_feedforward_removes_proportional_lag():
     old, new = (loop.simulate(path=historical_path(), legacy=True),
-                loop.simulate(path=historical_path()))
+                loop.simulate(path=historical_path(), params=ControllerParams(follow_time_headway=0.0)))
     assert 1.35 < old['eligible']['follow_distance_mean'] < 1.55
     assert new['eligible_fraction'] == 1
     error = new['eligible']['distance_error_m']
@@ -70,7 +70,7 @@ def settle(controller, distance, velocity=(0, 0), factor=1):
 
 
 def test_feedforward_target_motion_and_physical_speed_cap():
-    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+    control = FollowController(ControllerParams(velocity_feedforward=1.0, follow_time_headway=0.0,
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     assert settle(control, 1.2, (0.35, 0))[0] == pytest.approx(0.35)
     assert settle(control, 1.2)[0] == 0
@@ -80,7 +80,7 @@ def test_feedforward_target_motion_and_physical_speed_cap():
 
 
 def test_distance_hysteresis_retains_feedforward_but_suppresses_chatter():
-    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+    control = FollowController(ControllerParams(velocity_feedforward=1.0, follow_time_headway=0.0,
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     assert settle(control, 1.23, (0.3, 0))[0] == pytest.approx(0.3)
     assert control.holding_distance
@@ -99,7 +99,7 @@ def test_distance_hysteresis_retains_feedforward_but_suppresses_chatter():
     ({'obstacle': math.nan}, 'OBSTACLE_STOP'), ({'target': None}, 'LOST'),
     ({'age': 0.51}, 'LOST'), ({'enabled': False}, 'IDLE')])
 def test_feedforward_never_bypasses_safety(override, state):
-    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+    control = FollowController(ControllerParams(velocity_feedforward=1.0, follow_time_headway=0.0,
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     settle(control, 2, (0.4, 0))
     args = dict(target=(2, 1), age=0, obstacle=math.inf, dt=0.05,
@@ -159,7 +159,7 @@ def test_realistic_browsing_pace_exposes_sustained_narrow_cap_lag():
 
 
 def test_controller_reports_active_limits_without_changing_safety_reason():
-    control = FollowController(ControllerParams(velocity_feedforward=1.0,
+    control = FollowController(ControllerParams(velocity_feedforward=1.0, follow_time_headway=0.0,
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
     result = control.step((4, 1), 0, math.inf, 0.05, speed_factor=0.4)
     assert 'speed cap' in result[3] and 'linear acceleration' in result[3]
@@ -182,7 +182,9 @@ def test_fast_straight_runtime_defaults_and_informational_gap(speed):
     assert after['performance']['follow_distance_m'] == 1.2
     if speed == 1.0:
         no_ff = loop.simulate(path=path, duration=60, feedforward=False)
-        assert error['mean'] < no_ff['performance']['steady_state_distance_error_m']['mean']/3
+        # Default headway intentionally adds 0.4 m at 1 m/s; compare the
+        # residual proportional lag after accounting for that requested gap.
+        assert abs(error['mean']-after['performance']['follow_time_headway_s']*speed) < no_ff['performance']['steady_state_distance_error_m']['mean']/3
 
 
 @pytest.mark.parametrize('velocity_age', [0.51, -0.1, math.nan, math.inf])

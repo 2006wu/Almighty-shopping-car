@@ -213,7 +213,7 @@ def simulate(path=None, params=None, *, legacy=False, world=False, duration=None
             'duration_s': duration, 'person_speed': path['speed'],
             'performance': follow_performance(
                 [(s.time, math.dist(s.robot_pose[:2], s.ground_truth)) for s in samples],
-                path, params.follow_distance),
+                path, params.follow_distance, follow_time_headway=params.follow_time_headway),
             'assumptions': 'ideal odometry; EMA UWB at 10 Hz; 181-ray scan at 10 Hz; no Nav2, dynamics or noise',
             'world': world, 'speed_factor': speed_factor}
 

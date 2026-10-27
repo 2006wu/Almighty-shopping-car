@@ -899,7 +899,8 @@ def test_guard_suppresses_feedforward_except_fresh_clear(state):
     node.target_velocity = Mock(return_value=(1.2, 0))
     node.control.step = Mock(return_value=(.2, .1, 'FOLLOWING', 'tracking'))
     node.tick()
-    assert node.control.step.call_args.kwargs['target_velocity'] == ((1.2, 0) if state == 'CLEAR' else (0, 0))
+    assert node.control.step.call_args.kwargs['target_velocity'] == ((1.2, 0) if state in ('CLEAR', 'SLOW') else (0, 0))
+    assert node.control.step.call_args.kwargs['feedforward_enabled'] is (state == 'CLEAR')
     if state in ('STOP', 'STALE'):
         command = node.publisher.publish.call_args.args[0]
         assert command.linear.x == command.angular.z == 0

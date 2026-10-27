@@ -134,3 +134,51 @@ def test_load_nav_footprint_and_reject_unsupported_shapes(tmp_path):
             load_nav_footprint(write(invalid, invalid))
     with pytest.raises(ValueError):
         load_nav_footprint(write(box, [[.3, .3], [.3, -.3], [-.3, -.3], [-.3, .3]]))
+
+
+@pytest.mark.parametrize('speed', [.1, .6, 1.2, -.6, -1.2])
+def test_braking_sweep_covers_reaction_and_full_braking_distance(speed):
+    from shopping_zone_manager.obstacle_guard import braking_travel
+    guard = ObstacleGuard()
+    distance = abs(speed)*guard.reaction+speed**2/(2*guard.deceleration)
+    horizon = guard.reaction+abs(speed)/guard.deceleration
+    assert abs(braking_travel(speed, horizon, guard.reaction, guard.deceleration)) == pytest.approx(distance)
+    sign = math.copysign(1, speed)
+    # A point infinitesimally inside the required stop boundary must stop.
+    obstacle = sign*(guard.half_length+distance+guard.margin-1e-8)
+    assert ready([(obstacle, 0)], (speed, 0))[1].state == 'STOP'
+    # The conservative footprint sweep must never end before the analytic stop.
+    probe = sign*(guard.half_length+distance+1)
+    assert guard.clearance([(probe, 0)], (speed, 0)) <= 1+1e-12
+    assert ready([(sign*4, 0)], (speed, 0))[1].velocity == (speed, 0)
+
+
+def test_braking_sweep_reduces_excess_constant_speed_horizon():
+    # At 1.2 m/s the centre travels 0.9 m, not the former 2.7 m.
+    assert ready([(2.0, 0)], (1.2, 0))[1].state == 'CLEAR'
+
+
+@pytest.mark.parametrize('velocity', [(1.2, 1.5), (1.2, -.4), (-.6, 1.5), (.1, -1.5)])
+def test_curved_braking_sweep_encloses_dense_independent_integration(velocity):
+    guard = ObstacleGuard()
+    v, w = velocity
+    horizon = guard.reaction+max(abs(v)/guard.deceleration,
+                                 abs(w)/guard.angular_deceleration)
+    dt = horizon/4000
+    px = py = yaw = 0.
+    points = [(1.5, .4), (.9, -.5), (-.8, .6)]
+    minimum = math.inf
+    for i in range(4001):
+        c, s = math.cos(yaw), math.sin(yaw)
+        for x, y in points:
+            dx, dy = x-px, y-py
+            minimum = min(minimum, math.hypot(
+                max(abs(c*dx+s*dy)-guard.half_length, 0),
+                max(abs(-s*dx+c*dy)-guard.half_width, 0)))
+        braking_time = max(0., (i+.5)*dt-guard.reaction)
+        linear = math.copysign(max(0., abs(v)-guard.deceleration*braking_time), v)
+        angular = math.copysign(max(0., abs(w)-guard.angular_deceleration*braking_time), w)
+        px += linear*dt*math.cos(yaw+angular*dt/2)
+        py += linear*dt*math.sin(yaw+angular*dt/2)
+        yaw += angular*dt
+    assert guard.clearance(points, velocity) <= minimum+1e-6

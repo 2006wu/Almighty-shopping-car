@@ -26,6 +26,7 @@ def parser(mode):
     result.add_argument('--wall-timeout', type=positive,
                         help='Wall-clock deadline including clock startup (default: 4*duration+30)')
     result.add_argument('--output', type=Path, help='Write JSON report, including failed checks')
+    result.add_argument('--scenario', help='Load person_path from an installed scenario YAML')
     result.add_argument('--person-path', type=Path, help='Override installed shared path YAML')
     result.add_argument('--follow-params', type=Path, help='Override installed controller params YAML')
     if mode == 'sync':
@@ -38,6 +39,22 @@ def parser(mode):
         result.add_argument('--reacquire-limit', type=positive, default=2.0)
         result.add_argument('--stop-deadline', type=positive, default=0.5)
     return result
+
+
+def load_person_path(config_dir, options):
+    """Resolve an explicit path, scenario path, or the shared default path."""
+    if options.person_path and options.scenario:
+        raise ValueError('Choose either --person-path or --scenario')
+    if options.scenario:
+        if Path(options.scenario).name != options.scenario or options.scenario in ('.', '..'):
+            raise ValueError('Scenario must be a name, not a path')
+        path = yaml.safe_load((config_dir/'scenarios'/f'{options.scenario}.yaml').read_text(
+            encoding='utf-8'))['person_path']
+    else:
+        path = yaml.safe_load((options.person_path or config_dir/'person_path.yaml').read_text(
+            encoding='utf-8'))
+    path_position(path, 0.0)
+    return path
 
 
 def result_code(rows):
@@ -58,11 +75,11 @@ def run(mode, args=None):
     from std_msgs.msg import String
     from tf2_msgs.msg import TFMessage
 
-    path_file = options.person_path or Path(get_package_share_directory('shopping_robot_gazebo'))/'config/person_path.yaml'
+    config_dir = Path(get_package_share_directory('shopping_robot_gazebo'))/'config'
+    path = load_person_path(config_dir, options)
+    path_file = (config_dir/'scenarios'/f'{options.scenario}.yaml' if options.scenario
+                 else options.person_path or config_dir/'person_path.yaml')
     params_file = options.follow_params or Path(get_package_share_directory('shopping_uwb_follow'))/'config/uwb_follow.yaml'
-    with path_file.open(encoding='utf-8') as stream:
-        path = yaml.safe_load(stream)
-    path_position(path, 0.0)
     with params_file.open(encoding='utf-8') as stream:
         params = yaml.safe_load(stream)['/**']['ros__parameters']
     if any(not math.isfinite(params[k]) or params[k] <= 0

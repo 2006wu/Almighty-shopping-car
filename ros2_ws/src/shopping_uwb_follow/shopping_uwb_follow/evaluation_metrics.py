@@ -232,7 +232,7 @@ def sync_report(person, model, path, mean_limit=0.05, lag_limit=0.1):
     return rows
 
 
-def follow_performance(distances, path, follow_distance, settle_window=5.0):
+def follow_performance(distances, path, follow_distance, settle_window=5.0, follow_time_headway=0.0):
     """Informational truth metrics; settle from trace start and exclude pauses.
 
     Distances are timestamped ground-truth separations. No acceptance threshold
@@ -244,6 +244,8 @@ def follow_performance(distances, path, follow_distance, settle_window=5.0):
               if t-start >= settle_window
               and math.dist(path_position(path, t-0.01), path_position(path, t+0.01)) > 1e-6]
     return {'person_speed_m_s': path['speed'], 'follow_distance_m': follow_distance,
+            'follow_time_headway_s': follow_time_headway,
+            'moving_target_distance_m': follow_distance+follow_time_headway*path['speed'],
             'settle_window_s': settle_window, 'steady_state_distance_error_m': stats(errors),
             'max_gap_m': max((d for _, d in distances), default=None)}
 
@@ -282,7 +284,8 @@ def follow_report(person, robot, target, states, path, params, end,
                      'details': detail})
     rows.append({'check': 'follow_performance', 'status': 'INFO',
                  'details': follow_performance([(t, d) for t, d, _, _ in near],
-                                               path, params['follow_distance'])})
+                                               path, params['follow_distance'],
+                                               follow_time_headway=params.get('follow_time_headway', 0.0))})
     rows.append(event_row('near_stop', near_stop(near, params['stop_distance'], deadline=stop_deadline)))
     events = reacquire_events([t for t, _ in target], states, end, params['lost_timeout'])
     for event in events:

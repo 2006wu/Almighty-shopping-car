@@ -331,3 +331,23 @@ def test_informational_performance_uses_config_distance_excludes_settle_and_paus
     assert follow_performance([], path, 1.2)['steady_state_distance_error_m'] == {'count': 0}
     assert result_code([{'status': 'PASS'}, {'status': 'INFO'}]) == 0
     assert result_code([{'status': 'FAIL'}, {'status': 'INFO'}]) == 1
+
+
+@pytest.mark.parametrize('mode', ['sync', 'follow'])
+@pytest.mark.parametrize('scenario,speed', [('follow_fast_1_0', 1.), ('follow_fast_1_2', 1.2)])
+def test_evaluation_scenario_path_and_headway_info(mode, scenario, speed):
+    from pathlib import Path
+    from shopping_uwb_follow.evaluation_node import load_person_path, parser
+    from shopping_uwb_follow.evaluation_metrics import follow_performance
+    config = Path(__file__).resolve().parents[2]/'shopping_robot_gazebo/config'
+    options = parser(mode).parse_args(['--scenario', scenario])
+    path = load_person_path(config, options)
+    assert path['speed'] == speed
+    info = follow_performance([], path, 1.2, follow_time_headway=.4)
+    assert info['follow_distance_m'] == 1.2
+    assert info['follow_time_headway_s'] == .4
+    assert info['moving_target_distance_m'] == pytest.approx(1.2+.4*speed)
+    assert load_person_path(config, parser(mode).parse_args([]))['speed'] == .35
+    options = parser(mode).parse_args(['--scenario', '../bad'])
+    with pytest.raises(ValueError):
+        load_person_path(config, options)

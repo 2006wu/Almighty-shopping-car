@@ -65,9 +65,17 @@ def scan_points(ranges, angle_min, increment, range_min, range_max, pose):
     return points
 
 
+def braking_travel(speed, time, reaction, deceleration):
+    """Signed travel: reaction at initial speed, then constant braking to rest."""
+    braking_time = min(max(0.0, time-reaction), abs(speed)/deceleration)
+    travel = abs(speed)*min(time, reaction)
+    travel += abs(speed)*braking_time-deceleration*braking_time**2/2
+    return math.copysign(travel, speed)
+
+
 class ObstacleGuard:
     def __init__(self, half_length=0.30, half_width=0.25, margin=0.10,
-                 reaction=0.25, deceleration=0.6, angular_deceleration=1.2,
+                 reaction=0.25, deceleration=1.2, angular_deceleration=1.2,
                  slow_extra=0.50, hysteresis=0.05, clear_time=0.30):
         values = locals().copy()
         values.pop('self')
@@ -89,23 +97,34 @@ class ObstacleGuard:
                       if x*v >= 0 or abs(x) <= self.half_length+self.margin]
         horizon = self.reaction+max(abs(v)/self.deceleration,
                                    abs(w)/self.angular_deceleration)
-        # Constant-speed sweep conservatively exceeds the braking trajectory.
+        # 1.2 m/s^2 is below Fortress DiffDrive's 2.0 m/s^2 braking limit.
+        # Real hardware must re-measure braking before selecting this value.
+        # Integrate linear and angular braking independently, including reaction.
         steps = max(1, math.ceil(horizon/0.025))
         dt = horizon/steps
         radius = math.hypot(self.half_length, self.half_width)
         padding = (abs(v)+abs(w)*radius)*dt/2
         minimum = math.inf
+        px = py = integration_padding = 0.0
+        previous_travel = previous_yaw = 0.0
         for i in range(steps+1):
             t = i*dt
-            yaw = w*t
-            px = v*t if abs(w) < 1e-6 else v/w*math.sin(yaw)
-            py = 0.0 if abs(w) < 1e-6 else v/w*(1-math.cos(yaw))
+            yaw = braking_travel(w, t, self.reaction, self.angular_deceleration)
+            travel = braking_travel(v, t, self.reaction, self.deceleration)
+            delta = travel-previous_travel
+            midpoint_yaw = (yaw+previous_yaw)/2
+            px += delta*math.cos(midpoint_yaw)
+            py += delta*math.sin(midpoint_yaw)
+            # Bound integration error using the full interval's heading range.
+            # Combined with sampling padding this encloses the continuous sweep.
+            integration_padding += abs(delta)*abs(yaw-previous_yaw)/2
+            previous_travel, previous_yaw = travel, yaw
             c, s = math.cos(yaw), math.sin(yaw)
             for x, y in points:
                 dx, dy = x-px, y-py
                 distance = math.hypot(max(abs(c*dx+s*dy)-self.half_length, 0),
                                       max(abs(-s*dx+c*dy)-self.half_width, 0))
-                minimum = min(minimum, distance-padding)
+                minimum = min(minimum, distance-padding-integration_padding)
         return minimum
 
     def step(self, points, velocity, now, fresh=True):

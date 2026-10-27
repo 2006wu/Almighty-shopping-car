@@ -361,7 +361,9 @@ class FollowNode(Node):
         v, w, state, reason = self.control.step(
             self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
             target_velocity=(self.target_velocity(now) if guard_fresh
-                             and self.guard_state == 'CLEAR' else (0.0, 0.0)),
+                             and self.guard_state in ('CLEAR', 'SLOW') else (0.0, 0.0)),
+            # SLOW retains time headway but cannot add velocity feedforward.
+            feedforward_enabled=(guard_fresh and self.guard_state == 'CLEAR'),
             velocity_age=age,
             rotation_clear=(valid and self.rotation_clear
                             and (not self.supervisor.route_around or self.client is None

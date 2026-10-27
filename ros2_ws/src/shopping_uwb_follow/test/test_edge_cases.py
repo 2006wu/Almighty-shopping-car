@@ -115,7 +115,7 @@ def test_scan_sensor_limits():
 @pytest.mark.parametrize('field', list(vars(ControllerParams())))
 @pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf')])
 def test_controller_parameter_validation(field, value):
-    if value == 0 and field in ('velocity_feedforward', 'distance_hysteresis_enter', 'distance_hysteresis_exit',
+    if value == 0 and field in ('follow_time_headway', 'velocity_feedforward', 'distance_hysteresis_enter', 'distance_hysteresis_exit',
                                 'side_slow_clearance', 'side_sector_min',
                                 'side_min_speed_factor', 'los_uncertain_speed_factor'):
         FollowController(ControllerParams(**{field: value}))
@@ -144,7 +144,11 @@ def test_deceleration_turn_sign_and_clock_guard():
         control.step((5, 1), 0, 5, 0.1)
     old_v, old_w = control.v, control.w
     v, w, _, _ = control.step((1.3, -0.2), 0, 5, 0.1)
-    assert old_v-v <= 0.08+1e-12 and old_w-w <= 0.15+1e-12
+    # A newly reduced clearance overrides the ordinary deceleration ramp.
+    available = math.hypot(1.3, -.2)-control.p.stop_distance
+    a, reaction = control.p.braking_deceleration, control.p.braking_reaction
+    assert v == pytest.approx(math.sqrt((a*reaction)**2+2*a*available)-a*reaction)
+    assert old_v-v > 0.08 and old_w-w <= 0.15+1e-12
     for _ in range(50):
         v, w, _, _ = control.step((-2, -2), 0, 5, 0.1)
     assert v == 0 and w == -1.5

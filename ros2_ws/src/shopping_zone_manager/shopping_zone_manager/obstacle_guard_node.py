@@ -26,7 +26,7 @@ class ObstacleGuardNode(Node):
         footprint_file = self.declare_parameter('footprint_file', '').value
         half_length, half_width = load_nav_footprint(footprint_file) if footprint_file else (0.30, 0.25)
         defaults = dict(half_length=half_length, half_width=half_width, margin=0.10,
-                        reaction=0.25, deceleration=0.6, angular_deceleration=1.2,
+                        reaction=0.25, deceleration=1.2, angular_deceleration=1.2,
                         slow_extra=0.50, hysteresis=0.05, clear_time=0.30)
         self.guard = ObstacleGuard(**{k: self.declare_parameter(k, v).value
                                       for k, v in defaults.items()})
