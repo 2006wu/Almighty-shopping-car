@@ -129,6 +129,8 @@ class HandoffParams:
     clear_margin: float = 0.15
     resume_delay: float = 0.5
     retry_cooldown: float = 3.0
+    map_invalid_grace: float = 0.5
+    max_blocked_wait: float = 4.0
     los_block_time: float = 0.3
     los_clear_time: float = 0.6
     los_clear_extra_width: float = 0.10
@@ -142,6 +144,7 @@ class HandoffDecision:
     action: str
     direct_publish: bool
     reason: str
+    blocked_wait: bool = False
 
 
 class HandoffSupervisor:
@@ -162,6 +165,8 @@ class HandoffSupervisor:
         self.last_goal_time = self.last_time = None
         self.retry_after = -math.inf
         self.recovery_pending = False
+        self.map_invalid_since = None
+        self.blocked_wait_expired = False
 
     def record_goal(self, now, map_target):
         """Confirm the actual submission position and time."""
@@ -169,13 +174,14 @@ class HandoffSupervisor:
 
     def step(self, now, state, target, los_clear, front_clearance, nav_status='none',
              *, map_target=None, enabled=True, scan_valid=True, los_clear_wide=None,
-             near_latched=False, direct_clear=True):
+             near_latched=False, direct_clear=True, nav_ready=True):
         """Use measured base/map targets; direct_clear requires lateral space/alignment.
 
         Safety cancellation ends velocity ownership, not the unfinished detour.
         Recovery waits for valid inputs and the existing entry/cooldown timers.
         """
         action, reason = 'none', 'Direct following'
+        blocked_wait = False
         previous = self.mode
         clock_reset = (not math.isfinite(now)
                        or self.last_time is not None and now < self.last_time)
@@ -198,6 +204,8 @@ class HandoffSupervisor:
                 and (previous == 'NAV2' or self.recovery_pending))
             self.mode = 'DIRECT'
             self.blocked_since = self.clear_since = None
+            self.map_invalid_since = None
+            self.blocked_wait_expired = False
             if clock_reset:
                 self.retry_after = -math.inf
                 self.direct_since = self.nav_since = None
@@ -208,7 +216,13 @@ class HandoffSupervisor:
             clear = (close and los_clear and direct_clear
                      and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin)
             self.clear_since = (now if self.clear_since is None else self.clear_since) if clear else None
-            if nav_status in ('failed', 'canceled') or not valid_xy(map_target):
+            map_valid = valid_xy(map_target)
+            self.map_invalid_since = (
+                (now if self.map_invalid_since is None else self.map_invalid_since)
+                if not map_valid else None)
+            map_expired = (self.map_invalid_since is not None
+                           and now-self.map_invalid_since >= self.p.map_invalid_grace)
+            if nav_status in ('failed', 'canceled') or map_expired:
                 self.mode = 'DIRECT'
                 self.recovery_pending = True
                 self.retry_after = now+self.p.retry_cooldown
@@ -227,7 +241,7 @@ class HandoffSupervisor:
                 reason = 'Direct path, side clearance and alignment restored'
             # Success at an old goal cannot release a far person through an
             # unsafe direct path. Keep the displacement/rate limits.
-            elif (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
+            elif (map_valid and math.dist(map_target, self.last_goal) > self.p.goal_update_distance
                   and now-self.last_goal_time >= self.p.goal_update_period):
                 action, reason = 'update_goal', 'Person moved in map frame'
             else:
@@ -237,10 +251,19 @@ class HandoffSupervisor:
                     and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin):
                 self.recovery_pending = False
             blocked = state == 'OBSTACLE_STOP' or self.los.blocked or self.recovery_pending
-            eligible = (blocked and valid_xy(map_target)
+            if not blocked:
+                self.blocked_wait_expired = False
+            eligible = (blocked and valid_xy(map_target) and nav_ready
+                        and not self.blocked_wait_expired
                         and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin
                         and now >= self.retry_after)
             self.blocked_since = (now if self.blocked_since is None else self.blocked_since) if eligible else None
+            if (self.blocked_since is not None
+                    and now-self.blocked_since >= self.p.max_blocked_wait):
+                # Latch expiry until the blockage clears; never restart the same hold.
+                self.blocked_wait_expired = True
+                self.blocked_since = None
+            blocked_wait = self.blocked_since is not None and state == 'FOLLOWING'
             if (self.blocked_since is not None
                     and now-self.blocked_since >= self.p.handoff_delay
                     and (self.recovery_pending or self.direct_since is None
@@ -250,6 +273,9 @@ class HandoffSupervisor:
                 self.mode, action, reason = 'NAV2', 'send_goal', 'Persistent blocked path'
         if previous != 'NAV2' and self.mode == 'NAV2':
             self.nav_since = now
+            self.map_invalid_since = None
+            self.blocked_wait_expired = False
+            blocked_wait = False
             self.recovery_pending = False
         if previous == 'NAV2' and self.mode == 'DIRECT':
             self.direct_since = now
@@ -257,7 +283,7 @@ class HandoffSupervisor:
             self.blocked_since = self.clear_since = None
         if action in ('send_goal', 'update_goal'):
             self.record_goal(now, map_target)
-        return HandoffDecision(self.mode, action, self.mode == 'DIRECT', reason)
+        return HandoffDecision(self.mode, action, self.mode == 'DIRECT', reason, blocked_wait)
 
 
 class GoalBook:

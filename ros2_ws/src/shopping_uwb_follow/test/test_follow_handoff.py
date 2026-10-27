@@ -126,7 +126,7 @@ def test_no_unsafe_handoff(kwargs):
 
 @pytest.mark.parametrize('kwargs', [dict(state='LOST'), dict(state='TOO_CLOSE'),
     dict(enabled=False), dict(scan_valid=False), dict(target=None),
-    dict(front_clearance=math.nan), dict(map_target=None)])
+    dict(front_clearance=math.nan)])
 def test_immediate_cancel(kwargs):
     d = tick(navigating(), 1.01, **kwargs)
     assert d.mode == 'DIRECT' and d.action == 'cancel_goal' and d.direct_publish
@@ -198,6 +198,8 @@ def test_shelf_side_clearance_gates_far_person_exit(status):
                                   dict(map_target=None)])
 def test_interrupted_detour_resumes_even_after_los_clears(fault):
     s = navigating()
+    if fault == dict(map_target=None):
+        assert tick(s, 1.5, **fault).mode == 'NAV2'
     assert tick(s, 2, **fault).action == 'cancel_goal'
     assert s.recovery_pending
     # Reproduce a one-tick safety cancellation at a shelf end: visible but far
@@ -440,3 +442,41 @@ def test_configured_safety_envelope_and_speed_budget():
     assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
     assert smoother['max_velocity'][0] == follow['max_linear']
     assert smoother['max_accel'][0] == follow['max_linear_accel']
+
+
+def test_map_loss_grace_resets_on_each_valid_target():
+    s = navigating()
+    assert tick(s, 2, map_target=None).mode == 'NAV2'
+    assert tick(s, 2.49, map_target=None).action == 'none'
+    assert tick(s, 2.5).mode == 'NAV2'
+    assert tick(s, 3, map_target=None).mode == 'NAV2'
+    assert tick(s, 3.49, map_target=None).mode == 'NAV2'
+    assert tick(s, 3.5, map_target=None).action == 'cancel_goal'
+    assert not tick(s, 3.6).blocked_wait
+
+
+@pytest.mark.parametrize('unavailable', [dict(map_target=None), dict(nav_ready=False)])
+def test_unavailable_handoff_never_holds(unavailable):
+    s = HandoffSupervisor()
+    s.recovery_pending = True
+    for now in (0, 1, 5, 20):
+        d = tick(s, now, state='FOLLOWING', front_clearance=2,
+                 direct_clear=False, **unavailable)
+        assert d.mode == 'DIRECT' and not d.blocked_wait
+
+
+def test_recovery_wait_expires_once_without_restarting_episode():
+    s = HandoffSupervisor(HandoffParams(handoff_delay=10))
+    s.recovery_pending = True
+    for now, held in ((0, True), (3.99, True), (4, False), (5, False), (20, False)):
+        d = tick(s, now, state='FOLLOWING', front_clearance=2,
+                 los_clear=True, direct_clear=False)
+        assert d.mode == 'DIRECT' and d.blocked_wait is held
+
+
+@pytest.mark.parametrize('status', ['failed', 'canceled'])
+def test_failure_cooldown_prevents_blocked_wait(status):
+    s = navigating()
+    tick(s, 2, nav_status=status)
+    for now in (2.01, 3, 4.99):
+        assert not tick(s, now, state='FOLLOWING', front_clearance=2).blocked_wait

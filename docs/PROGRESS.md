@@ -1757,3 +1757,36 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 | 審查驗證項目 | 結果 |
 | --- | --- |
 | 窄走道近距離退出與遠距離側距限制 | 待驗證 |
+
+## 2026-10-27：修正 map TF 暫失造成跟隨繞障與等待死鎖
+
+### 本次完成
+
+- 比對 `develop`，確認分支新增的繞障恢復旗標與無期限 `BLOCKED_WAIT`，會在 map TF 暫失、側向淨空不足時阻止直接跟隨。
+- 雷射 LOS 與 map 目標有效性分離；精確時間 map TF 失敗時，改查最新 TF，僅接受相對節點時鐘不超過 0.3 秒且非未來的資料。無有效 map TF 時回傳空目標，仍保留實際雷射 LOS，不再沿用舊 map 目標快取。
+- 新增 `map_invalid_grace: 0.5`，僅於 map 目標連續無效達寬限時間後退出 NAV2；導航失敗或取消仍立即退出並保留既有重試冷卻。寬限期間不提交空目標，也不放行缺少有效 map 目標的導航速度。
+- 新增 `max_blocked_wait: 4.0`；supervisor 統一決定等待，僅在 map 目標有效、Nav2 action server 就緒且冷卻結束時允許。單次阻擋等待到期後維持 DIRECT，直到阻擋條件解除才重設到期旗標，避免立即重啟相同等待。
+- 兩個參數經節點既有 `HandoffParams` 欄位迴圈宣告，並明列於 YAML。未更動安全淨空、速度／加速度或評估門檻，控制器未新增 ground truth 來源。
+- 補上純邏輯與實際回呼測試，涵蓋無 map TF 的真實 LOS、最新 TF 時效邊界、寬限計時重設、等待到期、導航不可用、失敗冷卻，以及各種退回直接跟隨路徑的安全停止與側向減速。
+
+### 已執行檢查與方法（執行紀錄，非審查驗證）
+
+- 系統 `python3` 缺少 pytest；透過 `PATH=/workspace/scratch/venv-shop/bin:$PATH` 選用既有指定虛擬環境。
+- 執行 `nice -n 19 python3 -m pytest -q ros2_ws/src/shopping_uwb_follow/test tests/test_mode_launch.py tests/test_follow_loop_sim.py`：672 項通過。
+- 新增最後一項 map 寬限回呼測試後，僅重跑 `nice -n 19 python3 -m pytest -q ros2_ws/src/shopping_uwb_follow/test/test_follow_handoff_callbacks.py`：101 項通過。
+- 修改的節點／純邏輯 Python AST 語法檢查、跟隨 YAML 解析及參數值檢查、`git diff --check` 通過。未修改 launch、xacro 或 XML。
+
+### 限制與下一步
+
+- 本次僅執行指定離線測試，未執行完整測試套件、colcon、Docker、模擬或硬體驗收，未干擾共用主機既有 Gazebo。
+- 導航取消仍須等待既有終止確認與速度排空才能交回直接控制，等待期限不會略過速度所有權保護。
+- 後續由審查者在既有 AMCL／Nav2 跟隨情境重做 TF 暫失故障檢查，確認實際移動與狀態轉移。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| map TF 暫失、LOS 獨立性與最新 TF 時效 | 待驗證 |
+| NAV2 寬限、失敗冷卻與等待上限 | 待驗證 |
+| 直接跟隨安全停止與側向減速 | 待驗證 |
+| AMCL／Nav2 模擬故障檢查 | 待驗證 |
