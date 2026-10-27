@@ -1827,9 +1827,18 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 
 fault-check 根因：map→base_link TF 精確時間查詢暫時失敗（map_valid=False）即退出 NAV2，`recovery_pending` 因側向淨空 0.43–0.47 m < 0.75 m 永不解除，節點無期限保持 BLOCKED_WAIT，機器人不動；map TF 失敗時 LOS 也被誤判為受阻。
 
-c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s、`max_blocked_wait` 4.0 s，安全停止不變；指定離線測試 672 項通過。**此修正尚未做模擬驗證**：t77（fault-check／follow_turns／follow_stop_go）因使用者 16:17 要求收尾而取消，因此本分支**未合併**進 develop。
+c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s、`max_blocked_wait` 4.0 s，安全停止不變；指定離線測試 672 項通過。模擬驗證（c627756）：
 
-下一步：跑 t77（`/workspace/wt/logs/shop/t77.sh`），需 fault-check 7/7、turns 不退步、stopgo PASS 才能合併；可順便改腳本人物路徑避免穿過機器人中心（near_stop 假象）。
+| 項目 | 結果 | develop 基準 |
+| --- | --- | --- |
+| fault-check（t77） | **7/7 PASS**（與 t76 shop-dyn follow fault 同時執行，負載較高仍通過） | 7/7 |
+| follow_turns（t78）距離誤差 RMSE 直線／轉彎 | 0.590／0.593 m，near_stop PASS 5/5 | 0.636／0.672，5/5 |
+| follow_stop_go（t78） | PASS（near_stop PASS） | PASS |
+| reacquire | NOT_COVERED（情境未涵蓋，與 develop 相同） | NOT_COVERED |
+
+本輪 near_stop 未再出現腳本人物穿過機器人的假象，人物路徑未修改。驗證通過後合併進 develop。
+
+下一步：加入涵蓋 reacquire 的跟隨情境；near_stop 若再出現人物穿過機器人中心，改腳本人物路徑（不放寬門檻）。
 | 離線數字與根因交叉檢查 | 待驗證 |
 | 全域雷射障礙標記與清除 | 待驗證 |
 | 區域終點定位驗證與失敗處理 | 待驗證 |
