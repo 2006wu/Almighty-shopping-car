@@ -1904,3 +1904,23 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 根因（aisle_crossing）：互相等待死鎖。機器人停在 (0, 3.92)，行人在 (-0.45, 4.77) 讓行凍結約 124–160 s；雙方都等，Nav2 Shrink 後 ABORTED，行人在機器人離開後才繼續。
 
 下一步：行人模擬加入耐心逾時（受阻超過數秒即沿路徑倒退讓出走道，真值仍只用於模擬行人），重跑 aisle_crossing；AMCL covariance 無法偵測推移後的錯位（noyield 假成功），需另加真值以外的一致性檢查（例如雷射與地圖匹配分數）。
+
+## 2026-10-27（16:40 收尾）：本日合併與狀態
+
+合併進 develop（均僅模擬驗證，未碰 main、未碰硬體）：
+
+| PR | 內容 | 驗證 |
+| --- | --- | --- |
+| #23 → 45a17a2 | dynamic-scenarios：行人讓行（真值僅用於模擬行人）、aisle_crossing 清空窗口、AMCL 抵達信心檢查 | nav-check default／alt_start 6/6、loc-check PASS、obstacle 4/4、follow fault 7/7；aisle_crossing 無接觸但 household 仍 ABORTED（互等死鎖） |
+| #24 → c983149 | follow-los：LOS 感知交接、map TF 暫失寬限、有界 BLOCKED_WAIT | fault-check 7/7、follow_turns RMSE 0.590／0.593 m、near_stop 5/5、stop_go PASS |
+| #25 → 8f4b4f2 | 資料夾重整第 1–3、5 步（docs 分類、hardware/ 佔位、scripts 分類、README 瘦身→docs/USAGE.md） | pytest 1284 passed／1 skipped、check_static、bash -n、compose config、連結檢查、模擬 smoke（sim_health＋guide drinks SUCCEEDED） |
+
+**自本節起路徑已變更**：文件在 `docs/design|hardware|research/`，腳本在 `scripts/container|nav2|eval|checks/`（`scripts/dev.sh` 不變）；本檔以上的舊路徑是歷史紀錄。
+
+未做／下一步：
+1. 重整第 4 步（docker/ 子資料夾）需要重建映像與 comm-e2e／nav-check，尚未做；第 6 步（ROS 套件分組）依使用者決定不做。
+2. aisle_crossing 互等死鎖：模擬行人加入耐心逾時（受阻數秒後沿路徑倒退讓出），重跑情境。
+3. AMCL covariance 抓不到推移後錯位（noyield 假成功），需加雷射／地圖匹配一致性檢查。
+4. 跟隨的重新取得目標（reacquire）情境尚未涵蓋。
+5. checkout_queue 不在範圍（結帳在機上完成）；narrow_pass 低優先。
+6. 硬體 BOM、UWB 錨點與 MCU 型號待定（hardware/README.md）。
