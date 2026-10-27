@@ -1974,9 +1974,14 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 
 | 項目 | 結果 |
 | --- | --- |
-| Mac arm64 原生完整建置 | 待驗證 |
-| README 快速開始與單元測試 | 待驗證 |
-| 帶路模擬與文件索引 | 待驗證 |
+| Mac arm64 原生完整建置 | 審查者已讀 7729cd1 差異與上表紀錄，內容一致；未在 Mac 重跑，結果以使用者 Mac 實測為準 |
+| README 快速開始與單元測試 | 審查者已讀 README 差異，指令分終端機與等待 `Managed nodes are active` 合理；未重跑 Mac 單元測試 |
+| 帶路模擬與文件索引 | 審查者未重跑 Mac 帶路與連結檢查；以使用者 Mac 實測紀錄為準。退出 -9／-11 列入待辦 |
+
+待辦（2026-10-27 審查加入）：
+
+- Mac mapping 收尾時 Gazebo 未回應 SIGINT／SIGTERM，最後被 SIGKILL（-9）；RViz 結束時 -11，曾出現 Mesa shader 初次連結錯誤。
+- 長距離帶路壁鐘時間有變異（生鮮區 120 秒逾時、重測約 105 秒），需要釐清原因。
 
 ## 2026-10-27：codex/faster-follow 高速跟隨與速度前饋
 

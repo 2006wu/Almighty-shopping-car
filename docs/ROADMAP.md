@@ -19,7 +19,7 @@
 ## 階段 1：模擬啟動與商店建圖（2026 年 10–11 月）
 
 - [x] 確認 amd64 建置、雙容器 DDS（共用網路命名空間）、RViz 與雷射軟體繪圖。
-- [ ] 確認 Mac arm64（Docker Desktop）建置與執行。
+- [x] 確認 Mac arm64（Docker Desktop）建置與執行。（2026-10-27：使用者 Mac 實測 develop 707403e，三種映像與 Nav2 fork 建置成功、dev.sh test 1285 通過、帶路飲料區／生鮮區成功，見 commit 7729cd1；結束時 Gazebo -9／RViz -11 仍待處理）
 - [x] 確認 TF、時間、輪子方向與雷射座標；模擬 `/odom` 改用 OdometryPublisher 真值，並以等效輪距係數補償滑移轉向。
 - [x] 加入里程計噪聲模型與 IMU／輪速 EKF，取代真值里程計（2026-10-23，預設 `odom_source:=ekf`）。
 - [x] 遙控走遍三條走道與入口／結帳區，調整 slam_toolbox，儲存格網與位姿圖（2026-10-23，改以 `dev.sh map-tour` 自動巡航；格網入庫、位姿圖本機重建）。
