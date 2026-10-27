@@ -192,6 +192,7 @@ Nav2 平滑器輸出 `/cmd_vel/nav`、直接跟隨輸出 `/cmd_vel/follow`；只
 
 純邏輯與單獨執行 `cmd_vel_mux` 都預設 `IDLE`，程序重啟不自行恢復先前模式。launch 的 `initial_mode` 是明確的便利性例外：重新執行整個 guide／follow launch（或以相同參數重啟節點）會重新請求該模式；有重啟風險的驗收請使用 `initial_mode:=idle`。launch 未設定自動 respawn。若獨立看門狗已鎖定急停，重啟仲裁器不會解除，仍須 `reset`。
 
+`use_mux:=false` 僅供引導／導航舊接線，恢復 Nav2 直接發布 `/cmd_vel`，不啟動模式管理與看門狗，必須維持舊有流程互斥。follow 已要求 `use_mux:=true`，以免繞過安全轉送與看門狗。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/ARCHITECTURE.md)。
 `guide`／`follow`／`mode_mux` 已停用 `use_mux:=false` 旁路。障礙防護預設 `obstacle_guard:=true`，Nav2 collision_monitor 預設 `collision_monitor:=false`；幾何、故障注入與無視窗驗收命令見 [障礙安全鏈路](docs/OBSTACLE_SAFETY.md)。mapping 沒有 Nav2，維持直接鍵盤操作；如需為建圖加上看門狗，可另啟動 `ros2 launch shopping_robot_bringup mode_mux.launch.py initial_mode:=teleop` 並將鍵盤改送 `/cmd_vel/teleop`。禁止同時保留直接 `/cmd_vel` 發布端。看門狗本身、橋接或 Gazebo 同時故障時，軟體無法保證停止；目前未新增 Fortress 的底盤逾時外掛，也沒有硬體安全功能。完整參數與容器驗收步驟見[架構文件](docs/ARCHITECTURE.md)。
 
 ## 受限網路的 ROS 套件鏡像
@@ -252,13 +253,13 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 
 ## 安全與驗證狀態
 
-所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。直接跟隨時，前方有效障礙讀值不超過 0.65 公尺，`OBSTACLE_STOP` 立即輸出完整零 Twist，包含角速度；障礙解除後再依加速度限制恢復。啟用繞行時仍可交由 Nav2 規劃，輸出經障礙安全層與 watchdog。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。直接跟隨時，前方有效障礙讀值不超過 0.65 公尺，`OBSTACLE_STOP` 立即將線速度固定為零。`obstacle_stop_rotate` 預設啟用；僅在未啟用繞行或 Nav2 不可用、目標新鮮、雷射有效且 TF 與完整 360° 掃描確認至少 0.45 公尺旋轉圓盤淨空時，允許依原角速度／角加速度上限朝人物轉向；條件不符或參數關閉時輸出完整零 Twist。過近停止須人物距離持續大於 0.75 公尺達 0.3 秒才解除；前方清空後，若方位誤差仍達 45°，會先依原加速度限制減速並原地對準，直到誤差不超過 0.25 rad 才恢復平移。啟用繞行時仍可交由 Nav2 規劃，輸出經障礙安全層與 watchdog。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
 
 跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
 
 跟隨模式可將持續受阻的有效目標交給 Nav2 繞行。一般 LOS 走廊半寬為 0.25 公尺；連續受阻 0.3 秒才進入 `BLOCKED_WAIT`，此前維持 `FOLLOWING` 並減速。已判定受阻後，須以加寬至 0.35 公尺的走廊連續暢通 0.6 秒才能解除，避免貨架末端的雷射擦邊反覆停車。人物距離超過 1.3 公尺且判定受阻再持續 0.5 秒後交接；前方障礙停止仍立即生效，不等待 LOS 計時。`/follow/state` 發布 `STATE: 原因`，`/follow/handoff_goal` 為人物 map 座標的 PoseStamped，可加入 RViz。
 
-NAV2 至少保持 1.5 秒，然後以遲滯確認暢通的 LOS 加上前方淨空大於 0.8 公尺、持續 0.5 秒恢復 DIRECT；若人物距離已不超過 1.3 公尺，可略過這額外 0.5 秒。導航成功／失敗／取消或安全事件可立即結束保持時間。恢復 DIRECT 後至少保持 1 秒才再次交接；若 LOS 已連續判定受阻達 1 秒，可提前交接，但仍須滿足受阻交接延遲。導航中直接控制器不發布速度；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。Smac2D 共用容差仍為 0.8 公尺，目標未偏移；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。
+NAV2 至少保持 1.5 秒；之後須 LOS 遲滯確認暢通、人物距離不超過 1.3 公尺、前方淨空大於 0.8 公尺，並持續 0.5 秒才恢復 DIRECT。人物已在 1.0 公尺跟隨距離內時，可略過額外 0.5 秒，仍須 LOS 確認與最短保持時間。導航成功／失敗／取消或安全事件可立即結束保持時間。恢復 DIRECT 後至少保持 1 秒才再次交接；若 LOS 已連續判定受阻達 1 秒，可提前交接，但仍須滿足受阻交接延遲。導航中停止直接追逐，由跟隨節點轉送經安全檢查的 Nav2 命令；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。apt 與 fork 的 Smac2D 共用容差 0.8 公尺，目標未偏移；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。
 
 新增的 `uwb_follow.yaml`／節點參數如下；時間單位為秒、距離為公尺、角度為弧度。LOS 與保持時間及額外寬度接受有限非負值；減速比例限於 0～1，側向角度須滿足 `0 <= min < max <= pi`，側向距離須滿足 `0 <= slow < free`。
 
@@ -296,6 +297,85 @@ python3 scripts/check_static.py
 此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
 
 [模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
+
+本次合併保留 develop 的 Smac2D、YAML 數值與人物模型服務。一般與加寬 LOS 的檢查長度在人物距離大於跟隨距離時改為 `distance - max(los_margin, follow_distance)`；近距離仍檢查到 `distance - los_margin`。`route_around:=false` 也建立雷射到車體的 TF listener，旋轉判定不需要 map 或真值。下列舊分支設計僅保留歷史脈絡，與本段衝突時以本段及目前設定為準。
+
+目前 Nav2 在 LOS 經既有遲滯確認且人物距離不超過 `follow_distance=1.0` 公尺時，至少持有 1.5 秒即可返回 DIRECT，由直接跟隨在跟隨距離停止／保持；導航成功時可立即返回，不受側向淨空與朝向門檻限制。人物仍超過跟隨距離時，正常返回 DIRECT 須同時滿足：至少持有 1.5 秒、人物距離不超過 1.3 公尺、LOS 經既有遲滯確認、前方淨空大於 0.8 公尺、側向淨空達既有 `side_free_clearance=0.75` 公尺、目標朝向誤差不超過既有 `rotate_to_target_release_angle=0.25` rad，且返回條件持續 0.5 秒。側向淨空使用目前雷射的左右 30°～100° 扇區最小側向距離；此返回門檻讓 Nav2 先帶車體離開貼架位置，保留原有下游 guard 的掃掠防護。人物仍超過跟隨距離時，導航成功也須滿足相同條件；人物移動時，目標仍依原有 0.4 公尺／0.5 秒門檻搶占更新。
+
+雷射／TF 失效仍立即停止並取消 Nav2，但保留尚未完成的繞行意圖。資料恢復後，若側向或朝向尚未適合直接跟隨，DIRECT 以 `BLOCKED_WAIT` 保持零命令，人物距離超過 1.3 公尺且滿足原有交接延遲、失敗冷卻後，即使 LOS 已清楚也重新交給 Nav2；取消、動作終止與速度排空完成前不得轉送新導航命令。目標遺失、過近鎖定、停用或時間倒退會清除恢復意圖；`0bdb4c1` 的跨 DIRECT／Nav2 近停鎖定持續優先。所有控制僅使用 UWB 估測、雷射與估測 TF。此修補尚待 `follow_turns`、`follow_stop_go` 與跟隨／障礙 `fault-check` 模擬驗收，詳見[進度紀錄](docs/PROGRESS.md)。
+
+<details>
+<summary>合併前 follow-los 分支設計紀錄</summary>
+
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；follow 僅接受 `use_mux:=true`；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，直接控制器的 `OBSTACLE_STOP` 立即輸出完整零 Twist，包含角速度。交接至 Nav2 後仍禁止前進，但完整雷射與 TF 確認車體旋轉淨空時，可轉送 Nav2 的限速角速度，讓車體轉離貨架；淨空不足或未知仍雙軸停止。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+所有預設流程僅使用模擬，沒有硬體驅動、裝置掛載或真實車體連線。跟隨節點單獨執行時預設停用，由 follow launch 的模式管理器啟用；可用 `/follow/enable` 的 `std_srvs/SetBool` 服務切換。目標太近、遺失或資料過期時立即輸出零 Twist；雷射未收到、前方無有效資料或超時也完全停止。前方有效障礙讀值不超過 0.65 公尺時，`OBSTACLE_STOP` 立即將線速度歸零；目標有效且距離大於 0.6 公尺時，允許原地轉向目標，角速度及角加速度仍受限。急停優先於一般加速度限制；一般追蹤限制線速度、角速度及加速度，預設不倒車。
+
+跟隨 launch 同時啟動 `uwb_eval_node`，有時間相近的 `/sim/ground_truth_odom` 與 `/uwb/person_ground_truth` 時，發布 `/uwb/estimate_error`（Float32，公尺）。它用車體真值姿態將 base_link 估測值轉到 sim_world 與人物真值比較，不依賴估測 TF，因此不混入 EKF 漂移；結果仍包含取樣時間差。三筆時間戳最大差預設為 0.15 秒，不插值，缺資料或過期便略過。離線可用不依賴 ROS 的 `follow_metrics.py`，傳入依時間遞增的 `FollowSample` 序列，以 `evaluate_series` 計算估測平均誤差、RMSE、最大誤差及真實跟隨距離的平均／最小／最大值；統計按樣本加權。
+
+跟隨模式可將持續受阻的有效目標交給 Nav2 繞行。一般 LOS 走廊半寬為 0.4 公尺；連續受阻 0.3 秒才進入 `BLOCKED_WAIT`，此前維持 `FOLLOWING` 並減速。已判定受阻後，須以加寬至 0.5 公尺的走廊連續暢通 0.6 秒才能解除，避免貨架末端的雷射擦邊反覆停車。人物距離超過 1.3 公尺且判定受阻再持續 0.5 秒後交接；前方障礙停止仍立即生效，不等待 LOS 計時。`/follow/state` 發布 `STATE: 原因`，`/follow/handoff_goal` 為人物前方保留 1.0 公尺距離的 map 終點 PoseStamped，可加入 RViz。
+
+NAV2 至少保持 1.5 秒；人物距離不超過 1.3 公尺、視線角度不超過 0.25 rad、LOS 經較寬走廊確認、前方淨空大於 0.8 公尺，且返回條件持續 0.5 秒後才恢復 DIRECT。導航成功本身不切換模式；人物繼續移動時，成功的目標也依更新週期重新送出。移動目標以 Nav2 搶占更新，等待接受回覆時合併新位置，不取消／排空；只有離開 NAV2 才要求取消。切回後等待動作終止與速度排空，第一筆直接命令為零。目標遺失、過近、停用或雷射失效立即雙軸停止並取消；導航失敗另有 3 秒重試冷卻。
+
+NAV2 速度由 `/cmd_vel/nav` 輸入跟隨節點，檢查命令年齡不超過 0.2 秒、安全狀態及速度／加速度上限後，以 `/cmd_vel/follow` 轉送。FOLLOW 仲裁僅接受 follow 與安全停止，原始 nav 不再作為逾時備援，避免安全節點中斷後繞過檢查；GUIDE 仍接受 nav。前方停止值 0.65 公尺從前移 0.18 公尺的雷射原點量測，保留原值。旋轉須完整 360° 掃描確認 base_link 周圍半徑至少 0.45 公尺圓盤無障礙，涵蓋 0.60 × 0.50 公尺車體外接圓與餘裕；偏移雷射、後方與側方回波都納入。這只允許 Nav2 規劃／控制的轉向，不自行產生盲轉或倒車。NavFn 共用容差仍為 0.8 公尺，須核對實際終點。
+
+人物路徑恢復 0.35 m/s 瀏覽速度。直接控制與 Nav2 巡航上限均為 0.5 m/s；窄處最低 0.2 m/s 與 Nav2 曲率限速最低 0.25 m/s 仍可能造成落後，未藉提高安全限速保證追蹤通過。完整 180 秒評估仍待維護者重跑。
+
+新增的 `uwb_follow.yaml`／節點參數如下；時間單位為秒、距離為公尺、角度為弧度。LOS 與保持時間及額外寬度接受有限非負值；減速比例限於 0～1，側向角度須滿足 `0 <= min < max <= pi`，側向距離須滿足 `0 <= slow < free`。
+
+| 參數 | 預設值 | 用途 |
+| --- | --- | --- |
+| `los_block_time`／`los_clear_time` | 0.3／0.6 | 受阻／暢通連續確認時間；時間倒退重設 |
+| `los_clear_extra_width` | 0.10 | 已受阻時恢復所需的額外走廊半寬 |
+| `los_uncertain_speed_factor` | 0.6 | 原始 LOS 受阻但尚未確認時的線速度倍率 |
+| `min_nav_hold`／`min_direct_hold` | 1.5／1.0 | 導航／直接模式最短保持時間 |
+| `side_sector_min`／`side_sector_max` | 0.523599／1.745329 | 左右各 30°～100° 的側向扇區 |
+| `side_slow_clearance`／`side_free_clearance` | 0.35／0.75 | 最小側向淨空的減速／全速門檻 |
+| `side_min_speed_factor` | 0.4 | 淨空不超過減速門檻時的最低線速度倍率 |
+| `velocity_feedforward` | 1.0 | 目標絕對速度在視線方向上的前饋增益；0 停用 |
+| `distance_hysteresis_enter`／`distance_hysteresis_exit` | 0.04／0.08 | 距離誤差進入／離開保持區的門檻；保持時只抑制距離修正，仍保留前饋 |
+
+側向淨空取雷射回波的最小 `range * abs(sin(angle))`；兩門檻間線性插值，缺少側向涵蓋時採最低倍率。側向與 LOS 倍率取較小值，用來限制線速度上限，再套用朝向餘弦閘控與加速度限制；不再將未飽和的距離修正與前饋一併縮小。實體減速上限不變，直接控制仍為 0.5 m/s、1.0 rad/s，仲裁／看門狗管線與唯一 `/cmd_vel` 發布者維持原狀。
+
+目標速度由 `/uwb/target` 估測位置搭配 `/odom` 位姿轉入 odom 後差分，經 EMA（alpha=0.2）、0.6 m/s 向量限幅，再轉回車體座標，避免把車體移動誤認成人物移動。里程計與目標來源時間差或控制時里程計年齡超過 0.15 s 時不使用前饋；資料缺口超過 0.5 s 或時間倒退會丟棄差分歷史。一般模式會退回距離控制；`monitor_odom` 的故障停止規則維持原狀。此估速使用最新里程計，沒有補間；EKF 雜訊、漂移與兩來源時間差仍須容器驗證。距離保持遲滯須滿足 `0 <= enter <= exit`。
+
+純 Python 閉迴路診斷可在儲存庫根目錄執行：
+
+```bash
+/workspace/scratch/venv-shop/bin/python scripts/follow_loop_sim.py
+/workspace/scratch/venv-shop/bin/python scripts/follow_loop_sim.py --world
+/workspace/scratch/venv-shop/bin/python scripts/follow_loop_sim.py --speed-factor 0.4
+```
+
+工具直接讀取唯一 `person_path.yaml` 與控制 YAML，包含整個循環及啟動暫態；使用現有 TargetFilter、控制器、速度仲裁、加速度限制與看門狗的純邏輯。輸出保留舊版公式、修正版、移除前饋與移除控制器加速度限制的對照。預設無障礙情境的平均距離由 1.397 m 改為 1.003 m；`--world` 以 SDF 碰撞盒及人物圓柱近似雷射，舊版全程平均距離為 2.766 m，修正版為 1.807 m；修正版排除 LOS 鎖定與安全停止後，平均距離誤差 0.171 m、RMSE 0.198 m，有效樣本 69.3%。兩者都不是 Gazebo 驗收。模型不執行 Nav2，也不模擬車體動力學或 UWB 雜訊；全程統計與排除計數必須一起閱讀，詳見 [指標說明](docs/METRICS.md)。
+
+目前人物速度固定為 0.35 m/s，路徑與速度均未修改。比例控制原本在直線等速情境需要約 `0.35/0.7=0.5 m` 落後才能維持前進；轉角朝向閘控、側向減速與 LOS 等待會進一步放大落後。當減速倍率長期為 0.4，上限只有 0.2 m/s，前饋也無法追上 0.35 m/s 的人物；該壓力情境刻意保留失敗。預設走道中央淨空約 0.8 m，可使用完整速度，因此未全面放慢人物。貨架末端仍須驗證既有 Nav2 交接，不能由此模型推論已解決繞行。人物本身也是雷射障礙：正前方距離約 `0.18+0.25+0.65=1.08 m` 時就可能觸發停止，因此目前幾何與安全門檻下不能保證持續精確維持 1.0 m；距離遲滯不延後安全停止。
+
+人物模型沿用 Fortress `/world/supermarket/set_pose`，每 0.05 s 嘗試更新，但同時最多一個 `ign service` 子程序，未完成便略過。原流程在發出請求前取樣當下路徑，之後才啟動子程序、等待服務套用，模型再保持位置直到下次完成；這會累積命令與保持延遲，且不是 ROS bridge 傳送移動命令。新增 `/person_path` 節點參數 `model_lag_compensation_s=0.30`，只將模型命令取樣改為 `t+補償`；UWB 真值與同步檢查仍使用 t，不修改觀測時間戳。服務完成觀察耗時以模擬秒寫入 DEBUG 紀錄，但不能分離程序啟動與實際套用時間。0.30 s 依 2026-10-24 實測總延遲校準；不同模擬速度／主機負載可能需要重校，必須以 `person-sync-check` 確認平均誤差 <0.05 m、延遲絕對值 <0.1 s。可用 `ros2 param set /person_path model_lag_compensation_s 0.0` 關閉，或設為新的非負補償值；設定不代表已通過驗收。
+
+可直接分析 `ros2 topic echo /follow/state` 文字紀錄，不需 rosbag：
+
+```bash
+python3 scripts/follow_state_stats.py follow-state.log
+python3 scripts/follow_state_stats.py follow-state.log --sample-period 0.05
+```
+
+工具解析 `data: STATE: 原因` 或 `state: STATE` 紀錄，可在同一行前綴 `[秒數]` 或 `秒數 `。有時間戳時須有限且嚴格遞增；無時間戳時依序假設每筆 0.05 秒（20 Hz），遺漏樣本或僅記錄狀態變更時須提供時間戳，否則每分鐘切換率與停留時間僅為估算。混用有／無時間戳會拒絕分析。輸出切換總數、每分鐘切換率與各狀態停留次數／總計／平均／最小／最大秒數；首尾停留區間只計算觀測範圍，最後一筆不外推。亦可呼叫 ROS-free 的 `follow_metrics.state_statistics([(t, state), ...])`。
+
+guide／follow 預設啟用全域模式管理、速度仲裁與獨立輸出看門狗，操作方式見下節；一次只啟動一個 bringup，跟隨期間仍不可另外送出 Nav2 目標，以免干擾跟隨自行管理的導航動作。UWB 訊息目前用無時間戳的 Float32MultiArray，模擬本機接收時間視為量測時間；硬體介面前必須改用有時間戳及錨點識別的訊息。
+
+純 Python 測試可在容器執行（`./scripts/dev.sh test`），也可在任何已安裝 pytest、pyyaml、xacro 的 Python 3.10 環境執行：
+
+```bash
+python3 -m pytest -q
+./scripts/run_unit_tests.sh python3
+python3 scripts/check_static.py
+```
+
+此次 EKF、噪聲與漂移監測尚未執行映像重建、colcon 或 Gazebo 驗證。先前真值里程計版本於 2026 年 10 月已在 Linux amd64 環境以 Docker 實際驗證：映像建置、七套件 colcon 建置與測試、建圖、RViz（經 noVNC）、六個區域導航與跟隨流程；Mac arm64 建置、Gazebo GUI 與真實硬體仍未驗證，詳見 [進度紀錄](docs/PROGRESS.md)。指定環境的 xacro 套件若不支援 `python -m xacro`，可改用 `python -c 'import xacro; xacro.main()' 模型路徑`，兩者呼叫相同的 xacro 處理程式。
+
+[模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
+
+</details>
 
 ## rosbag 記錄與離線報告（僅模擬）
 
@@ -350,7 +430,7 @@ ros2 run shopping_uwb_follow follow_eval --duration 180 --output /tmp/follow-eva
 
 `person_sync_check` 比較 `/uwb/person_ground_truth`、`/simulation/person_pose` 的人物幾何位置，以及共用 `person_path.yaml` 在各筆來源模擬時間的位置；輸出平面偏差的平均、RMSE、最大值及延遲搜尋結果。每組平均偏差須小於 0.05 m、延遲絕對值須小於 0.1 s，可用 `--mean-limit`、`--lag-limit` 更改驗收門檻。人物模型父框架必須為 `supermarket`、子框架為 `person`，對應 SDF 世界原點；人物真值必須為 `sim_world`。這是同一個模擬世界座標，不拿 EKF 的 `odom` 當真值。
 
-既有 `/simulation/poses` 保留原用途。Fortress [SceneBroadcaster](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/scene_broadcaster/SceneBroadcaster.cc) 的時間戳在外層 Pose_V，而 Humble [TFMessage 轉換](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/src/convert/tf2_msgs.cpp) 讀取各筆 pose，無法保留該外層時間。此次增加人物唯讀 [PosePublisher](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/pose_publisher/PosePublisher.cc)，產生各筆時間與框架；只有 follow launch 將 `/model/person/pose` 單向橋接至 `/simulation/person_pose`（TFMessage），不接入 `/tf`。這是量測來源時間的補足，沒有修改人物移動或 UWB 生成演算法；SDF 的觀察外掛在其他模擬也會載入，但沒有新增 ROS 橋接。
+既有 `/simulation/poses` 保留原用途。Fortress [SceneBroadcaster](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/scene_broadcaster/SceneBroadcaster.cc) 的時間戳在外層 Pose_V，而 Humble [TFMessage 轉換](https://github.com/gazebosim/ros_gz/blob/humble/ros_gz_bridge/src/convert/tf2_msgs.cpp) 讀取各筆 pose，無法保留該外層時間。此次增加人物唯讀 [PosePublisher](https://github.com/gazebosim/gz-sim/blob/ign-gazebo6/src/systems/pose_publisher/PosePublisher.cc)，產生各筆時間與框架；只有 follow launch 將 `/model/person/pose` 單向橋接至 `/simulation/person_pose`（TFMessage），不接入 `/tf`。PosePublisher 僅補足量測來源時間；人物命令延遲補償見跟隨控制說明。SDF 的觀察外掛在其他模擬也會載入，但沒有新增 ROS 橋接。
 
 `follow_eval` 使用人物真值與 `/sim/ground_truth_odom`（`sim_world → base_footprint_gt`），將真實相對位置轉到車體平面座標，再和 `/uwb/target`（`base_link`）比較。平移原點相同的假設來自目前 URDF 的固定關節。表格包含下列指標，門檻是初始驗收提案，並非控制器調參：
 

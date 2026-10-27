@@ -826,6 +826,185 @@
 | `comm-up`／`comm-down`（`microros/micro-ros-agent:humble`，UDP 8888） | 映像可取得，agent 啟動並顯示 running；**沒有** XRCE client 連線（模擬韌體不經 agent） |
 | 未驗證 | 真正 micro-ROS client 經 agent 端到端、Mac arm64、guide／follow `mcu_comm:=true` 與 Gazebo 同時執行、實體 serial／MCU 韌體 |
 
+## 2026-10-24：跟隨追蹤誤差修正
+
+### 根因分析與修改
+
+- 新增 `scripts/follow_loop_sim.py`：直接讀取 Gazebo 套件唯一 `config/person_path.yaml` 與 `uwb_follow.yaml`，使用既有 TargetFilter、控制器、LOS 遲滯、VelocityMux、VelocityLimiter 與 OutputWatchdog。保留修改前完整 `step` 公式作為固定對照。單輪車模型從原點開始，控制／仲裁／看門狗 20 Hz、UWB／雷射 10 Hz；`--world` 由 SDF 碰撞盒與人物圓柱產生 181 條近似雷射，使用車前 0.18 m 的雷射原點。完整一圈 94.857 s，1898 筆樣本，沒有省略啟動暫態或重設車體追上人物。
+- 人物各段都是同一個 0.35 m/s，低於直接控制上限 0.5 m/s 與仲裁上限 0.6 m/s；不是預設路徑整體超速。原本比例控制在正前方等速時需要 `0.35/0.7=0.5 m` 距離誤差才產生維持速度。側向／LOS 倍率原先乘在飽和後的整個命令，再乘朝向餘弦，會同時縮小未飽和修正量及實際速度上限。倍率 0.4 時上限僅 0.2 m/s；LOS 不確定倍率 0.6 時上限也僅 0.3 m/s，均無法追上 0.35 m/s 人物。彎道落後增加後，LOS 鎖定等待會進一步放大距離。
+- 無障礙舊版平均距離只有 1.397 m；加入 SDF、側向減速、朝向閘控與 LOS 保持後，全程平均距離為 2.766 m，接近容器 3.35 m 的量級，但不是精確重播。無障礙情境移除控制器加速度限制後為 1.396 m，顯示該情境中加速度不是主因；障礙情境則會因轉角進入不同阻塞狀態而改變結果。主要證據支持比例控制落後與幾何／安全等待的放大效應，不能只把 3.35 m 歸因於增益不足，也不能從此近似模型斷言 Nav2 執行時的單一根因。
+- 人物圓柱本身也會被雷射掃到：雷射前移 0.18 m＋人物半徑 0.25 m＋前方停止門檻 0.65 m，使正前方距離約 1.08 m 就可能觸發安全停止。這解釋修正版仍有部分安全停止與正距離誤差，不能透過提高增益消除；保留原安全幾何與門檻。
+- 新增純邏輯 TargetVelocityEstimator：以 UWB 估測位置及里程計位姿轉至 odom 後差分，EMA alpha=0.2、向量限幅 0.6 m/s，再轉回車體座標；資料缺口／時間倒退會清除歷史。跟隨節點持續訂閱 `/odom`，量測時間差與控制時里程計年齡限制為 0.15 s；超過門檻停用前饋，故障模式原有里程計停止規則不變。
+- 控制改為目標絕對速度在視線方向的前饋＋距離比例修正，再以原側向／LOS 速度上限限幅，保留朝向閘控及原加速度限制。沒有提高線／角速度、加速度或增益。新增距離誤差 0.04／0.08 m 保持遲滯，保持時抑制比例修正、保留前饋。近距、目標遺失／過期、雷射失效及前方障礙直接輸出零 Twist；前方有效障礙停止改為包含角速度歸零，不再原地轉向。既有 Nav2 獨占交接流程與管線保持原狀，看門狗仍是預設模式唯一 `/cmd_vel` 發布者。
+- 人物模型原先每 0.1 s 取樣當下路徑後啟動 `ign service set_pose` 子程序，前一個請求未結束就跳過；命令取樣早於套用，加上位置保持會累積延遲。移動命令沒有經 ROS bridge，bridge 只量測位姿；`set_pose` 也沒有排程套用時間戳。本輪不能分離 0.30 s 中程序啟動、服務排程與保持時間的各自比例。新增純邏輯 `model_command_position` 與節點參數 `model_lag_compensation_s=0.30`，模型命令取樣改為 t+補償，嘗試週期縮至 0.05 s，仍只允許一個請求在途。服務完成觀察耗時寫入 DEBUG 紀錄，依模擬秒計算。
+- 補償不修改 UWB 真值、人物觀測時間戳或同步檢查參考路徑。人物路徑、速度與碰撞模型均未修改，仍為模型與 UWB 的唯一來源；未修改 Nav2 設定／launch、Docker、通訊層或 ROADMAP，未提交／推送。
+
+### 閉迴路結果（純 Python，非容器驗收）
+
+誤差平均為 `mean(abs(distance-1.0))`，RMSE 使用相同誤差；距離與分類沿用 `follow_metrics`／`evaluation_metrics`。有效區間排除安全停止、原始 LOS 不通或 LOS 鎖定未解除的樣本；每次均保留全程統計及互斥排除計數。無雜訊、理想里程計，尚未模擬 Nav2、碰撞動力學或傳輸排程。
+
+| 情境 | 全程平均距離 m | 有效區間平均距離 m | 有效區間平均誤差 m | 有效區間 RMSE m | 有效樣本比例 |
+| --- | --- | --- | --- | --- | --- |
+| 無障礙，舊版 | 1.397 | 1.397 | 0.397 | 0.412 | 100% |
+| 無障礙，修正版 | 1.003 | 1.003 | 0.053 | 0.109 | 100% |
+| SDF，舊版 | 2.766 | 1.673 | 0.673 | 0.734 | 51.7%（982／1898） |
+| SDF，修正版 | 1.807 | 1.171 | 0.171 | 0.198 | 69.3%（1316／1898） |
+| SDF，修正限幅但停用前饋 | 2.010 | 1.470 | 0.470 | 0.505 | 73.6%（1396／1898） |
+| SDF，舊版移除控制器加速度限制 | 3.158 | 1.620 | 0.620 | 0.680 | 33.7%（640／1898） |
+
+SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分別為 86／496 筆。修正版有效區間已達平均誤差 <0.5 m、RMSE <1.0 m，但全程平均距離仍大於目標，不能視為完整跟隨驗收通過。固定倍率 0.4 的壓力情境仍會失敗，證明前饋沒有繞過實際速度上限。預設走道中央約 0.8 m 側向淨空可使用完整速度，因此沒有全面放慢人物路徑。
+
+### 測試、限制與下一步
+
+- 新增 pytest 覆蓋舊版閉迴路量級、修正版全路徑有效區間門檻、移除前饋／加速度對照、持續低速上限的失敗、速度估測的自車平移／旋轉補償與缺口重設、節點新鮮里程計接線、距離遲滯、前饋不得越過安全停止、模型路徑補償與循環邊界。既有前方障礙測試更新為完整零 Twist；其餘安全與路徑淨空回歸一併執行。
+- 人物補償的合成測試明確假設服務延遲為 0.20／0.25／0.30 s，加上命令保持；以原 `sync_report` 檢查修正後平均誤差 <0.05 m、延遲絕對值 <0.1 s。這不是 Gazebo 量測。0.30 s 補償依維護者先前實測校準，主機負載、實際模擬倍率與轉角外推都可能改變結果；必要時用 `ros2 param set /person_path model_lag_compensation_s 值` 重校，0 關閉。
+- 尚未執行 ROS、colcon 或 Gazebo；沒有安裝套件、執行 Docker、加入硬體／裝置連線。里程計時間只用最新量測，未補間；EKF 雜訊、漂移、UWB 雜訊／掉包與兩錨點前後解歧義／NLOS 限制仍存在。模型命令補償不能修正真實 UWB 估測錯誤。
+- 近似閉迴路沒有 Nav2，因此不能證明貨架末端繞行已修復。維護者須在既有容器重新建置／測試，停止其他移動流程後只啟動單一 follow；同時量測人物同步與全程追蹤，檢查交接卡住、轉角與停止事件。線上 `follow-eval` 沒有套用離線有效區間排除，應保留原始全程結果。
+- 建議命令：`./scripts/dev.sh colcon-build`、`./scripts/dev.sh colcon-test`；啟動 `./scripts/dev.sh follow fault_injection:=true 'fault_schedule:=[{time: 120.0, fault: uwb_stale, duration: 3.0}]'`，再於不同終端機執行 `./scripts/dev.sh person-sync-check --duration 60 --output /tmp/person-sync-follow-tracking.json` 與 `./scripts/dev.sh follow-eval --duration 180 --tracking-limit 1.0 --output /tmp/follow-tracking.json`。兩個量測都須在 120 s 故障前啟動。近距停止可能仍為 NOT_COVERED，需另外安排可重現的近停測試。
+
+### 本輪執行紀錄（非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：682 項通過，既有 xacro 棄用警告 1 項。
+- `PATH=/workspace/scratch/venv-shop/bin:$PATH python3 scripts/check_static.py`：PASS；15 個 YAML／RViz、10 個 XML／SDF／xacro、87 個 Python、4 個 Bash，兩／三錨點與 ekf／ground_truth 的 xacro 展開及錨點一致性通過。
+- `git diff --check`：通過。以上未包含 ROS、colcon、Gazebo 或硬體驗收。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純 Python 舊版重現、前饋、遲滯與安全回歸複核 | 待驗證 |
+| 人物模型補償合成測試與路徑淨空複核 | 待驗證 |
+| pytest、YAML／XML／launch 語法與 xacro 靜態檢查複核 | 待驗證 |
+| Humble 容器 colcon build／test | 待驗證 |
+| Fortress `person-sync-check` 平均誤差與延遲 | 待驗證 |
+| `follow-eval` 全程直線／轉彎追蹤與前饋雜訊 | 待驗證 |
+| 貨架末端 LOS／Nav2 繞行與獨占控制 | 待驗證 |
+| 近距停止、前方障礙零 Twist、UWB 缺口恢復與急停 | 待驗證 |
+| 預設 EKF／ground_truth 與唯一 TF／cmd_vel 發布者回歸 | 待驗證 |
+
+### t29：180 秒評估失敗後的控制與繞行修正（2026-10-24）
+
+#### 證據與根因判讀
+
+- 維護者本次 Fortress 結果：直線平均距離 2.895 m、最大 6.465 m，轉彎平均 3.368 m；估測平均誤差約 0.13 m、延遲 0.07 s，近停通過。這支持優先調查車體控制與交接，而不是再次調整感知。完整啟動紀錄有 96 次目標 preemption、16 次控制器目標取消，以及 100 次 RPP 預測碰撞訊息；這些計數涵蓋完整啟動紀錄，不等同評估區間的事件計數。
+- 程式原先已對移動人物使用 `send_goal_async` preemption，並非每次更新都先取消。問題在另一條返回條件：LOS 恢復後，不論是否還落後數公尺或朝向轉角，都能在短暫淨空後取消 Nav2、等待終止／速度排空，再從零速直接追人。直接追逐切過貨架轉角，又會重新進入繞行，與紀錄的週期取消相符；舊紀錄缺少跟隨狀態，因此無法把每次取消唯一對應至某一個分支。
+- 人物軌跡原速 0.35 m/s，路徑沒有停留、轉角沒有減速；`person_path_node` 與 UWB 都依同一份路徑取樣，模型命令保留原 0.30 s 補償與單一在途服務請求。0.35 m/s 雖小於直接跟隨／smoother 的 0.5 m/s 上限，卻大於側向最低限速 0.2 m/s；舊側向與 LOS 倍率相乘時甚至只有 0.12 m/s。Nav2 原巡航 0.4 m/s，曲率限速最低 0.25 m/s，追趕餘裕不足。mux 上限 0.6 m/s、加速度 0.6 m/s²，以及 Gazebo DiffDrive 的 0.6 m/s 上限並不是此處較低的限速來源；直接控制與 smoother 仍先限制在 0.5 m/s、0.4 m/s²。
+- 原 Nav2 目標在人物中心，終點與人物碰撞模型重合，依賴 planner 的 0.8 m 容許範圍找附近終點。另有安全缺口：直接控制器的 `OBSTACLE_STOP` 雖已產生零 v/w，Nav2 擁有控制時卻沒有持續發布該零速，可能讓較低優先序的 Nav2 命令通過。
+- 評估距離是相同世界座標系中車體原點與人物中心的平面歐氏距離，不是人物估測誤差，也不是沿路徑距離；直線／轉彎依人物路徑分類，包含安全停止與交接等待，沒有排除難追蹤區間。這些定義及驗收門檻均保留。
+
+#### 修改與安全界線
+
+- Nav2 返回直接控制改為：最少持有時間已滿、人物中心距離不超過 1.3 m、視線角度不超過 0.25 rad、LOS 經較寬走廊確認、前方淨空超過停止值加餘裕，且上述返回條件持續 `resume_delay=0.5 s`。遠處可見或尚未對齊不再取消繞行；目標成功／失敗、停用、近停、遺失、過期與失效資料仍走原本終止／安全流程。
+- 移動目標繼續以 Nav2 preemption 更新；同一時間最多等待一個接受回覆，等待期間合併新目標，回覆後使用最新位姿更新。正常更新不呼叫取消、不啟動速度排空。Nav2 終點改為人物前方保留 1.0 m 的位置，距離不足時不把終點放到車後；LOS 與安全判斷仍使用人物本身，沒有遮掉雷射回波。共用 planner 容許範圍仍為 0.8 m，實際終點與轉角路徑仍須在容器確認。
+- LOS 安全走廊半寬由 0.25 m 改為 0.4 m，涵蓋 0.60 × 0.50 m 車體旋轉時約 0.391 m 的外接半徑，提早攔截轉角切入；解除阻塞仍額外增加 0.10 m。此值是控制走廊，不是修改實際車體 footprint。
+- 側向與 LOS 現在各自作為速度上限，合併取較小值，避免重複相乘。保留側向最低 0.4 倍、LOS 0.6 倍與所有速度／加速度限制。人物唯一設定改為 0.18 m/s（約 0.65 km/h）的緩慢購物瀏覽速度，低於窄處 0.2 m/s 限速與 RPP 曲率限速，留有少量追趕餘裕；這不是一般成人自由步行速度，也不保證任意急彎都能等速跟上。Nav2 巡航改為既有安全上限 0.5 m/s；沒有提高直接控制、smoother、mux 或 Gazebo 的上限。
+- Nav2／排空期間若前方障礙停止，持續發布高優先序跟隨零命令，同時遮蔽 v/w，不為每筆障礙回波取消再重送目標；障礙解除後才允許 Nav2 命令通過。近停、遺失、過期、雷射失效與急停仍立即歸零。前方停止門檻保留 0.65 m，因此雷射前移 0.18 m、人物半徑 0.25 m 的正前方幾何仍會在人物中心距離約 1.08 m 觸發；安全值不能用比例增益消除。若車已停在永久貨架的停止區內，本輪仍不允許為脫困而帶速旋轉，必須重設模擬並確認繞行是否及早介入。
+- 跟隨節點新增每模擬秒最多一次 INFO，記錄 state／mode、距離、視線角、上游命令 v/w、速度倍率、前方距離、目標年齡、Nav2 狀態／待回覆、LOS 鎖定、排空狀態及限制原因；時間倒退後可重新記錄。直接控制限制原因包含速度上限、朝向、線／角加速度與距離保持。Nav2 命令採最近觀測的 smoother 輸出，安全遮蔽時顯示零；這不是 `/cmd_vel` 最終實測值，mux 與 watchdog 仍可能再限速或停止。
+- shutdown 捕捉 `KeyboardInterrupt`／`ExternalShutdownException`，只在 context 有效時嘗試取消與發布最後零速，並捕捉檢查後 context 失效造成的 `RCLError`；已關閉時不再重複 shutdown。最終輸出仍由獨立 watchdog 逾時保護。預設 launch 的 `/cmd_vel/follow`、`/cmd_vel/nav`、mux、watchdog 管線維持原狀，watchdog 仍是唯一最終 `/cmd_vel` 發布者。
+
+#### 本機檢查與限制
+
+- 新增／調整純 Python 測試：遠處 LOS 恢復不取消、轉角未對齊不交接、持續近距淨空才返回、更新接受等待與合併、舊回呼隔離、人物前方終點與實際節點座標轉換、獨立速度上限合併、Nav2 前方障礙雙軸零速與解除、診斷節流／時間重設／Nav2 命令、有效／失效／競態 shutdown、旋轉安全走廊與跨設定速度預算。需要整個 repo 設定的套件測試先檢查根目錄 `docs/`，否則使用 `/repo`，皆不存在才 skip。
+- 離線腳本同步新的 LOS 走廊與速度上限合併；舊版重現測試明確固定舊人物速度 0.35 m/s，避免慢速設定掩蓋歷史問題。最終 0.18 m/s 全圈 184.4 s、3689 筆的純 Python 單輪車模型：無障礙全程平均距離 0.976 m、誤差 RMSE 0.059 m；持續 0.2 m/s 低速上限時平均距離 1.000 m、誤差 RMSE 0.094 m。包含啟動與所有轉角，沒有重設車體追上人物。
+- **SDF 直接控制模型仍未通過全程追蹤**：平均距離 1.760 m、誤差 RMSE 1.551 m、最大距離 6.379 m；1341 筆安全停止，正常追蹤樣本比例約 63.6%。該模型沒有 Nav2、碰撞動力學、EKF 漂移或排程，會因保守障礙停止停在轉角，不能拿正常追蹤子集合冒充完整驗收。本次 Nav2 交接改善由狀態／回呼測試驗證，仍需維護者實跑 Fortress 才能確認全程追蹤改善。離線完整結果暫存於 `/tmp/follow-t29-offline.json`。
+- 未安裝套件、建立環境、執行 Docker、colcon、ROS 或 Gazebo；未新增硬體／裝置連線，未提交或推送，ROADMAP 未勾選。靜態與純邏輯結果不代表容器或硬體驗收。
+- 下一步：維護者重新建置與 colcon test，重跑相同 180 s `follow-eval` 與人物同步量測，保留完整 INFO 與 `/follow/state`、`/cmd_vel_mux/active`、最終 `/cmd_vel`。對照每次取消的近距／角度條件、障礙停止是否及早繞行、速度是否受側向限速，以及直線／轉角全程誤差。近停必須維持 PASS；若變成 NOT_COVERED，需另外安排近距事件，不能視為通過。人物完整一圈現在約 184.44 s，故障測試仍須另外明確注入 UWB 過期事件。
+
+#### t29 本輪自行檢查（非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：802 項通過，保留既有 xacro 棄用警告 1 項。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；17 個 YAML／RViz、11 個 XML／SDF／xacro、104 個 Python、4 個 Bash，以及兩／三錨點、ekf／ground_truth 的 xacro 展開與錨點一致性皆通過。
+- `git diff --check`：通過。沒有執行容器或實際模擬驗收。
+
+#### t29 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 純邏輯、回呼競態、速度預算與安全停止測試複核 | 待驗證 |
+| pytest、check_static、YAML／XML／launch／xacro 複核 | 待驗證 |
+| Humble 容器 colcon build／test 與 shutdown 無 RCLError | 待驗證 |
+| Fortress 人物同步、0.18 m/s 瀏覽速度與完整路徑 | 待驗證 |
+| 180 秒全程直線／轉彎追蹤、Nav2 取消頻率與早期繞行 | 待驗證 |
+| 近停 PASS、前方障礙雙軸停止、雷射失效、過期與急停 | 待驗證 |
+| INFO 診斷與最終 cmd_vel／仲裁來源對照 | 待驗證 |
+| 唯一 cmd_vel 發布者、EKF／ground_truth TF 與模擬限定回歸 | 待驗證 |
+
+### t32：貨架前永久停止、Nav2 交接與速度恢復（2026-10-24）
+
+#### 診斷與修改
+
+- 先讀取 AGENTS.md，檢視重開機前留下的四份修改，保留人物速度恢復、旋轉淨空檢查、導航速度閘控與成功狀態不直接退出的方向，完成接線、失效停止、測試及文件。未提交或推送。
+- 本輪依據 `/workspace/wt/logs/shop/t29s-check1.txt`、`t29s-follow-diag.log` 與 `t29s-launch.log`：180 秒評估直線平均距離 2.883 m、轉彎平均 3.544 m，near_stop PASS；完整啟動紀錄有 23 筆 `Goal was canceled`。初期 DIRECT 約 1.1 m，後續前方約 0.606～0.608 m 長期不變，OBSTACLE_STOP 同時遮蔽線／角速度，使車體面對靜態貨架時無法轉向；此時人物走遠不能藉增益或估測修正解除。取消計數涵蓋完整啟動，不將每筆唯一歸因於跟隨狀態機。
+- DIRECT 遇前方障礙仍立即完整零 Twist；人物遠離且受阻持續後交給 Nav2。NAV2 改為由純邏輯 `NavigationGuard` 篩選既有規劃／控制命令：前方不超過 0.65 m 時強制 v=0，但可在旋轉淨空確認後放行 w，朝規劃路徑轉向。前方清空後恢復前進。不自行產生盲轉、倒車或逃離人物的速度。
+- 旋轉淨空要求完整 360° 雷射、有效範圍與 TF；以 scan←base_link 的偏移，逐射線檢查 base_link 周圍旋轉圓盤的遠交點。0.60 × 0.50 m footprint 外接半徑約 0.391 m，預設圓盤半徑為 max(0.391, robot_half_width=0.4)+0.05=0.45 m，側方及後方均須清空。空／部分／過疏掃描、NaN／負值／低於最小量程、量程不足、圓盤內遮擋與 TF 缺失均不放行旋轉。平面雷射不能證明所有高度皆無障礙，適用本專案既有模擬場景。
+- 保留前方停止值 0.65 m：量測原點是前移 0.18 m 的雷射，正前方對應障礙距 base_link 約 0.83 m、距車體前緣約 0.53 m；0.607 m 回波對應前緣約 0.487 m，仍有空間原地轉動。1.6 m 走道中心至側架約 0.8 m，0.45 m 旋轉圓盤可容納；不以降低障礙門檻換取通過。真實回波方向、雷射離散化、EKF 與貨架轉角仍須 Fortress 驗證。
+- NAV2 命令年齡超過 0.2 s 即歸零；目標過近、遺失／UWB 過期、雷射失效、停用、無 map 轉換、非活動中導航或控制時間無效時雙軸停止，安全停止略過加速度斜坡。Nav2 轉送限制在原配置的 0.5 m/s、1.0 rad/s、0.4 m/s²、1.5 rad/s² 以內，禁止倒車；底層仲裁與急停仍可更嚴格限制。
+- Nav2 速度固定從 `/cmd_vel/nav` 輸入，安全檢查後持續轉送 `/cmd_vel/follow`。FOLLOW 仲裁不再把原始 nav 當作 follow 逾時備援，避免安全節點中斷後繞過目標與障礙保護；GUIDE 仍使用 nav。follow launch 僅接受 `use_mux:=true`，移除該流程的舊共用主題模式，避免轉送回授與多個最終發布者。最終 `/cmd_vel` 維持只由 watchdog 發布。未增加硬體、裝置存取、依賴套件或其他移動來源。
+- Nav2 目標成功不再直接切 DIRECT 或啟動取消／排空。人物仍遠離時按既有週期刷新保留 1.0 m 距離的終點；正常移動更新保持 preemption，接受等待時合併新位置。返回仍要求至少持有 1.5 s、人物 ≤1.3 m、視線角 ≤0.25 rad、加寬 LOS 確認、前方 >0.8 m，並持續 0.5 s；只在離開 NAV2 時取消。安全事件與失敗仍能立即退出，舊回呼不能改動目前世代。
+- 人物唯一來源 `person_path.yaml` 恢復 **0.35 m/s**。巡航上限 0.5 m/s，比人物快 0.15 m/s；直接控制側向最低 0.5×0.4=0.2 m/s，比人物慢 0.15 m/s，持續 10 s 約多落後 1.5 m；Nav2 曲率最低 0.25 m/s 也比人物慢 0.10 m/s。保留安全限速，明確保留持續窄處限速時無法等速追人的失敗回歸；沒有再以慢人物速度掩蓋追蹤落後。README 與架構文件同步目前接線、終點、遲滯、速度與旋轉例外。
+
+#### 測試、限制與下一步
+
+- 新增純邏輯回歸：0.607 m 固定前方回波、人物以 0.35 m/s 遠離 120 s，確認受阻後只交接一次、Nav2 可旋轉、沒有取消循環；前方清空後能前進。另以固定貨架射線與單輪車積分建立閉迴路，初始約 0.607 m，確認依合成規劃轉向命令旋轉後前進，旋轉圓盤始終不碰貨架。此測試使用合成 Nav2 命令，不能替代真正的成本地圖與規劃器。
+- 覆蓋偏移雷射的後方／側方旋轉範圍、無效／部分掃描、命令過期、速度與加速度上限、禁止倒車、成功目標刷新及返回遲滯；節點回呼測試驗證實際轉送、近停／遺失／失效時即使可旋轉且有導航命令仍全停、舊回呼隔離與取消排空。仲裁測試確認 follow 逾時後原始 nav 不能通過，而 GUIDE 維持可用。套件新測試不依賴儲存庫外檔；需整個 repo 的既有套件設定測試維持 docs 根目錄→`/repo`→skip。
+- 沒有 ROS 環境，未執行 Docker、colcon 或 Fortress；未安裝套件或建立 venv，ROADMAP 未勾選。純邏輯通過不表示 180 秒追蹤已 PASS；未知旋轉淨空或實際困在障礙內仍保持停止，不保證任意幾何都可自主脫困。
+- 下一步由維護者建置／colcon test，重跑 0.35 m/s 的相同 180 秒評估，保留完整 launch／1 Hz 診斷與最終 `/cmd_vel`。對照 `rotation_clear`、前方距離與實際 w：貨架前 v=0 時應可受控轉向，轉開後恢復 v；確認 near_stop 持續 PASS、目標失效／雷射過期／急停完全停止、Nav2 更新沒有反覆取消排空、watchdog 為唯一最終發布者。同步檢查人物 0.30 s 模型補償在較快速度下的誤差；完整路徑約 94.86 s，180 秒涵蓋超過一圈。若仍失敗，須區分真正規劃失敗、旋轉淨空拒絕與持續限速落後。
+
+#### t32 自行檢查（非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：825 項通過，保留既有 xacro 棄用警告 1 項。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS；17 個 YAML／RViz、11 個 XML／SDF／xacro、105 個 Python、4 個 Bash；兩／三錨點、ekf／ground_truth xacro 展開與錨點一致性通過。
+- `git diff --check`：通過。以上未包含 ROS、colcon 或模擬驗收。
+
+#### t32 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 0.607 m 貨架死鎖重現、旋轉圓盤與閉迴路測試複核 | 待驗證 |
+| 近停、遺失／過期、雷射失效、命令逾時與急停 | 待驗證 |
+| preemption、成功狀態刷新、返回遲滯與取消頻率 | 待驗證 |
+| pytest 與 check_static、YAML／XML／launch／xacro 複核 | 待驗證 |
+| Humble colcon build／test 與 FOLLOW 轉送接線 | 待驗證 |
+| Fortress 0.35 m/s 人物同步與 180 秒直線／轉彎追蹤 | 待驗證 |
+| 貨架前轉向恢復、真實成本地圖繞行與 near_stop PASS | 待驗證 |
+| 唯一 cmd_vel 發布者、仲裁逾時拒絕原始 nav 與 TF 回歸 | 待驗證 |
+
+## 2026-10-24：修正跟隨模式遮擋交接震盪
+
+### 修改與動機
+
+- 維護者提供的 t32 後無畫面 Gazebo／follow-eval 模擬（人物速度 0.35 m/s）顯示：直線平均距離 3.03 m、轉彎 3.47 m，相對 1.0 m 目標皆未通過；濾波延遲 0.08 s 與過近停止通過。直接跟隨約維持 1.15～1.3 m，主要落差出現在遮擋交接。
+- 原紀錄約每次 NAV2 維持 5～10 秒後退回 DIRECT／BLOCKED_WAIT 3～4 秒，約重複 15 次；4 分鐘內取消目標 167 次，約 380 筆診斷中 54 筆為 BLOCKED_WAIT，估計閒置約 80 秒，距離增至 5～6.6 m。
+- 純邏輯 supervisor 現在於 LOS 遮擋完成去抖後立即保留 NAV2 控制權，不再額外等待直接模式停留時間或交接延遲。一般僅前方障礙、LOS 尚未確認遮擋的情況保留原交接等待策略。
+- 遮擋期間 Nav2 成功、中止或其他終止結果不再觸發 DIRECT／取消／排空循環；依既有 `goal_update_period`（預設及設定均為 0.5 秒）刷新人物前方停靠目標，包含已接近但仍被遮擋的人物。目標更新沿用直接送新目標搶占與等待接受時合併更新的機制。
+- 地圖轉換缺失時維持 NAV2 控制權並停止轉送速度；伺服器不可用時明確回報 `Nav2 unavailable` 並限頻重試。首次目標尚未接受時也維持 NAV2，正常遮擋流程不再進入 BLOCKED_WAIT；沒有新增逾時後直行的途徑。
+- 回到 DIRECT 仍須 LOS 持續暢通達 `los_clear_time`，並符合近距離（預設不超過 1.3 m）、朝向、前方淨空、最短導航停留及恢復等待條件；只在退出時取消一次，等終止與速度排空後第一筆直接命令歸零。保留過近、遺失／過期、雷射失效、停用及關閉保護。
+- 節點明確區分 Nav2 ABORTED 與伺服器不可用；送出新目標時清除前一筆導航速度，等待新速度輸入。未修改 `/cmd_vel` 看門狗與主題重映射，未新增硬體連線、依賴、提交或推送；未勾選 ROADMAP。
+
+### 自行檢查（執行紀錄，非審查驗證）
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：832 個測試通過；有 1 筆既有 xacro 相依套件棄用警告。
+- 新增不匯入 ROS 的 20 秒遮擋重播，分別每數秒回報成功或中止，驗證遮擋期間沒有 DIRECT、取消不超過一次、BLOCKED_WAIT 累積不超過 1 秒及刷新間隔至少 0.5 秒；恢復近距離暢通後恰取消一次。
+- 以假訊息與 future 執行實際節點方法，涵蓋連續終止結果、不可用伺服器的限頻與零速度、無地圖轉換的控制權保留，以及返回直接跟隨時取消一次與第一筆零命令；更新舊測試中失敗退回 DIRECT 與遮擋近距離不刷新的預期。
+- `/workspace/scratch/venv-shop/bin/python scripts/check_static.py`：PASS，含 17 個 YAML／RViz、11 個 XML／SDF／xacro、105 個 Python、4 個 Bash，以及兩／三錨點在 ekf／ground_truth 模式的 xacro 展開與設定一致性。
+- `git diff --check`：通過。
+
+### 限制與下一步
+
+- 本環境沒有 ROS，未執行 Docker、colcon、Gazebo 或硬體；上述測試不代表實際 Nav2 動作傳輸、搶占與跟隨距離驗收通過。
+- Nav2 伺服器或地圖轉換持續不可用、目標接受回呼失聯時仍保留導航控制權並停止，不以 DIRECT 追逐隱藏人物；等待接受的時間取決於外部服務，不保證此時能移動。
+- 請維護者執行 Humble 容器建置／測試及相同人物速度的直線、轉彎與過近停止模擬，比對平均距離、模式停留、目標取消次數、速度過期與停用／關閉行為。開發基準維持純模擬。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 遮擋期間持續 NAV2、終止後限頻刷新與無取消排空震盪 | 待驗證 |
+| BLOCKED_WAIT 上限、伺服器／地圖不可用時停止與診斷 | 待驗證 |
+| 持續暢通且近距離才返回 DIRECT、取消一次與首筆零速度 | 待驗證 |
+| 過近／遺失／過期／雷射失效／前方障礙／停用／關閉安全 | 待驗證 |
+| 看門狗唯一發布 `/cmd_vel`、Humble colcon 建置與測試 | 待驗證 |
+| Fortress 直線／轉彎跟隨距離、延遲與過近停止重測 | 待驗證 |
 ## 2026-10-24：Nav2 fork 與 TEB 整合
 
 ### 本次完成
@@ -1303,6 +1482,12 @@
 
 審查時間：2026-10-24 16:30（台北時間）；結果紀錄於 Docker 專案 shopobs（t30s）。
 
+## 2026-10-24：t35 撤回與跟隨模擬審查（17:10 台北時間）
+
+- t35（遮蔽時持續由 Nav2 接手、不取消重送）在 Gazebo follow-eval 反而變差：直線平均距離 3.64 公尺、轉彎 4.17 公尺（t32 為 3.03／3.47，develop 基準 t18s 為 2.89／3.36，目標 1.0 公尺）。205 筆 1 Hz 診斷中 NAV2_HANDOFF 佔 205、其中 162 筆 `los_blocked=True`，Nav2 接手期間平均命令速度僅 0.10 m/s（人物 0.35 m/s），51 筆為「Forward blocked; rotation allowed」。因此以 `git revert` 撤回 t35 程式與測試，保留 t32 行為；本節上方 t35 紀錄僅作歷史參考。
+- 推論：主要瓶頸是視線遮蔽判定過於保守（大量誤判遮蔽）與 Nav2 接手時速度過低，不是 BLOCKED_WAIT 本身；需另外調整 LOS 判定寬度／去彈跳與 Nav2 跟隨速度上限，再以 follow-eval 驗證。ROADMAP「評估濾波延遲、轉彎跟隨…」維持未勾選。
+- 已驗證：filter latency 0.07–0.08 s PASS；near_stop PASS；pytest 893 passed。fault-check 結果見合併 PR 說明。
+
 ## 2026-10-24：可重現離線評估的錄製來源、重跑驗證與多次彙整
 
 ### 本次完成
@@ -1340,6 +1525,36 @@
 
 審查時間：2026-10-24 17:40（台北時間），Docker 專案 shopscen（t31s／t31f）。修正：整數 YAML 航點使 uwb_sim_node 崩潰（'y' 須為 float），person_path 改為一律回傳 float 並加測試。
 
+## 2026-10-24：LOS 足跡檢查縮至跟隨停止點（待模擬驗證）
+
+- `line_of_sight_clear` 新增可選的 `follow_distance` 關鍵字參數，舊呼叫維持原行為。目標距離大於跟隨距離時，足跡檢查長度改為 `distance - max(los_margin, follow_distance)`，排除停止點與人物間的回波；一般與加寬 LOS 均使用控制器的跟隨距離，保留原寬度、去彈跳、寬度遲滯與 NAV2_HANDOFF 狀態機。
+- 目標距離小於或等於跟隨距離時，仍檢查至 `distance - los_margin`，範圍內有回波就回報阻擋；距離小於或等於 margin、掃描無效或目標方向無涵蓋時，保留不淨空判定。既有近距離停車與障礙安全邏輯維持原樣。
+- 補上停止點前後障礙、側向 0.45／0.35 公尺貨架、近距離與端點、參數／掃描失效，以及節點兩種 LOS 與跟隨距離轉送的回歸測試。
+- 本機自行檢查：根目錄 `python3 -m pytest -q` 因系統缺少 pytest 無法執行，改用允許的 `/workspace/scratch/venv-shop/bin/python -m pytest -q`，結果 912 passed、1 skipped、1 warning（既有 xacro 棄用警告）。儲存庫無 `tools/check_static.py`，使用現有 `scripts/check_static.py`；系統 Python 缺少 PyYAML，改用同一虛擬環境執行後 PASS，包含 YAML、XML、Python／launch 語法與 xacro 展開。
+- 限制與下一步：本次未執行 Gazebo、Humble 或容器驗收；需重跑 follow-eval，比較平均跟隨距離、LOS 阻擋比例及交接行為，並確認貨架轉角與近距離停止安全。未更動 Nav2 設定、Docker 或其他套件，未執行 git 指令。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| LOS 停止點與近距離回歸、節點參數轉送 | 待驗證 |
+| Gazebo follow-eval、貨架避障與交接安全 | 待驗證 |
+
+## 2026-10-24：障礙停車時安全原地轉向（待模擬驗證）
+
+- `shopping_uwb_follow` 新增並宣告布林參數 `obstacle_stop_rotate: true`。直接跟隨且未啟用繞行或 Nav2 不可用時，`OBSTACLE_STOP` 的線速度立即固定為 0；僅在目標新鮮、掃描有效且既有旋轉足跡檢查淨空時，依 `kp_bearing` 與原有角速度／角加速度限制朝人物原地轉向。設為 false 即恢復雙軸停止。
+- 直接跟隨也建立 TF listener；旋轉淨空只依賴雷射到車體的 TF，不要求 map TF 或 Nav2。目標遺失／過期、過近、掃描失效、旋轉不淨空、停用或安全 guard 的 STOP／STALE 均立即雙軸歸零；保留 Nav2 交接、LOS 與既有前方淨空恢復判斷。
+- 補上正負方位、角速度與加速度限制、持續零線速度、故障立即停止、參數停用、缺少 map／雷射 TF、Nav2 不可用與前方清空恢復的純邏輯及節點替身測試。本機自行檢查：`/workspace/scratch/venv-shop/bin/python -m pytest -q` 為 946 passed、1 skipped、1 warning（既有 xacro 棄用警告）；同一 Python 執行 `scripts/check_static.py` 為 PASS，包含 YAML、XML、Python／launch 語法與兩／三錨點、ekf／ground_truth xacro 展開。
+- 限制與下一步：未執行 Gazebo、Humble 或容器驗收；需以 `route_around:=false`、`fault_injection:=true` 重跑轉角跟隨及 fault-check，確認原地旋轉淨空、恢復移動與故障停止。未修改其他套件，未執行 git 指令。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| 原地旋轉安全條件、加速度限制與停用參數回歸 | 待驗證 |
+| Gazebo 轉角脫困、恢復跟隨與 fault-check 移動基準 | 待驗證 |
+
+## 2026-10-24：follow-los 模擬審查（17:58 台北時間）
+
+- t39s（含 t40 LOS 修正，route_around:=false）：fault-check obstacle 與 follow 套件全部「no moving baseline」→ **FAIL**。log 顯示機器人起步跟隨（v 0.18–0.5、w 至 0.72），轉彎切角後前方 0.593 m < 0.65 進入 OBSTACLE_STOP，v、w 皆 0 且永不恢復，人員離開至 5.6 m。
+- 已由 t44 加入 `obstacle_stop_rotate`（預設 true）：OBSTACLE_STOP 時線速度維持 0，旋轉淨空且目標新鮮時原地轉向人員；pytest 946 passed，**待模擬驗證**。
+- follow-eval 未跑完（為讓出模擬鎖給 hw／split 提前停止）。此分支**未合併**；下一步：重建後跑 fault-check --suite obstacle／follow 與 follow-eval，確認不再卡死且追蹤距離改善後再開 PR。
 ## 2026-10-24：硬體介面分支審查結果（18:03 台北時間）
 
 | 項目 | 結果 |
@@ -1353,11 +1568,12 @@
 
 - 合併 develop 時 sim.launch.py 保留分源 bridge（lidar／imu／base 各自受 `use_real_*` 控制）並接上情境出生姿態與行人；測試替身新增 `pedestrian_actions`。
 
-## 2026-10-24 container-split review (merge to develop)
-- t42 (pre-hw tree cf88ae5): colcon test 667/0; split guide nav-check 5/5; XRCE comm-e2e 7/7.
-- Re-merged develop after hw-interfaces (#19): sim.launch.py keeps split's start_sim/start_localization GroupActions and adds hw's validate_sources, per-source lidar/imu/base bridges and wheel_odom_noise simulate_* flags. tests/test_hardware_launch.py now flattens GroupAction. pytest 972 passed.
-- NOT verified: Gazebo sim on the post-hw merged tree (70046eb+) — run guide nav-check + comm-e2e again next session.
-- Supersedes codex/microros-agent-e2e.
+## 2026-10-24：容器拆分審查（合併至 develop）
+
+- t42（硬體介面整合前 cf88ae5）：colcon test 667／0；拆分 guide nav-check 5/5；XRCE comm-e2e 7/7。
+- 硬體介面 #19 後再次合併 develop：sim.launch.py 保留拆分分支的 start_sim／start_localization GroupAction，加入硬體介面的 validate_sources、各來源 lidar／imu／base bridge 與 wheel_odom_noise simulate_* 旗標。tests/test_hardware_launch.py 改為展開 GroupAction；pytest 972 passed。
+- 尚未驗證：硬體介面整合後版本（70046eb+）的 Gazebo 模擬；下次須再執行 guide nav-check 與 comm-e2e。
+- 本次取代 codex/microros-agent-e2e 的工作。
 
 ## 2026-10-26：Mac Apple Silicon 原生容器、SLAM 與整合回歸
 
@@ -1446,6 +1662,125 @@
 | through-poses `/cmd_vel` 重映射與單一發布者 | 審查端 Linux amd64（2026-10-27）：fork 障礙物 fault-check 4/4，`/cmd_vel` 只有 cmd_vel_watchdog 一個發布者 |
 | 預設 `auto` 選擇與回退 | 審查端：pytest（test_mode_launch 53 項、全套 1041）通過；`auto` 實際載入 fork 的 Gazebo 確認併入合併後動態情境重跑 |
 
+## 2026-10-27：follow-los 與 develop 衝突整合
+
+- 以 develop 為執行時基準，保留近停釋放遲滯、大角度先對準、guard 接手側向減速、短暫 map TF 快取、人物非同步服務、Smac2D 及原有 YAML 數值；只增加必要的 `obstacle_stop_rotate` 設定。歷史前饋／距離保持實驗保留於診斷用途，執行時預設不啟用；不引入控制器真值輸入。
+- 疊加 t40：一般與加寬 LOS 均檢查至跟隨停止點，保留近距離 margin 與失效保護。疊加 t44：前方受阻立即固定零線速度，僅在有效目標、有效雷射／TF、至少 0.45 公尺旋轉圓盤淨空且未由 Nav2 接手時，允許受角速度／角加速度限制的原地轉向。近停／遺失／過期／guard STOP 或 STALE 均優先雙軸停止；前方清空後仍須遵守大角度對準遲滯。
+- Nav2 交接遵循 develop 的成功返回 DIRECT、接近與 LOS 恢復規則，沒有重新套用已撤回 t35 的持續持有策略；保留分支既有的命令安全轉送及取消／排空生命週期。README、ARCHITECTURE、METRICS 保留雙方內容，舊設計明確列為歷史；本檔保留雙方全部工作紀錄，依日期與已知審查時間排列。
+- 自行檢查：`/workspace/scratch/venv-shop/bin/python -m pytest -q` 為 1158 passed、1 skipped、1 warning（既有 xacro 棄用警告）；同一 Python 執行 `scripts/check_static.py` 為 PASS：4 個訊息介面、31 份 YAML／RViz、15 份 XML／SDF／xacro、151 份 Python、7 份 Bash、7 種情境，含兩／三錨點在 ekf／ground_truth 的 xacro 展開。`git diff --check` 與全儲存庫衝突標記檢查通過；這些為純 Python／靜態驗證，不能取代模擬驗收。
+- 限制與下一步：本次未執行 Docker、Gazebo、ROS 或硬體驗收；需重跑轉角跟隨、follow-eval、fault-check obstacle／follow，確認恢復移動、追蹤距離與故障停止。未提交或推送，合併結果留待使用者審查。工作檔衝突已清除，但此沙盒將實際 Git 索引目錄 `/workspace/repos/Almighty-shopping-car/.git/worktrees/follow-los/` 設為唯讀，`git add` 因無法建立 `index.lock` 失敗；須在可寫入索引的環境執行 `git add -u` 才能將衝突標記為已解決，合併仍未提交。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| develop 行為、t40／t44 與安全優先序回歸 | 待驗證 |
+| 文件歷史、設定值與衝突清除 | 待驗證 |
+| Gazebo 轉角恢復、follow-eval 與故障驗收 | 待驗證 |
+
+## 2026-10-27：近距離鎖定跨 Nav2 路徑防護
+
+- 依使用者提供的 `t65-los-turns-check.txt`：171.96 秒開始的過近事件在 174.88／174.90 秒違規，243.98 秒開始的事件在 246.86／246.88／246.90 秒違規，分別為事件後 2.92–2.94／2.88–2.92 秒；門檻仍為真值距離低於 0.6 公尺、寬限 0.5 秒後平面速度不超過 0.03 m/s 且角速度絕對值不超過 0.05 rad/s。另有 211.20 秒事件為 NOT_COVERED，不能算通過。develop 對照為五次過近事件全部 PASS。
+- 程式確認的缺口：`FollowController` 原本就先檢查 `near_latched`，因此直接避障旋轉與 FOLLOWING 對準不會繞過鎖定；但節點的 guard STOP／STALE 會將 TOO_CLOSE 覆寫成 OBSTACLE_STOP，交接管理器與 `NavigationGuard` 原本只依狀態字串判斷過近，未直接檢查鎖定。這是本次修補的安全優先序缺口，尚不能認定為上述兩次真值違規的已證實根因：同一 tick 的 guard STOP／STALE 也會禁止 Nav2 輸出，且新交接另受距離大於 1.3 公尺限制。
+- 日誌證據與限制：`t65-los-turns-launch.log` 全檔未出現 `Forward blocked; rotating toward target`；七筆 `Forward blocked; rotation allowed` 的估測距離為 1.041–1.810 公尺。兩段穿越附近，牆鐘 1793036623.316712 記錄距離 0.081 公尺／方位 2.888 rad，1793036624.358174 為 0.389 公尺／3.068 rad；另一段 1793036698.776129 為 0.211 公尺／3.030 rad，1793036699.812090 為 0.500 公尺／3.037 rad。這些均為 DIRECT、取消完成、雙軸零命令。可見的重新對準分別在 1793036626.407060（估測距離 0.982 公尺、角命令 0.825 rad/s）與 1793036700.835890（0.800 公尺、0.074 rad/s）。舊診斷僅 1 Hz 且沒有模擬時間；錄製起點牆鐘 1793036521.76 對應模擬 82.517 秒與約 0.92 即時倍率不足以精確定位 0.04–0.06 秒違規尾段，不能據此斷言當時有非零旋轉命令或排除接觸物理微動。
+- 修改：guard 保留 TOO_CLOSE；交接管理器直接接收 `near_latched`，鎖定期間不得送出／更新目標，既有 Nav2 交接立即取消；`NavigationGuard` 直接接收鎖定並立即清零雙軸與內部殘速。直接跟隨沿用既有解除距離與 0.3 秒持續淨空判斷，不改控制參數、評估指標或門檻。診斷新增模擬時間、鎖定狀態及解除累計秒數。
+- 新增純 Python 回歸：人物由前方穿越原點至後方，旋轉淨空為真時，0.59／0.70 公尺仍保持零輸出；分別覆蓋前方受阻旋轉、前方清空對準、Nav2 既有旋轉立即停止、被 guard 遮蔽狀態的禁止交接／取消，以及實際節點 callback 在 STOP／STALE／CLEAR 下的取消期間零輸出。亦確認解除計時不足及淨空中斷時不釋放，持續淨空後才恢復受限旋轉。
+- 追蹤退化：直線／轉彎距離誤差 RMSE 由 develop 的 0.6355／0.6724 公尺變為 0.7680／0.8054 公尺。比對確認預設前饋與距離保持實驗均未啟用，預設比例控制律相同；LOS 改查至跟隨停止點、Nav2 旋轉轉送及目標更新生命週期改變可能影響軌跡，但現有摘要不足以單獨歸因，本次不調參。
+- 自行檢查：指定虛擬環境執行根目錄 `python -m pytest -q`，1168 passed、1 skipped、1 warning（既有 xacro 棄用警告）；`scripts/check_static.py` PASS，涵蓋 YAML、XML、launch／Python 語法及兩／三錨點兩種里程計模式的 xacro 展開；`git diff --check` 通過。未執行 Docker、ROS、Gazebo、硬體、提交或推送。
+- 限制與下一步：本次完成近距離鎖定的明確跨路徑防護，尚未證明真值 near_stop 回歸已消失。需重跑相同 supermarket 的 `follow_turns`、`follow_stop_go` 與 `fault-check`（跟隨及障礙），保留既有門檻；針對兩段穿越同步記錄模擬時間的逐 tick 鎖定／命令、底盤最終 Twist、真值速度與碰撞接觸，區分命令旋轉與接觸微動。1 Hz 診斷仍不能取代逐 tick 證據。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| 近距離鎖定跨直接跟隨、Nav2 交接與轉送回歸 | 待驗證 |
+| follow_turns／follow_stop_go 真值過近停止與追蹤誤差 | 待驗證 |
+| fault-check 跟隨及障礙停止 | 待驗證 |
+
+
+## 2026-10-27：TRACKING 貼架退化分析與繞行恢復修補
+
+### 離線證據
+
+- 僅讀取既有 `bags/t65b_dump.jsonl`、`bags/t65b_turns` 對應資料及 `/workspace/wt/logs/shop/t65-*` 日誌；拋棄式分析程式與輸出為 `/tmp/analyze_follow_los.py`、`/tmp/analyze_follow_los.txt`，未加入儲存庫。真值僅用於此次離線分析，未進入控制器。
+- 原評估門檻及樣本保留：develop 直線／轉彎距離誤差 RMSE 為 0.6355／0.6724 公尺，最大距離 2.392 公尺；LOS run1 為 0.7680／0.8054；`0bdb4c1` run2 為 1.0516／1.2379，最大距離 4.573 公尺。stop-go run2 約 1.04／0.98，直線／轉彎／near_stop 均 PASS。turns run2 的 near_stop 仍為 FAIL，原違規時間不刪除；依審查者提供的逐筆調查，為人物圓柱穿越、推動零命令且 TOO_CLOSE 的車體之模擬接觸現象，本次不處理該物理問題。
+- 以下採 turns run2 原評估區間 `[82.097, 262.097]` 秒，以各 topic 最新已收到樣本做分段常值時間積分；距離誤差為真值距離減 1 公尺。這是歸因統計，與正式評估的插值／轉彎分類樣本統計不同，不修改正式評估器，也不排除安全停止。
+
+| 模式 | 時間（秒） | guard SLOW（秒） | STOP（秒） | CLEAR（秒） | STALE（秒） | 距離誤差 RMSE（公尺） |
+| --- | --- | --- | --- | --- | --- | --- |
+| NAV2_HANDOFF | 99.354 | 92.701 | 1.587 | 5.066 | 0 | 0.6996 |
+| DIRECT（含所有停止與等待） | 80.646 | 51.411 | 16.611 | 8.291 | 4.333 | 1.3838 |
+
+- 全段時間加權 RMSE 為 1.0621 公尺；153–177 秒的 24 秒為 2.3757 公尺，占全段平方誤差積分 **66.7%**（135.454／203.065 公尺平方・秒）。其餘 156 秒為 0.6583 公尺，接近 develop 摘要的誤差量級，但沒有 develop 原始 bag 可作相同方法的逐段比較。develop launch 日誌沒有跟隨診斷樣本，不能量化其 DIRECT／NAV2 時間、guard 占比與交接位置；不可把日誌中的導航開始／取消數當作精確模式時間。
+- 關鍵 24 秒有 23.241 秒 SLOW、0.759 秒 CLEAR；最終 `/cmd_vel` 平均線速度 0.0981 m/s、guard 平均倍率 0.3117、平均 swept clearance 0.2757 公尺。159–167 秒診斷持續要求約 0.50 m/s，160／166 秒最終命令約 0.0964 m/s，guard 倍率約 0.1928。160 秒車體 x=2.0565，SDF 貨架右緣 x=1.6，側向中心間距約 0.4565 公尺，扣車體半寬 0.25 後僅約 0.2065 公尺；guard 掃掠淨空約 0.2287 公尺，符合側邊貨架限制的量級。前方診斷仍約 1.2 公尺，LOS 已清楚，直接追蹤只對準遠方人物，未能迅速回到走道中央。
+
+### 交接位置與觸發限制
+
+下表採 `/follow/state` 第一次觀察到模式變更的時間及最近一筆車體真值。主要縱向走道中心 x=2.4；入口橫向通道中心 y=0，接近入口的位置應比較 y，不能將 x 接近 0 誤判為縱向走道偏移。首尾交接區間受錄製邊界截斷。
+
+| 模擬時間（秒） | 事件 | 車體位置（公尺） | 相對通道中心 |
+| --- | --- | --- | --- |
+| 97.551 | NAV2 → DIRECT | (2.412, 4.704) | x 偏移 +0.012 |
+| 107.052 | DIRECT → NAV2 | (2.412, 4.705) | x 偏移 +0.012 |
+| 133.854 | NAV2 → DIRECT | (0.116, 0.603) | 入口 y 偏移 +0.603 |
+| 144.007 | DIRECT → NAV2 | (0.116, 0.604) | 入口 y 偏移 +0.604 |
+| 152.910 | NAV2 → DIRECT | (1.965, 0.245) | 轉入 x=2.4 走道，x 偏移 −0.435 |
+| 194.507 | DIRECT → NAV2 | (2.263, 1.679) | x 偏移 −0.137 |
+| 205.855 | NAV2 → DIRECT | (0.108, 0.594) | 入口 y 偏移 +0.594 |
+| 215.955 | DIRECT → NAV2 | (0.107, 0.595) | 入口 y 偏移 +0.595 |
+| 241.661 | NAV2 → DIRECT | (2.417, 4.703) | x 偏移 +0.017 |
+| 250.956 | DIRECT → NAV2 | (2.417, 4.704) | x 偏移 +0.017 |
+
+- 152.801 秒仍為 NAV2；152.910 秒為 `OBSTACLE_STOP: Obstacle or unavailable scan; waiting for navigation stop`，152.937 秒恢復 FOLLOWING。152.150 秒診斷人物距離 1.539 公尺／方位 0.774 rad，153.150 秒為 1.609 公尺／0.636 rad；同期 Nav2 日誌為 client requested cancellation，沒有成功到達或規劃失敗。這支持「單次安全資料／TF 缺口取消未完成的繞行」；現有 bag 未錄 `/scan`、估測目標、TF 或逐 tick supervisor 原因，不能確定是哪一項失效，也不能將此事件當成已證實的正常近距離出口。程式的失效路徑會取消 Nav2 並清掉受阻計時，之後 LOS 清楚就不再交接，正好留下貼架 DIRECT 的長尾。
+
+### 修改與理由
+
+- 純邏輯 `follow_handoff.py` 新增未完成繞行意圖：安全資料失效立即取消、保持零輸出；資料恢復後，如果直接路徑的側向／朝向仍不合適，沿用原有距離、交接延遲及失敗冷卻重新交接，即使 LOS 已清楚。近距離鎖定、LOST、停用及時間倒退會清除此意圖；安全鎖定不被恢復程序繞過。
+- 人物超過跟隨距離時，正常出口要求接近、LOS 遲滯、前方淨空、側向空間及朝向持續成立，導航成功也不能跳過遠距離出口保護。審查修正補回已追上人物的出口：LOS 經遲滯確認、人物距離不超過 `follow_distance`，且已滿足 `min_nav_hold` 或導航成功，即交回 DIRECT，不受 `direct_clear` 限制。Nav2 目標為人物自身的 map 位置，窄走道不能因側向空間不足而持續導航至過近安全停止；直接跟隨應在跟隨距離停止／保持。人物移動時，成功目標仍沿用既有 0.4 公尺／0.5 秒更新機制。Nav2 接手期間維持獨占命令、既有取消／終止／排空流程與線角加速度限制。
+- **未改 YAML 或任何參數值**。新出口檢查重用 `side_free_clearance=0.75`：相較貼架約 0.4–0.5 公尺側距，提供明確離架條件；0.8 公尺半寬走道仍可滿足。按 guard 的半寬 0.25、margin 0.10、slow_extra 0.50，筆直近側距 0.75 時理想倍率約 0.8，0.5 m/s 命令可保留約 0.4 m/s，實際仍受掃掠與遲滯限制。因此使用側向距離判定，沒有要求 guard 一定 CLEAR（人物本身也可能造成 SLOW）。朝向重用 `rotate_to_target_release_angle=0.25`，讓 Nav2 完成轉入走道再交回直接控制。這些是新增用途的幾何依據，改善幅度待模擬確認。
+- 節點在恢復交接前以 BLOCKED_WAIT 保持零命令；每次取消額外記錄模擬時間、supervisor 出口原因、側向距離、恢復意圖、雷射／map 有效性、前方距離、guard 狀態及目標年齡，避免 1 Hz 診斷漏掉單次取消來源。README 跟隨段落新增目前生效規則，保留舊分支歷史。
+- pytest 新增單次雷射失效取消後的真實節點 callback 回歸、LOS 清楚仍須恢復繞行、側距／朝向出口邊界、近停與遺失等清除恢復意圖、成功後持續更新人物、遠距離成功不可跳過持有與淨空遲滯；補上窄走道側向空間不足時，已追上人物仍可返回 DIRECT、導航成功可略過最短持有時間但不能略過 LOS 遲滯的回歸，並保留遠距離低側距維持 NAV2 的測試。未放寬任何測試或評估門檻。
+
+### 自行檢查、限制與下一步
+
+- 指定沙盒執行 `/workspace/scratch/venv-shop/bin/python -m pytest -q`：**1192 passed、1 skipped、1 warning**（既有 xacro 棄用警告），25.60 秒；`scripts/check_static.py` PASS，涵蓋 31 份 YAML／RViz、15 份 XML／SDF／xacro、152 份 Python／launch、兩／三錨點的 ekf／ground_truth xacro 展開及設定一致性。`git diff --check` 通過。全程未執行 Docker、ROS、Gazebo、其他模擬、硬體、提交或推送；離線積分與純 Python／靜態驗證不是閉迴路驗收。
+- 維護者需以同一 supermarket 與既有參數分別重跑 `follow_turns`、`follow_stop_go`、跟隨及障礙 `fault-check`，保留評估門檻與 near_stop 原始違規。同步錄製 `/scan`、TF、`/uwb/target`、`/follow/state`、`/safety/obstacle_state`、最終 `/cmd_vel` 及離線真值；核對每次退出原因、恢復意圖、側距與朝向，確認 153–177 秒式的貼架限速長尾消失，且新條件沒有造成 Nav2 長期無法返回或故障恢復延遲。人物穿越推車現象另外保留接觸證據，不能隱藏或當作本次已修好。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| 離線時間／誤差歸因與交接位置 | 待驗證 |
+| 繞行恢復、側向出口及近停安全回歸 | 待驗證 |
+| follow_turns／follow_stop_go TRACKING 與 near_stop | 待驗證 |
+| 跟隨及障礙 fault-check | 待驗證 |
+
+### 同日審查修正：窄走道追上人物的出口
+
+- 保留 t72 的 `recovery_pending` 與遠距離 `direct_clear` 門檻，補回跟隨距離內的 LOS 清楚出口；README 同步區分近距離停止／保持與遠距離貼架保護。
+- 本次僅執行指定沙盒 pytest 與差異檢查；未執行 Docker 或模擬，亦未提交或推送。指定 `/workspace/scratch/venv-shop/bin/python -m pytest -q` 結果為 **1196 passed、1 skipped、1 warning**（既有 xacro 棄用警告），25.50 秒；`git diff --check` 通過。窄走道閉迴路行為仍待模擬驗收。下一步由審查者核對出口條件並執行既有模擬驗收。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| 窄走道近距離退出與遠距離側距限制 | 待驗證 |
+
+## 2026-10-27：修正 map TF 暫失造成跟隨繞障與等待死鎖
+
+### 本次完成
+
+- 比對 `develop`，確認分支新增的繞障恢復旗標與無期限 `BLOCKED_WAIT`，會在 map TF 暫失、側向淨空不足時阻止直接跟隨。
+- 雷射 LOS 與 map 目標有效性分離；精確時間 map TF 失敗時，改查最新 TF，僅接受相對節點時鐘不超過 0.3 秒且非未來的資料。無有效 map TF 時回傳空目標，仍保留實際雷射 LOS，不再沿用舊 map 目標快取。
+- 新增 `map_invalid_grace: 0.5`，僅於 map 目標連續無效達寬限時間後退出 NAV2；導航失敗或取消仍立即退出並保留既有重試冷卻。寬限期間不提交空目標，也不放行缺少有效 map 目標的導航速度。
+- 新增 `max_blocked_wait: 4.0`；supervisor 統一決定等待，僅在 map 目標有效、Nav2 action server 就緒且冷卻結束時允許。單次阻擋等待到期後維持 DIRECT，直到阻擋條件解除才重設到期旗標，避免立即重啟相同等待。
+- 兩個參數經節點既有 `HandoffParams` 欄位迴圈宣告，並明列於 YAML。未更動安全淨空、速度／加速度或評估門檻，控制器未新增 ground truth 來源。
+- 補上純邏輯與實際回呼測試，涵蓋無 map TF 的真實 LOS、最新 TF 時效邊界、寬限計時重設、等待到期、導航不可用、失敗冷卻，以及各種退回直接跟隨路徑的安全停止與側向減速。
+
+### 已執行檢查與方法（執行紀錄，非審查驗證）
+
+- 系統 `python3` 缺少 pytest；透過 `PATH=/workspace/scratch/venv-shop/bin:$PATH` 選用既有指定虛擬環境。
+- 執行 `nice -n 19 python3 -m pytest -q ros2_ws/src/shopping_uwb_follow/test tests/test_mode_launch.py tests/test_follow_loop_sim.py`：672 項通過。
+- 新增最後一項 map 寬限回呼測試後，僅重跑 `nice -n 19 python3 -m pytest -q ros2_ws/src/shopping_uwb_follow/test/test_follow_handoff_callbacks.py`：101 項通過。
+- 修改的節點／純邏輯 Python AST 語法檢查、跟隨 YAML 解析及參數值檢查、`git diff --check` 通過。未修改 launch、xacro 或 XML。
+
+### 限制與下一步
+
+- 本次僅執行指定離線測試，未執行完整測試套件、colcon、Docker、模擬或硬體驗收，未干擾共用主機既有 Gazebo。
+- 導航取消仍須等待既有終止確認與速度排空才能交回直接控制，等待期限不會略過速度所有權保護。
+- 後續由審查者在既有 AMCL／Nav2 跟隨情境重做 TF 暫失故障檢查，確認實際移動與狀態轉移。
 
 ## 2026-10-27：Linux 動態情境離線根因分析與修正
 
@@ -1476,6 +1811,34 @@
 
 | 項目 | 結果 |
 | --- | --- |
+| map TF 暫失、LOS 獨立性與最新 TF 時效 | 待驗證 |
+| NAV2 寬限、失敗冷卻與等待上限 | 待驗證 |
+| 直接跟隨安全停止與側向減速 | 待驗證 |
+| AMCL／Nav2 模擬故障檢查 | 待驗證 |
+
+## 2026-10-27（t74／t76）：follow-los 模擬驗收與未合併原因
+
+| 項目 | 結果（b6afb07） | develop 基準 |
+| --- | --- | --- |
+| follow_turns 距離誤差 RMSE 直線／轉彎 | 0.628／0.638 m（不再退步） | 0.636／0.672 m |
+| follow_turns near_stop | FAIL @103.16 s：腳本人物路徑穿過機器人中心（真值距離 0.00 m @102.1 s），命令為 0、機器人被推（vx 0.011）→ 腳本人物假象，門檻不放寬 | PASS 5/5 |
+| follow_stop_go | PASS（0.343／0.352） | PASS |
+| fault-check（t76） | **FAIL 3/7**：uwb_stale／dropout／noise PASS；lidar_drop、lidar_freeze、odom_freeze、lidar_front 無移動基準 | 7/7 |
+
+fault-check 根因：map→base_link TF 精確時間查詢暫時失敗（map_valid=False）即退出 NAV2，`recovery_pending` 因側向淨空 0.43–0.47 m < 0.75 m 永不解除，節點無期限保持 BLOCKED_WAIT，機器人不動；map TF 失敗時 LOS 也被誤判為受阻。
+
+c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s、`max_blocked_wait` 4.0 s，安全停止不變；指定離線測試 672 項通過。模擬驗證（c627756）：
+
+| 項目 | 結果 | develop 基準 |
+| --- | --- | --- |
+| fault-check（t77） | **7/7 PASS**（與 t76 shop-dyn follow fault 同時執行，負載較高仍通過） | 7/7 |
+| follow_turns（t78）距離誤差 RMSE 直線／轉彎 | 0.590／0.593 m，near_stop PASS 5/5 | 0.636／0.672，5/5 |
+| follow_stop_go（t78） | PASS（near_stop PASS） | PASS |
+| reacquire | NOT_COVERED（情境未涵蓋，與 develop 相同） | NOT_COVERED |
+
+本輪 near_stop 未再出現腳本人物穿過機器人的假象，人物路徑未修改。驗證通過後合併進 develop。
+
+下一步：加入涵蓋 reacquire 的跟隨情境；near_stop 若再出現人物穿過機器人中心，改腳本人物路徑（不放寬門檻）。
 | 離線數字與根因交叉檢查 | 待驗證 |
 | 全域雷射障礙標記與清除 | 待驗證 |
 | 區域終點定位驗證與失敗處理 | 待驗證 |

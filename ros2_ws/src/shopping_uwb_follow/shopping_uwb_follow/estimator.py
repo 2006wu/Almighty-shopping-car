@@ -81,3 +81,40 @@ class TargetFilter:
 
     def get(self, now):
         return self.value if self.stamp is not None and 0 <= now-self.stamp <= self.timeout else None
+
+
+class TargetVelocityEstimator:
+    """Differentiate UWB positions in odom, then express velocity in base_link.
+
+    Using successive base-frame positions directly mistakes ego motion for target
+    velocity. Gaps/clock resets discard history; bounded EMA limits noise spikes.
+    """
+    def __init__(self, timeout=0.5, alpha=0.2, max_speed=0.6):
+        if (not all(math.isfinite(v) and v > 0 for v in (timeout, alpha, max_speed))
+                or alpha > 1):
+            raise ValueError('Invalid target velocity filter parameters')
+        self.timeout, self.alpha, self.max_speed = timeout, alpha, max_speed
+        self.reset()
+
+    def reset(self):
+        self.previous = self.stamp = None
+        self.velocity = (0.0, 0.0)
+
+    def update(self, target, pose, now):
+        if not all(math.isfinite(v) for v in (*target, *pose, now)):
+            self.reset()
+            return (0.0, 0.0)
+        x, y, yaw = pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        world = (x+c*target[0]-s*target[1], y+s*target[0]+c*target[1])
+        dt = now-self.stamp if self.stamp is not None else 0.0
+        if self.previous is not None and 0 < dt <= self.timeout:
+            raw = tuple((a-b)/dt for a, b in zip(world, self.previous))
+            scale = min(1.0, self.max_speed/max(math.hypot(*raw), 1e-9))
+            self.velocity = tuple(self.alpha*v*scale+(1-self.alpha)*old
+                                  for v, old in zip(raw, self.velocity))
+        else:
+            self.velocity = (0.0, 0.0)
+        self.previous, self.stamp = world, now
+        vx, vy = self.velocity
+        return c*vx+s*vy, -s*vx+c*vy

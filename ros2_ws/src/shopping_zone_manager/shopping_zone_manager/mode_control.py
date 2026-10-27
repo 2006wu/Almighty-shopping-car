@@ -4,7 +4,7 @@ import math
 
 
 ZERO = (0.0, 0.0)
-ALLOWED = {'IDLE': (), 'GUIDE': ('nav',), 'FOLLOW': ('follow', 'nav'),
+ALLOWED = {'IDLE': (), 'GUIDE': ('nav',), 'FOLLOW': ('follow',),
            'TELEOP': ('teleop',), 'ESTOP': ()}
 
 

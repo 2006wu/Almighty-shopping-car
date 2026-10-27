@@ -44,6 +44,41 @@ def test_los_bearing_resolution_wrap_and_strip():
     assert los([1, 4, 4])  # Outside the swept width.
 
 
+@pytest.mark.parametrize('return_range,clear', [(2.5, True), (2.0, True), (1.9, False)])
+def test_los_footprint_ends_at_standoff(return_range, clear):
+    scan = [math.inf, return_range, math.inf]
+    assert los(scan, robot_half_width=0.4, margin=0.35, follow_distance=1.0) is clear
+    # The original signature retains its target-minus-margin endpoint.
+    assert not los(scan, robot_half_width=0.4, margin=0.35)
+
+
+@pytest.mark.parametrize('lateral,clear', [(0.45, True), (0.35, False)])
+def test_los_standoff_strip_aisle_width(lateral, clear):
+    angle = math.atan2(lateral, 1.0)
+    assert los([math.inf, math.hypot(1.0, lateral)], angle_min=0,
+               angle_increment=angle, robot_half_width=0.4, margin=0.35,
+               follow_distance=1.0) is clear
+
+
+@pytest.mark.parametrize('distance', [0.8, 1.0])
+@pytest.mark.parametrize('offset,clear', [(-0.01, False), (0.0, True), (0.01, True)])
+def test_los_inside_follow_distance_retains_target_margin(distance, offset, clear):
+    assert los([math.inf, distance-0.35+offset, math.inf], target_xy=(distance, 0),
+               robot_half_width=0.4, margin=0.35, follow_distance=1.0) is clear
+
+
+def test_los_standoff_retains_margin_and_scan_safety():
+    assert not los([math.inf, 2.6, math.inf], margin=0.35, follow_distance=0.2)
+    assert not los([math.inf]*3, target_xy=(0.35, 0), margin=0.35, follow_distance=1.0)
+    assert not los([math.inf, math.nan, math.inf], follow_distance=1.0)
+    assert not los([math.inf, 0.01, math.inf], follow_distance=1.0)
+
+
+@pytest.mark.parametrize('follow_distance', [0, -1, math.nan, math.inf])
+def test_los_invalid_follow_distance(follow_distance):
+    assert not los([math.inf]*3, follow_distance=follow_distance)
+
+
 def tick(supervisor, now, **kwargs):
     inputs = dict(state='OBSTACLE_STOP', target=(3, 0), los_clear=False,
                   front_clearance=0.4, map_target=(3, 5))
@@ -91,7 +126,7 @@ def test_no_unsafe_handoff(kwargs):
 
 @pytest.mark.parametrize('kwargs', [dict(state='LOST'), dict(state='TOO_CLOSE'),
     dict(enabled=False), dict(scan_valid=False), dict(target=None),
-    dict(front_clearance=math.nan), dict(map_target=None)])
+    dict(front_clearance=math.nan)])
 def test_immediate_cancel(kwargs):
     d = tick(navigating(), 1.01, **kwargs)
     assert d.mode == 'DIRECT' and d.action == 'cancel_goal' and d.direct_publish
@@ -109,12 +144,31 @@ def test_clear_resume_delay_resets_with_obstruction():
     assert tick(s, 4.11, **clear).action == 'cancel_goal'
 
 
-def test_clearance_threshold_and_immediate_close_resume():
+def test_clearance_threshold_and_caught_up_resume():
     s = navigating()
     tick(s, 2, los_clear=True, front_clearance=0.8)
     assert tick(s, 3, los_clear=True, front_clearance=0.8).mode == 'NAV2'
-    assert tick(s, 3.1, los_clear=True, target=(1.0, 0)).action == 'cancel_goal'
-    assert tick(navigating(), 2, nav_status='succeeded').action == 'cancel_goal'
+    assert tick(s, 3.1, los_clear=True, front_clearance=1, target=(1.0, 0)).action == 'cancel_goal'
+    assert tick(navigating(), 2, nav_status='succeeded').mode == 'NAV2'
+
+
+@pytest.mark.parametrize('distance', [0.9, 1.0])
+@pytest.mark.parametrize('status', ['active', 'succeeded'])
+def test_narrow_aisle_caught_up_exit_respects_hold_unless_succeeded(distance, status):
+    s = navigating()
+    clear = dict(state='FOLLOWING', los_clear=True, los_clear_wide=True,
+                 front_clearance=2, target=(distance, 0), direct_clear=False,
+                 nav_status=status)
+    # Low lateral clearance must not keep driving toward the person's goal.
+    assert tick(s, 1.1, **clear).mode == 'NAV2'  # LOS is not confirmed yet.
+    decision = tick(s, 1.71, **clear)
+    if status == 'active':
+        assert decision.mode == 'NAV2'
+        assert tick(s, 2.49, **clear).mode == 'NAV2'
+        decision = tick(s, 2.5, **clear)
+    assert decision.mode == 'DIRECT'
+    assert decision.action == 'cancel_goal' and decision.direct_publish
+    assert not s.recovery_pending
 
 
 def test_goal_updates_use_map_displacement_and_rate_limit():
@@ -125,6 +179,74 @@ def test_goal_updates_use_map_displacement_and_rate_limit():
     assert tick(s, 2.1, map_target=(3.51, 5)).action == 'update_goal'
     assert tick(s, 2.9, map_target=(6, 5)).action == 'none'
     assert tick(s, 3.1, map_target=(6, 5)).action == 'update_goal'
+
+
+@pytest.mark.parametrize('status', ['active', 'succeeded'])
+def test_shelf_side_clearance_gates_far_person_exit(status):
+    s = navigating()
+    clear = dict(los_clear=True, los_clear_wide=True, front_clearance=2,
+                 target=(1.2, 0), nav_status=status)
+    for t in (2, 3, 4):
+        assert tick(s, t, direct_clear=False, **clear).mode == 'NAV2'
+    assert tick(s, 5, direct_clear=True, **clear).mode == 'NAV2'
+    tick(s, 5.3, direct_clear=False, **clear)
+    assert tick(s, 6, direct_clear=True, **clear).mode == 'NAV2'
+    assert tick(s, 6.51, direct_clear=True, **clear).action == 'cancel_goal'
+
+
+@pytest.mark.parametrize('fault', [dict(scan_valid=False), dict(front_clearance=math.nan),
+                                  dict(map_target=None)])
+def test_interrupted_detour_resumes_even_after_los_clears(fault):
+    s = navigating()
+    if fault == dict(map_target=None):
+        assert tick(s, 1.5, **fault).mode == 'NAV2'
+    assert tick(s, 2, **fault).action == 'cancel_goal'
+    assert s.recovery_pending
+    # Reproduce a one-tick safety cancellation at a shelf end: visible but far
+    # person, insufficient lateral clearance, and completed cancel/drain.
+    clear = dict(state='FOLLOWING', los_clear=True, los_clear_wide=True,
+                 front_clearance=2, direct_clear=False)
+    assert tick(s, 6, **clear).mode == 'DIRECT'
+    assert s.recovery_pending
+    assert tick(s, 7.01, **clear).action == 'send_goal'
+    assert not s.recovery_pending
+    assert tick(s, 8, map_target=(4, 5), **clear).action == 'update_goal'
+
+
+@pytest.mark.parametrize('fault', [dict(near_latched=True), dict(state='TOO_CLOSE'),
+                                  dict(state='LOST'), dict(enabled=False)])
+def test_interrupted_detour_never_bypasses_target_safety(fault):
+    s = navigating()
+    tick(s, 2, scan_valid=False)
+    assert s.recovery_pending
+    assert tick(s, 3, **fault).mode == 'DIRECT'
+    assert not s.recovery_pending
+
+
+def test_successful_old_goal_keeps_updating_a_moving_person():
+    s = navigating()
+    assert tick(s, 2, nav_status='succeeded', los_clear=True,
+                map_target=(4, 5)).action == 'update_goal'
+    assert s.mode == 'NAV2'
+
+
+def test_recovery_can_release_to_direct_when_free_path_is_confirmed():
+    s = navigating()
+    tick(s, 2, scan_valid=False)
+    clear = dict(state='FOLLOWING', los_clear=True, los_clear_wide=True,
+                 front_clearance=2, direct_clear=True)
+    assert tick(s, 2.1, **clear).mode == 'DIRECT'
+    assert s.recovery_pending  # A single clear sample cannot release recovery.
+    assert tick(s, 2.71, **clear).mode == 'DIRECT'
+    assert not s.recovery_pending
+
+
+def test_clock_reset_discards_unfinished_detour():
+    s = navigating()
+    tick(s, 2, scan_valid=False)
+    assert s.recovery_pending
+    assert tick(s, 0).mode == 'DIRECT'
+    assert not s.recovery_pending
 
 
 @pytest.mark.parametrize('status', ['failed', 'canceled'])
@@ -269,3 +391,92 @@ def test_drain_no_messages_and_repeated_cancel_do_not_restart_wait():
     assert not d.ready(0.29) and d.ready(0.3)
     assert d.terminal_at == 0.1
     assert not d.ready(-1)
+
+
+def test_visible_far_person_does_not_cancel_detour_during_goal_updates():
+    s = navigating()
+    for i in range(1, 101):
+        t = 1+i*0.2
+        decision = tick(s, t, state='FOLLOWING', los_clear=True,
+                        los_clear_wide=True, front_clearance=2,
+                        target=(3, 0), map_target=(3+0.18*t, 5))
+        assert decision.mode == 'NAV2'
+        assert decision.action in ('none', 'update_goal')
+    # A nearby visible person releases Nav2 after the sustained clear interval.
+    assert tick(s, 22, los_clear=True, los_clear_wide=True,
+                front_clearance=2, target=(0.8, 0.8)).mode == 'NAV2'
+    assert tick(s, 22.51, los_clear=True, los_clear_wide=True,
+                front_clearance=2, target=(0.8, 0.8)).action == 'cancel_goal'
+
+
+def test_navigation_standoff_is_in_front_of_person_and_transforms_to_map():
+    from shopping_uwb_follow.follow_handoff import standoff_target
+    assert standoff_target((3, 4), 1) == pytest.approx((2.4, 3.2))
+    assert math.dist(standoff_target((3, 4), 1), (3, 4)) == pytest.approx(1)
+    assert transform_xy(standoff_target((3, 0), 1), (10, 20, math.pi/2)) == pytest.approx((10, 22))
+    assert standoff_target((0.5, 0), 1) == (0, 0)
+    assert standoff_target((0, 0), 1) == (0, 0)
+    for target, distance in [(None, 1), ((math.nan, 0), 1), ((2, 0), 0), ((2, 0), math.inf)]:
+        with pytest.raises(ValueError):
+            standoff_target(target, distance)
+
+
+def test_configured_safety_envelope_and_speed_budget():
+    import yaml
+    root = Path(__file__).resolve().parents[4]
+    if not (root/'docs').is_dir():
+        root = Path('/repo')
+    if not (root/'docs').is_dir():
+        pytest.skip('repository configuration not mounted')
+    follow = yaml.safe_load((root/'ros2_ws/src/shopping_uwb_follow/config/uwb_follow.yaml').read_text())['/**']['ros__parameters']
+    nav = yaml.safe_load((root/'ros2_ws/src/shopping_robot_navigation/config/nav2_params.yaml').read_text())
+    person = yaml.safe_load((root/'ros2_ws/src/shopping_robot_gazebo/config/person_path.yaml').read_text())
+    assert follow['robot_half_width'] == 0.25
+    assert max(math.hypot(0.30, 0.25), follow['robot_half_width'])+0.05 > math.hypot(0.30, 0.25)
+    controller = nav['controller_server']['ros__parameters']['FollowPath']
+    smoother = nav['velocity_smoother']['ros__parameters']
+    assert person['speed'] == 0.35
+    # A sustained narrow/turn cap can still cause lag at a realistic pace.
+    assert follow['max_linear']*follow['side_min_speed_factor'] < person['speed']
+    assert controller['regulated_linear_scaling_min_speed'] < person['speed']
+    assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
+    assert smoother['max_velocity'][0] == follow['max_linear']
+    assert smoother['max_accel'][0] == follow['max_linear_accel']
+
+
+def test_map_loss_grace_resets_on_each_valid_target():
+    s = navigating()
+    assert tick(s, 2, map_target=None).mode == 'NAV2'
+    assert tick(s, 2.49, map_target=None).action == 'none'
+    assert tick(s, 2.5).mode == 'NAV2'
+    assert tick(s, 3, map_target=None).mode == 'NAV2'
+    assert tick(s, 3.49, map_target=None).mode == 'NAV2'
+    assert tick(s, 3.5, map_target=None).action == 'cancel_goal'
+    assert not tick(s, 3.6).blocked_wait
+
+
+@pytest.mark.parametrize('unavailable', [dict(map_target=None), dict(nav_ready=False)])
+def test_unavailable_handoff_never_holds(unavailable):
+    s = HandoffSupervisor()
+    s.recovery_pending = True
+    for now in (0, 1, 5, 20):
+        d = tick(s, now, state='FOLLOWING', front_clearance=2,
+                 direct_clear=False, **unavailable)
+        assert d.mode == 'DIRECT' and not d.blocked_wait
+
+
+def test_recovery_wait_expires_once_without_restarting_episode():
+    s = HandoffSupervisor(HandoffParams(handoff_delay=10))
+    s.recovery_pending = True
+    for now, held in ((0, True), (3.99, True), (4, False), (5, False), (20, False)):
+        d = tick(s, now, state='FOLLOWING', front_clearance=2,
+                 los_clear=True, direct_clear=False)
+        assert d.mode == 'DIRECT' and d.blocked_wait is held
+
+
+@pytest.mark.parametrize('status', ['failed', 'canceled'])
+def test_failure_cooldown_prevents_blocked_wait(status):
+    s = navigating()
+    tick(s, 2, nav_status=status)
+    for now in (2.01, 3, 4.99):
+        assert not tick(s, now, state='FOLLOWING', front_clearance=2).blocked_wait

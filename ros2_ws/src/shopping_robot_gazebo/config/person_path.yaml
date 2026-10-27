@@ -1,4 +1,5 @@
 # Shared by the visual person and UWB simulator; metres in the world frame.
+# Browsing pace; narrow-clearance and turn speed caps may cause tracking lag.
 speed: 0.35
 waypoints:
   - [1.5, 0.0]
