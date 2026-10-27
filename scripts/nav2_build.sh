@@ -8,7 +8,7 @@ rm -f install/fork_commit
   echo 'Nav2 fork 未初始化 / not initialized: run git submodule update --init third_party/eurobot_nav2 on host.' >&2
   exit 2
 }
-python3 /repo/scripts/check_nav2_contract.py
+python3 /repo/scripts/check_nav2_contract.py --source-only
 mapfile -t packages < /repo/docker/nav2_fork_packages.txt
 export MAKEFLAGS="${MAKEFLAGS:--j3}"
 override=()

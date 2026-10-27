@@ -14,6 +14,7 @@ RUN python3 /usr/local/bin/configure-ros-mirror.py "$ROS_APT_MIRROR" \
     build-essential cmake pkg-config libgraphicsmagick++1-dev libeigen3-dev \
     libyaml-cpp-dev libopencv-dev ros-humble-cv-bridge ros-humble-image-transport \
     ros-humble-behaviortree-cpp-v3 ros-humble-bondcpp ros-humble-nav2-voxel-grid \
+    ros-humble-ompl nlohmann-json3-dev ros-humble-angles ros-humble-eigen3-cmake-module \
     python3-yaml python3-numpy xvfb xauth libgl1-mesa-dri mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /ws

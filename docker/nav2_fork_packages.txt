@@ -9,6 +9,7 @@ nav2_behaviors
 nav2_controller
 nav2_planner
 nav2_navfn_planner
+nav2_smac_planner
 nav2_smoother
 nav2_velocity_smoother
 nav2_lifecycle_manager
