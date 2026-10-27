@@ -200,7 +200,7 @@ def test_stack_selection_and_safety_arguments_are_forwarded_together(name, stack
                 'route_around' if name == 'follow' else 'person',
                 # Container-split role switches.
                 'start_sim', 'start_navigation', 'start_app', 'start_nav_localization',
-                'start_sim_localization', 'mcu_transport'} | ({'start_uwb_sim'} if name == 'follow' else set())
+                'start_sim_localization', 'mcu_transport'} | ({'start_uwb_sim'} if name == 'follow' else {'pedestrian_yield'})
     assert set(declarations) == expected
     assert declarations['nav2_stack'].default_value == 'auto'
     assert set(declarations['nav2_stack'].choices) == {'apt', 'fork', 'auto'}

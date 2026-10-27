@@ -10,6 +10,7 @@ from launch.actions import OpaqueFunction, RegisterEventHandler, SetLaunchConfig
 from launch.event_handlers import OnShutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 from .scenarios import generate_world, load_scenario
 
@@ -66,4 +67,6 @@ def pedestrian_actions(context):
                  arguments=arguments, remappings=[(topic, '/simulation/pedestrian_poses') for topic in pose_topics],
                  parameters=[{'use_sim_time': time}], output='screen'),
             Node(package='shopping_robot_gazebo', executable='pedestrian_mover',
-                 parameters=[{'scenario_file': file, 'use_sim_time': time}], output='screen')]
+                 parameters=[{'scenario_file': file, 'use_sim_time': time,
+                              'yield_to_robot': ParameterValue(LaunchConfiguration(
+                                  'pedestrian_yield', default='true'), value_type=bool)}], output='screen')]

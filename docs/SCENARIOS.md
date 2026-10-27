@@ -10,7 +10,11 @@
 ./scripts/dev.sh scenario-list
 ```
 
-設定位於 `shopping_robot_gazebo/config/scenarios`。`robot_pose` 為世界 x、y、yaw，`person_path` 為字串 `person_path.yaml` 或 `{speed, waypoints, pauses?}`；pauses 與航點等長，缺省皆為 0 秒。`pedestrians` 缺省為空；每人必填唯一 `ped_` 名稱、waypoints、speed、radius、start_delay。速度單位公尺／秒、半徑公尺、延遲秒。軌跡循環包含末點回首點；速度為 0 可只有一點。延遲期間行人已存在並停在首點。未知欄位、非有限數、布林數值及非法名稱皆拒絕。
+設定位於 `shopping_robot_gazebo/config/scenarios`。`robot_pose` 為世界 x、y、yaw，`person_path` 為字串 `person_path.yaml` 或 `{speed, waypoints, pauses?}`；pauses 與航點等長，缺省皆為 0 秒。`pedestrians` 缺省為空；每人必填唯一 `ped_` 名稱、waypoints、speed、radius、start_delay，可選 pauses（與航點等長、秒、非負）。速度單位公尺／秒、半徑公尺、延遲秒。軌跡循環包含末點回首點；速度為 0 可只有一點。延遲期間行人已存在並停在首點。未知欄位、非有限數、布林數值及非法名稱皆拒絕。
+
+額外行人預設會讓行：行人未來 0.5 秒線段若靠近機器人外接圓＋人物半徑＋0.20 公尺，便停下並凍結自己的路徑時間；離開後續走，解除另有 0.05 公尺遲滯，不追趕舊排程。這是模擬情境真實度規則：行人不能持續頂著已停住的機器人前進。只有行人節點使用帶時間戳的模擬真值；導航與機器人控制器均不使用。資料缺失、過期或只有未來樣本時，行人也停止。這不能保證機器人不撞上已停行人，迎面互相停等仍可能導航逾時，須如實記錄。
+
+`guide`／`sim` 可加 `pedestrian_yield:=false` 還原不避讓的舊速度追蹤，用獨立 bag 保存接觸壓力測試；預設為 true。旗標不會還原已更新的 scenario YAML，重現 t71 永久橫越時須另保存並使用該輪舊設定，不可只改旗標便宣稱與 t71 同一情境。人物仍有碰撞與質量，沒有瞬移或接觸後自動重設。
 
 ## 每個情境的操作
 
@@ -19,7 +23,7 @@
 | scenario | launch | 目標／觀察 |
 | --- | --- | --- |
 | default | guide | `goto snacks` → `goto entrance`，確認舊出生位置與無額外行人；另以 follow 核對舊人物路徑 |
-| aisle_crossing | guide | `goto household`，行人在 x=−0.45…0.45、y=3 橫越中間走道；回 `goto entrance`，核對穿越相遇與讓行 |
+| aisle_crossing | guide | `goto household`，行人在 x=−0.45…0.45、y=3 橫越後，沿側邊到 y=5.8，在北側兩航點各停 8 秒再返回；回 `goto entrance`，核對穿越、清空窗口與恢復 |
 | narrow_pass | guide | `goto household` → `goto entrance`，行人在中間 1.6 公尺走道沿 y=4.8…1.2 迎面走動；確認等待／安全繞行及恢復 |
 | checkout_queue | guide | `goto checkout` → `goto entrance`，櫃臺南西側一靜止、一低速排隊者；確認抵達與間距 |
 | follow_turns | follow | 不送人工目標，至少觀察一個完整人物循環，含 x=2.4 走道末端急轉及迴轉 |
@@ -46,7 +50,7 @@
 
 ```bash
 # Terminal 2: wall duration; use a new bag name on each repetition.
-./scripts/dev.sh record aisle_crossing_01 --duration 120 /scan /simulation/poses /tf /tf_static /global_costmap/costmap /local_costmap/costmap
+./scripts/dev.sh record aisle_crossing_01 --duration 300 /scan /simulation/poses /sim/pedestrians /tf /tf_static /global_costmap/costmap /local_costmap/costmap /amcl_pose /plan
 # Terminal 3: one command at a time, after navigation is ready.
 ./scripts/dev.sh goto household --timeout 90
 ./scripts/dev.sh goto entrance --timeout 90
@@ -54,7 +58,7 @@
 ./scripts/dev.sh eval-bag aisle_crossing_01
 ```
 
-其他情境替換名稱並依表送目標。follow 至少錄製 120 秒，完整循環的最低時間可用路徑總長／speed 加 pauses 總和計算；不足一圈應延長。動態行人的 `start_delay` 是世界秒，不是相對送目標；請保存目標送出時刻，若錯過相遇則重跑或依明確記錄的時機送目標，不得將未相遇當作通過。錄製完成後，將本次 scenario YAML、canonical person_path.yaml、zones.yaml、Git 版本與啟動命令保存到 bag 目錄旁；執行期展開檔會於 launch 結束刪除。
+其他情境替換名稱並依表送目標。錄製須覆蓋兩個目標及停止後狀態；範例 300 秒是錄製上限，不改導航與評估門檻。follow 至少錄製 120 秒，完整循環的最低時間可用路徑總長／speed 加 pauses 總和計算；不足一圈應延長。動態行人的 `start_delay` 是世界秒，不是相對送目標；啟用讓行後路徑時鐘會因停等延後，不能再單憑世界時間推算位置。請保存目標送出時刻，若錯過相遇則重跑或依明確記錄的時機送目標，不得將未相遇當作通過。錄製完成後，將本次 scenario YAML、canonical person_path.yaml、zones.yaml、Git 版本、`pedestrian_yield` 值與啟動命令保存到 bag 目錄旁；執行期展開檔會於 launch 結束刪除。新 aisle_crossing 自由循環約 40.7 秒，停等會延長；與 t71 的永久橫越版本分開比較。
 
 在另一個獨立無導航目標的輪次執行一般回歸；`nav-check` 自己會發目標，不能與 goto 同時執行。定位檢查建議使用相同標準地圖與 `alt_start`，並在任何移動前選對情境：
 
@@ -67,8 +71,12 @@
 
 ## 判定與限制
 
+- `goto` 的 SUCCEEDED 另驗證區域座標系的定位 TF：`arrival_xy_tolerance` 預設 0.25 公尺、`arrival_yaw_tolerance` 預設 0.35 弧度、`arrival_max_tf_age` 預設 0.5 秒，沿用 t68 審查值；Nav2 Loose goal checker 仍為 0.15 公尺／0.25 弧度。缺 TF、過期或超差會回報 ABORTED。
+- `guide slam_mode:=map_server` 另外要求 AMCL 樣本：`arrival_max_xy_std` 預設 0.15 公尺（平面最大主軸標準差）、`arrival_max_yaw_std` 0.35 弧度、`arrival_max_amcl_age` 5 秒。缺失、非有限、無效或過期信心皆拒絕成功；SLAM-only 不強制 AMCL。請保存 AMCL 警告，檢查定位／通道後再發目標，不會自動重試或重定位。此檢查只在成功結果時執行，不會自動中止行進；低協方差仍可能錯位，不能取代真值驗收。t71 第一次受推即是低協方差假定位，後續兩次假成功才有足以拒絕的協方差。
+- 分析動態失敗時，除既有安全狀態與 mux／guard／最終命令，須保存 `/amcl_pose`、`/plan` 及兩份 costmap；先比對雷射人物是否同時被全域與局部地圖標為障礙，再檢查定位、重規劃與 STOP 的時間關係。新 bag 不覆寫舊失敗；本批根因與重跑項目見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md)。
+
 - 所有回合保留成功、取消、拒絕、失敗與逾時；每個預期抵達目標 90 秒內 SUCCEEDED，最終真值位置誤差建議 ≤0.20 公尺、yaw 誤差 ≤0.20 弧度。
 - 靜態及人物 `minimum > 0` 為無幾何接觸的最低條件，建議 >0.10 公尺。行人 topic 必須有完整覆蓋、人數與順序正確，不能以 null 或缺 topic 判定通過；檢查 `.meta.json`。
 - `/simulation/poses`、`/sim/pedestrians` 與雷射中的行人位置須一致；在行人位於雷射平面時能看到圓柱，且成本地圖有對應障礙。這部分必須在 Fortress 實測，XML 合法不代表雷射已驗收。
 - 相遇時安全減速／等待／繞行，離開後恢復；跟隨過近及障礙保護檢查完整零 Twist，命令／實際停止延遲依 METRICS 建議 ≤0.30／0.80 秒。純 Nav2 讓行沒有新增自動事件偵測，需核對 bag／影像與命令，不能由 action 成功單獨推定。
-- 圓柱是受命令驅動的行人，沒有避讓機器人的決策；接觸後可能偏離理想軌跡，主要人物的 set_pose 亦可能有服務延遲。任何碰撞或不恢復都記為失敗，不修改控制器或隱藏失敗。尚未提供自動 scenario_check 執行器、連續碰撞監測或跨架構實測。
+- 額外圓柱由 Fortress VelocityControl 驅動，預設讓行；主要跟隨人物的 set_pose 是另一流程，亦可能有服務延遲。請驗證讓行前有行人移動、停等後恢復、缺真值停止、aggressive 旗標可還原；確認清空後兩份 costmap 清除並恢復導航，checkout 完成最終 yaw，以及 AMCL 超限時 ABORTED。接觸、雙方停等不恢復或墜出地板都記為失敗，不以零命令或 action 成功掩蓋。尚未提供完整 kidnap 偵測、自動 scenario_check、連續碰撞監測或本輪跨架構實測；本輪只有離線與靜態檢查。
