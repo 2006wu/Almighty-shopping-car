@@ -1924,3 +1924,56 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 4. 跟隨的重新取得目標（reacquire）情境尚未涵蓋。
 5. checkout_queue 不在範圍（結帳在機上完成）；narrow_pass 低優先。
 6. 硬體 BOM、UWB 錨點與 MCU 型號待定（hardware/README.md）。
+
+## 2026-10-27：依使用者要求關閉開發環境
+
+- 已關閉本專案全部 Compose profiles（split／comm／record）的容器與網路，模擬、ROS 節點、RViz 及 noVNC 一併結束；另關閉本專案的瀏覽器分頁。
+- 保留原始碼、映像、建置磁碟區、地圖、bag 與驗收紀錄；未操作其他專案或 6080。
+- 自行檢查：Compose ps -a 無本專案容器。重新使用時執行 `./scripts/dev.sh up`，再依 SLAM 文件啟動流程。
+- 審查驗證：待驗證。
+
+- 使用者進一步要求關閉 Docker：已執行 `docker desktop stop`，並確認 Docker Desktop 為 stopped；重新使用容器前須先啟動 Docker Desktop。審查驗證：待驗證。
+
+## 2026-10-27：Mac 上驗證 develop 707403e
+
+### 範圍與環境
+
+- 依使用者要求切回 develop，`git pull --ff-only` 更新至 `707403e`；Nav2 子模組同步至 `dd063030b9c4bee8beee1af0c9f572870c41550b`。保留本機 `.env` 的 6081／5970 與未追蹤 `.vscode/`；上輪關機筆記已保存並帶回。
+- Docker Desktop 重新啟動，確認引擎為 linux/arm64；全程不固定 platform、不啟動硬體。
+- 本次不建立 PR、不合併 main；驗證完成後，使用者進一步授權將 README 修正與驗證紀錄直接提交、推送至 develop。
+
+### 自行檢查
+
+| 項目 | 本次結果 | 本機證據（不入版控） |
+| --- | --- | --- |
+| Compose config | 本機 .env、新 checkout 的 .env.example 均解析通過 | 本輪工具紀錄 |
+| Docker 完整建置 | compute／display／micro-ROS client 三種映像全部成功，均為 linux/arm64 | docker-build.log、images.json |
+| Nav2 fork | 19 套件完成；110 項動態連結檢查 PASS；fork_commit 與 dd06303 相符 | nav2-build.log |
+| ROS 工作區 | 清除 CMake cache 後，9 套件建置完成 | colcon-build.log |
+| dev.sh test | 1285 passed、2 warnings；無失敗／略過 | pytest.log |
+| colcon test | 923 tests、0 errors、0 failures、5 skipped | colcon-test.log |
+| 靜態檢查 | YAML／XML／Python／Bash／launch、7 情境、2／3 錨點及 ekf／ground_truth xacro 展開 PASS | static.log |
+| README 快速開始 | fish 4.0.2／Mac Bash 3.2 執行；mapping 15 項即時檢查 PASS、RViz OpenGL 4.5、noVNC HTTP 200 且以 README 密碼實際登入、圖形目視正常 | mapping-runtime.json、rviz.log、readme-rviz.png |
+| 帶路模擬 | 預設 auto 實際選到新 fork（TEB＋Smac2D），線上建圖；18 項感測／TF／lifecycle／唯一 watchdog 檢查 PASS | guide-runtime.json、guide.log |
+| 中文區域目標 | 300 秒上限下，飲料區／生鮮區皆 SUCCEEDED；獨立真值位置誤差 0.118／0.125 m、yaw 0.024／0.022 rad；壁鐘約 56／105 秒；閒置 cancel 回覆 IDLE | quickstart-guide-result.json、goto-*.log、truth-*.json、cancel-idle.log |
+| 文件索引 | docs/README.md 的 17 個連結均開啟讀取；連同根 README 共 21 個本機目標有效 | docs-links.json、readme-links.json |
+
+上述檔案位於 `output/develop-mac-20261027/`。本次帶路真值僅用於測試後量測，不送回定位或控制；位置與 yaw 檢查上限維持各 0.35 m／0.35 rad。
+
+### 文件修正與限制
+
+- README 將前景 RViz 與 novnc 查詢分成第二／第三個終端機，改以查詢所得位址為準；帶路明確等待 `Managed nodes are active`，生鮮區範例採原指令預設的 300 秒壁鐘上限。
+- 原 120 秒生鮮區輪次仍有進度但逾時取消，紀錄保存為 deadline120-*。重測的第二輪約 105 秒成功；有路徑／時序變異，不能推論加長期限是唯一原因，也不保證每次都在 120 秒完成。
+- 初次 HTTP 探針在圖形服務就緒前連線中斷，另一次 guide 探針在 lifecycle 啟用中讀到 bt_navigator 尚未 active；正式流程改為等待完整啟用後再測。早期探針與該次收尾紀錄保留，未以降低檢查條件換取通過。
+- 退出仍有異常：mapping 收尾時 Gazebo 經 SIGINT／SIGTERM 未退出，launch 最後以 SIGKILL 結束（-9）；RViz 收尾出現 -11。畫面曾有 Mesa shader 初次連結錯誤，但之後實際顯示正常。這些尚未修復，不能宣稱圖形流程退出完全正常。正式帶路輪次沒有相同錯誤，容器最後已移除。
+- 本次是指定的 Mac 原生建置／快速開始／基本帶路回歸，不是所有動態行人、跟隨、硬體或跨平台驗收。既有 aisle_crossing 互等死鎖等限制仍見上方既有紀錄。
+- 僅修改 README 與本進度紀錄，保留 .vscode/；依後續授權提交並推送 develop，不開 PR、不合併 main。測試後已關閉測試環境與 Docker Desktop，保留映像、建置卷與紀錄。
+- 下一步：釐清 Mac Mesa／RViz 退出 -11、Fortress 關閉卡住及長距離帶路時間變異；由使用者決定何時開 develop 到 main 的 PR。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| Mac arm64 原生完整建置 | 待驗證 |
+| README 快速開始與單元測試 | 待驗證 |
+| 帶路模擬與文件索引 | 待驗證 |

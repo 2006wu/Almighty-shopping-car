@@ -32,14 +32,19 @@ set -gx VNC_PASSWORD myshop42
 ./scripts/dev.sh mapping
 ```
 
-另開終端機啟動 RViz：
+另開第二個終端機啟動 RViz；這個指令會維持前景執行：
 
 ```fish
 ./scripts/dev.sh rviz
+```
+
+在第三個終端機查詢實際瀏覽器位址：
+
+```fish
 ./scripts/dev.sh novnc
 ```
 
-瀏覽器開啟 <http://localhost:6080/vnc.html>，輸入相同 VNC 密碼。RViz 預設固定座標為 `odom`，純跟隨也可顯示；使用 Nav2 時請在 Global Options 將 Fixed Frame 切成 `map`。
+開啟指令顯示的位址（預設為 <http://localhost:6080/vnc.html>），輸入相同 VNC 密碼。RViz 預設固定座標為 `odom`，純跟隨也可顯示；使用 Nav2 時請在 Global Options 將 Fixed Frame 切成 `map`。
 
 若連接埠已有其他專案使用，修改根目錄 `.env` 的 `NOVNC_HOST_PORT` 與 `VNC_HOST_PORT`，例如 `6081`／`5970`，再執行 `dev.sh up`。`dev.sh` 從任何工作目錄都會載入這份檔案；服務啟動後，`dev.sh novnc` 顯示實際連接位址。Linux Bash 使用相同指令，將 `set -gx VNC_PASSWORD myshop42` 改為 `export VNC_PASSWORD=myshop42`。一般開發不需建置選用的 micro-ROS C client，只有 `comm-e2e-up` 才會啟用。
 
@@ -93,14 +98,16 @@ ros2 run shopping_zone_manager localization_check --ros-args -p use_sim_time:=tr
 
 巡航、定位檢查、`goto`、`/shopping/goto_zone`、跟隨與鍵盤控制必須互斥操作；尚無模式管理器或速度仲裁。`map → odom` 在每次啟動時只由所選 slam_toolbox 或 AMCL 發布。定位用解析度、雷射上限及座標框架與 mapper 一致；單獨的 slam_toolbox launch 保留 `map_start_at_dock: true`；情境 bringup 則以選定起點的 `map_start_pose` 覆寫定位起點（[Humble 實作](https://github.com/SteveMacenski/slam_toolbox/blob/humble/src/slam_toolbox_common.cpp)）。AMCL 由情境初始化節點發布選定的世界／標準地圖起點（default 為 `(0,0,0)`），檢查工具的 `publish_initial_pose` 可在移動前再次發布相同起點。本次未調整控制器與規劃器，也尚未執行這套巡航及兩種離線定位的 ROS／Gazebo 驗收。
 
-導航就緒後，從另一個終端機送出目標：
+使用前述 `guide` 流程，等終端機出現 `Managed nodes are active` 後，再從另一個終端機送出目標：
 
 ```fish
 ./scripts/dev.sh zones
 ./scripts/dev.sh goto 飲料區
-./scripts/dev.sh goto 生鮮區 --timeout 120
+./scripts/dev.sh goto 生鮮區 --timeout 300
 ./scripts/dev.sh cancel
 ```
+
+操作期限以壁鐘時間計算；本次 Mac 實測曾在 120 秒上限逾時，因此範例保留預設 300 秒。模擬速度與路徑會影響所需時間，應依實測調整；較長期限不取代抵達位置與安全檢查。
 
 `goto` 將區域名稱送至常駐 `zone_navigator` 的 `/shopping/goto_zone`（`std_msgs/String`），由同一節點持有 NavigateToPose 目標，印出回饋及結果；只有 `SUCCEEDED` 回傳 0，其餘結果回傳非零。Nav2 伺服器等待上限為 15 秒，`--timeout` 預設 300 秒；Ctrl-C 或操作期限到達時，先要求取消並有限等待最終結果，無法確認時會明確提示。第一次建圖的原點與朝向應維持模擬初始姿態，重建地圖後要核對區域座標。
 
