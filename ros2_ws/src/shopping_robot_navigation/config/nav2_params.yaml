@@ -249,6 +249,7 @@ global_costmap:
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
         observation_sources: scan
-        scan: {topic: /scan, clearing: true, marking: true, data_type: LaserScan, raytrace_max_range: 12.0, obstacle_max_range: 11.5}
+        # Humble source height defaults to 0.0, which rejects the 0.36 m laser plane.
+        scan: {topic: /scan, max_obstacle_height: 2.0, clearing: true, marking: true, data_type: LaserScan, raytrace_max_range: 12.0, obstacle_max_range: 11.5}
       inflation_layer: {plugin: nav2_costmap_2d::InflationLayer, cost_scaling_factor: 1.5, inflation_radius: 0.8}
       always_send_full_costmap: true

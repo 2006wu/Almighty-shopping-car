@@ -1285,3 +1285,36 @@
 | Linux amd64 相容性 | 審查端 Linux amd64 Docker：映像建置、colcon build、colcon test 721 tests／0 errors／0 failures／5 skipped；pytest 1034 passed、1 skipped（私有 fork 子模組未取出）。修正 3 個 `setup.py` 的 glob，避免主機 pytest 留下的 `launch/__pycache__` 讓 colcon build 失敗 |
 
 使用者 2026-10-27 授權測試通過後合併至 develop（取代上方「不開 PR／不合併」的原指示）。
+
+
+## 2026-10-27：Linux 動態情境離線根因分析與修正
+
+### 修改與證據
+
+- 遵照本次限制，僅以 `/tmp` 的純 Python 分析腳本唯讀既有 t64 bag／日誌，未啟動 Docker、模擬或重型程序，未提交／推送。完整數據、方法、參數理由與 PR 說明見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md)。
+- 找到 apt／fork 全域 costmap 的 `scan.max_obstacle_height` 缺漏：Humble 觀測來源預設 0.0，會排除高度 0.36 m 的雷射。t≈99 局部地圖有行人致命格，全域行人附近卻無致命格，路徑仍沿 x=0.005 穿越 y=3。兩份設定補為 2.0，與局部相同；不放寬測試或安全門檻。
+- aisle_crossing：household 真值終點誤差 2.346 m、僅移動 2.157 m；goto 120 秒逾時，bag episode 為 107.786 模擬秒。AMCL 最大誤差僅 0.068 m；92 次路徑輸出的間隔中位數 0.953 秒，持續走原中線。2,401 個 guard 樣本有 1,443 個 STOP，全部仍收到非零 mux 命令，最終輸出零；progress checker／清圖／旋轉／後退反覆失敗。主要問題是全域漏標與局部／安全層阻擋的交互作用。
+- narrow_pass：household 35.079 秒回報成功但真值誤差 1.804 m。t≈102.802 接觸時最終命令已為零，真值速度仍約 0.296 m/s；行人將底盤從 y≈3.13 推至 y≈1.20，AMCL 卻維持 y≈3.02，最大誤差 1.827 m。接觸後雷射出現 `-inf`，guard 保守停車並有 178 個 STALE 樣本。最後路徑端點距原目標僅 0.007 m，因此不能將 1.8 m 誤差單歸咎 Smac 0.8 m 搜尋容差；原 zone_navigator 完全未驗證終點。
+- checkout_queue：checkout 誤差 0.135 m／0.168 rad；入口耗時 79.745 秒、誤差 0.129 m。AMCL 兩段最大誤差 0.043／0.056 m。返回時 guard 將 0.4 m/s 縮至約 0.011 或零，最低人物淨空仍為 0.077 m；最近接近點已靜止，仍未達建議 0.10 m。
+- 區域導航新增 ROS-free `arrived()`，Nav2 成功後另檢查區域座標系的定位 TF（標準區域為 map）：0.15 m／0.25 rad、年齡 0…0.5 秒；缺資料、非有限值、過期或超差則 ABORTED，已完成 action 可重新發目標。生命週期預設不接受未驗證成功，保留取消、舊 generation 與逾時隔離；新增 pytest。控制／導航沒有使用真值。
+- SCENARIOS 錄製範例增加 AMCL／plan，補終點驗證的失敗處理及真值驗收限制。
+
+### 自行檢查
+
+- `/workspace/scratch/venv-shop/bin/python -m pytest -q`：1049 passed、1 skipped（另有既有 xacro DeprecationWarning）。
+- `scripts/check_static.py`：PASS（34 YAML/RViz、15 XML/SDF/xacro、148 Python、7 Bash、7 情境，含 ekf／ground_truth、2／3 錨點 xacro 展開）；`git diff --check` 通過。以上不視為容器／模擬驗收。
+
+### 限制與下一步
+
+- 未盲調 AMCL：資料顯示先接觸推移、再定位落後，沒有證據支持 beam skipping／量測權重能解決未被輪式里程計量到的滑移。
+- 本輪先修全域標記，未新增停等協定或放寬 progress checker；人物持續占道時等待也不保證通過。既有 guard／watchdog 的零命令無法阻止行人推撞。新的終點檢查也無法偵測所有 AMCL 錯位，不能宣稱 narrow_pass 已修復或無接觸。
+- 必須重新獨立錄製三情境，確認兩份 costmap 都標記／清除行人、路徑安全繞行或有界失敗、離開後恢復；保留原 0.20 m／0.20 rad 真值門檻、淨空與停止延遲要求。另驗證終點超差／缺失或過期 TF 回報 ABORTED，以及 default／alt_start／follow 障礙故障回歸。fork 功能也須另測，這批 bag 僅為 apt。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 離線數字與根因交叉檢查 | 待驗證 |
+| 全域雷射障礙標記與清除 | 待驗證 |
+| 區域終點定位驗證與失敗處理 | 待驗證 |
+| 三種動態情境、無人物與安全回歸 | 待驗證 |

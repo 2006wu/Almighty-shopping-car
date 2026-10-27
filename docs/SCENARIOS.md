@@ -46,7 +46,7 @@
 
 ```bash
 # Terminal 2: wall duration; use a new bag name on each repetition.
-./scripts/dev.sh record aisle_crossing_01 --duration 120 /scan /simulation/poses /tf /tf_static /global_costmap/costmap /local_costmap/costmap
+./scripts/dev.sh record aisle_crossing_01 --duration 120 /scan /simulation/poses /tf /tf_static /global_costmap/costmap /local_costmap/costmap /amcl_pose /plan
 # Terminal 3: one command at a time, after navigation is ready.
 ./scripts/dev.sh goto household --timeout 90
 ./scripts/dev.sh goto entrance --timeout 90
@@ -66,6 +66,9 @@
 以上兩行也須分開輪次執行。故障回歸請停止原情境，以 `./scripts/dev.sh follow scenario:=default fault_injection:=true headless:=true` 啟動，另執行 `./scripts/dev.sh fault-check`，依既有故障驗收程序保存記錄；不可將初始就停的情境視為煞停通過。
 
 ## 判定與限制
+
+- `goto` 的 SUCCEEDED 現在另驗證區域座標系的定位 TF：距離 ≤0.15 公尺、yaw ≤0.25 弧度、TF 年齡 0…0.5 秒。缺 TF、過期或超差會回報 ABORTED；請保留警告、確認定位及通道後再發目標。這不能取代下列真值驗收：AMCL 偏移時，定位看似抵達仍可能不符合真值門檻。
+- 分析動態失敗時，除既有安全狀態與 mux／guard／最終命令，須保存 `/amcl_pose`、`/plan` 及兩份 costmap；先比對雷射人物是否同時被全域與局部地圖標為障礙，再檢查定位、重規劃與 STOP 的時間關係。新 bag 不覆寫舊失敗；本批根因與重跑項目見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md)。
 
 - 所有回合保留成功、取消、拒絕、失敗與逾時；每個預期抵達目標 90 秒內 SUCCEEDED，最終真值位置誤差建議 ≤0.20 公尺、yaw 誤差 ≤0.20 弧度。
 - 靜態及人物 `minimum > 0` 為無幾何接觸的最低條件，建議 >0.10 公尺。行人 topic 必須有完整覆蓋、人數與順序正確，不能以 null 或缺 topic 判定通過；檢查 `.meta.json`。
