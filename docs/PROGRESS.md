@@ -1443,5 +1443,5 @@
 
 | 審查驗證項目 | 狀態 |
 | --- | --- |
-| through-poses `/cmd_vel` 重映射與單一發布者 | 待驗證 |
-| 預設 `auto` 選擇與回退 | 待驗證 |
+| through-poses `/cmd_vel` 重映射與單一發布者 | 審查端 Linux amd64（2026-10-27）：fork 障礙物 fault-check 4/4，`/cmd_vel` 只有 cmd_vel_watchdog 一個發布者 |
+| 預設 `auto` 選擇與回退 | 審查端：pytest（test_mode_launch 53 項、全套 1041）通過；`auto` 實際載入 fork 的 Gazebo 確認併入合併後動態情境重跑 |
