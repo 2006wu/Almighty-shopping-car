@@ -731,6 +731,49 @@ def test_guard_stop_overrides_active_navigation_rotation(guard_state):
     assert node.nav_guard.v == node.nav_guard.w == 0
 
 
+def test_single_invalid_scan_resumes_detour_instead_of_driving_along_shelf():
+    node = make_node()
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.0
+    node.tick()
+    node.goal_response(completed(Mock(accepted=True)), node.goals.generation)
+    # A stale scan cancels Nav2 and immediately stops both axes.
+    node.now = node.target_time = 1.6
+    node.tick()
+    cmd = node.publisher.publish.call_args.args[0]
+    assert cmd.linear.x == cmd.angular.z == 0
+    assert node.supervisor.recovery_pending
+    node.goal_result(completed(NS(status=5)), node.goals.generation)
+    # LOS is now clear but the side return is only 0.4 m away.
+    pose = NS(pose=NS(position=NS(x=3, y=5)))
+    node.map_goal_and_los = lambda: (pose, True)
+    node.obstacle = 3
+    node.scan.ranges, node.scan.angle_min = [0.4], math.pi/2
+    node.los_clear_wide = True
+    for t in (1.65, 1.9):
+        node.now = node.target_time = node.scan_time = t
+        node.tick()
+        cmd = node.publisher.publish.call_args.args[0]
+        assert cmd.linear.x == cmd.angular.z == 0
+        assert node.state.publish.call_args.args[0].data.startswith('BLOCKED_WAIT:')
+    node.now = node.target_time = node.scan_time = 2.66
+    node.tick()
+    assert node.supervisor.mode == 'NAV2'
+    assert node.goal_pending
+
+
+@pytest.mark.parametrize('side,bearing,expected', [
+    (0.40, 0, False), (0.75, 0, True), (0.9, 0.26, False),
+    (0.9, -0.26, False), (math.nan, 0, False)])
+def test_node_requires_lateral_free_band_and_alignment_for_direct_exit(side, bearing, expected):
+    node = make_node()
+    node.scan.ranges, node.scan.angle_min = [side], math.pi/2
+    node.target = (2*math.cos(bearing), 2*math.sin(bearing))
+    node.supervisor.step = Mock(wraps=node.supervisor.step)
+    node.tick()
+    assert node.supervisor.step.call_args.kwargs['direct_clear'] is expected
+
+
 @pytest.mark.parametrize('guard_state', ['STOP', 'STALE', 'CLEAR'])
 def test_pass_through_cancels_navigation_and_keeps_near_latch(guard_state):
     node = make_node()

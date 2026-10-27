@@ -144,12 +144,31 @@ def test_clear_resume_delay_resets_with_obstruction():
     assert tick(s, 4.11, **clear).action == 'cancel_goal'
 
 
-def test_clearance_threshold_and_sustained_close_resume():
+def test_clearance_threshold_and_caught_up_resume():
     s = navigating()
     tick(s, 2, los_clear=True, front_clearance=0.8)
     assert tick(s, 3, los_clear=True, front_clearance=0.8).mode == 'NAV2'
-    assert tick(s, 3.1, los_clear=True, target=(1.0, 0)).action == 'cancel_goal'
-    assert tick(navigating(), 2, nav_status='succeeded').action == 'cancel_goal'
+    assert tick(s, 3.1, los_clear=True, front_clearance=1, target=(1.0, 0)).action == 'cancel_goal'
+    assert tick(navigating(), 2, nav_status='succeeded').mode == 'NAV2'
+
+
+@pytest.mark.parametrize('distance', [0.9, 1.0])
+@pytest.mark.parametrize('status', ['active', 'succeeded'])
+def test_narrow_aisle_caught_up_exit_respects_hold_unless_succeeded(distance, status):
+    s = navigating()
+    clear = dict(state='FOLLOWING', los_clear=True, los_clear_wide=True,
+                 front_clearance=2, target=(distance, 0), direct_clear=False,
+                 nav_status=status)
+    # Low lateral clearance must not keep driving toward the person's goal.
+    assert tick(s, 1.1, **clear).mode == 'NAV2'  # LOS is not confirmed yet.
+    decision = tick(s, 1.71, **clear)
+    if status == 'active':
+        assert decision.mode == 'NAV2'
+        assert tick(s, 2.49, **clear).mode == 'NAV2'
+        decision = tick(s, 2.5, **clear)
+    assert decision.mode == 'DIRECT'
+    assert decision.action == 'cancel_goal' and decision.direct_publish
+    assert not s.recovery_pending
 
 
 def test_goal_updates_use_map_displacement_and_rate_limit():
@@ -160,6 +179,72 @@ def test_goal_updates_use_map_displacement_and_rate_limit():
     assert tick(s, 2.1, map_target=(3.51, 5)).action == 'update_goal'
     assert tick(s, 2.9, map_target=(6, 5)).action == 'none'
     assert tick(s, 3.1, map_target=(6, 5)).action == 'update_goal'
+
+
+@pytest.mark.parametrize('status', ['active', 'succeeded'])
+def test_shelf_side_clearance_gates_far_person_exit(status):
+    s = navigating()
+    clear = dict(los_clear=True, los_clear_wide=True, front_clearance=2,
+                 target=(1.2, 0), nav_status=status)
+    for t in (2, 3, 4):
+        assert tick(s, t, direct_clear=False, **clear).mode == 'NAV2'
+    assert tick(s, 5, direct_clear=True, **clear).mode == 'NAV2'
+    tick(s, 5.3, direct_clear=False, **clear)
+    assert tick(s, 6, direct_clear=True, **clear).mode == 'NAV2'
+    assert tick(s, 6.51, direct_clear=True, **clear).action == 'cancel_goal'
+
+
+@pytest.mark.parametrize('fault', [dict(scan_valid=False), dict(front_clearance=math.nan),
+                                  dict(map_target=None)])
+def test_interrupted_detour_resumes_even_after_los_clears(fault):
+    s = navigating()
+    assert tick(s, 2, **fault).action == 'cancel_goal'
+    assert s.recovery_pending
+    # Reproduce a one-tick safety cancellation at a shelf end: visible but far
+    # person, insufficient lateral clearance, and completed cancel/drain.
+    clear = dict(state='FOLLOWING', los_clear=True, los_clear_wide=True,
+                 front_clearance=2, direct_clear=False)
+    assert tick(s, 6, **clear).mode == 'DIRECT'
+    assert s.recovery_pending
+    assert tick(s, 7.01, **clear).action == 'send_goal'
+    assert not s.recovery_pending
+    assert tick(s, 8, map_target=(4, 5), **clear).action == 'update_goal'
+
+
+@pytest.mark.parametrize('fault', [dict(near_latched=True), dict(state='TOO_CLOSE'),
+                                  dict(state='LOST'), dict(enabled=False)])
+def test_interrupted_detour_never_bypasses_target_safety(fault):
+    s = navigating()
+    tick(s, 2, scan_valid=False)
+    assert s.recovery_pending
+    assert tick(s, 3, **fault).mode == 'DIRECT'
+    assert not s.recovery_pending
+
+
+def test_successful_old_goal_keeps_updating_a_moving_person():
+    s = navigating()
+    assert tick(s, 2, nav_status='succeeded', los_clear=True,
+                map_target=(4, 5)).action == 'update_goal'
+    assert s.mode == 'NAV2'
+
+
+def test_recovery_can_release_to_direct_when_free_path_is_confirmed():
+    s = navigating()
+    tick(s, 2, scan_valid=False)
+    clear = dict(state='FOLLOWING', los_clear=True, los_clear_wide=True,
+                 front_clearance=2, direct_clear=True)
+    assert tick(s, 2.1, **clear).mode == 'DIRECT'
+    assert s.recovery_pending  # A single clear sample cannot release recovery.
+    assert tick(s, 2.71, **clear).mode == 'DIRECT'
+    assert not s.recovery_pending
+
+
+def test_clock_reset_discards_unfinished_detour():
+    s = navigating()
+    tick(s, 2, scan_valid=False)
+    assert s.recovery_pending
+    assert tick(s, 0).mode == 'DIRECT'
+    assert not s.recovery_pending
 
 
 @pytest.mark.parametrize('status', ['failed', 'canceled'])

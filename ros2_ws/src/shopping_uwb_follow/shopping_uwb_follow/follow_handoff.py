@@ -161,6 +161,7 @@ class HandoffSupervisor:
         self.blocked_since = self.clear_since = self.last_goal = None
         self.last_goal_time = self.last_time = None
         self.retry_after = -math.inf
+        self.recovery_pending = False
 
     def record_goal(self, now, map_target):
         """Confirm the actual submission position and time."""
@@ -168,8 +169,12 @@ class HandoffSupervisor:
 
     def step(self, now, state, target, los_clear, front_clearance, nav_status='none',
              *, map_target=None, enabled=True, scan_valid=True, los_clear_wide=None,
-             near_latched=False):
-        """Targets are base-frame safety coordinates and map-frame goal coordinates."""
+             near_latched=False, direct_clear=True):
+        """Use measured base/map targets; direct_clear requires lateral space/alignment.
+
+        Safety cancellation ends velocity ownership, not the unfinished detour.
+        Recovery waits for valid inputs and the existing entry/cooldown timers.
+        """
         action, reason = 'none', 'Direct following'
         previous = self.mode
         clock_reset = (not math.isfinite(now)
@@ -185,6 +190,12 @@ class HandoffSupervisor:
         # Raw blockage during debounce is uncertain, never a clear return signal.
         los_clear = self.los.clear and not self.los.blocked
         if not self.route_around or not safe or clock_reset:
+            # Preserve the route after scan/TF faults, but never across a lost or
+            # near target, disable, or clock reset.
+            self.recovery_pending = (
+                self.route_around and not clock_reset and enabled and not near_latched
+                and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
+                and (previous == 'NAV2' or self.recovery_pending))
             self.mode = 'DIRECT'
             self.blocked_since = self.clear_since = None
             if clock_reset:
@@ -194,38 +205,52 @@ class HandoffSupervisor:
         elif self.mode == 'NAV2':
             distance = math.hypot(*target)
             close = distance <= self.p.follow_distance+self.p.handoff_margin
-            clear = close and los_clear and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin
+            clear = (close and los_clear and direct_clear
+                     and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin)
             self.clear_since = (now if self.clear_since is None else self.clear_since) if clear else None
             if nav_status in ('failed', 'canceled') or not valid_xy(map_target):
                 self.mode = 'DIRECT'
+                self.recovery_pending = True
                 self.retry_after = now+self.p.retry_cooldown
                 reason = 'Navigation failed or map transform unavailable'
-            elif (nav_status == 'succeeded'
-                  or now-self.nav_since >= self.p.min_nav_hold
-                  and (los_clear and distance <= self.p.follow_distance or self.clear_since is not None
-                       and now-self.clear_since >= self.p.resume_delay)):
+            elif (los_clear and distance <= self.p.follow_distance
+                  and (nav_status == 'succeeded'
+                       or now-self.nav_since >= self.p.min_nav_hold)):
+                # The goal is the person's position; direct control must hold
+                # follow distance even when a narrow aisle cannot clear sides.
                 self.mode = 'DIRECT'
-                reason = 'Direct path restored or navigation succeeded'
+                reason = 'Visible person reached follow distance'
+            elif (now-self.nav_since >= self.p.min_nav_hold
+                  and self.clear_since is not None
+                  and now-self.clear_since >= self.p.resume_delay):
+                self.mode = 'DIRECT'
+                reason = 'Direct path, side clearance and alignment restored'
+            # Success at an old goal cannot release a far person through an
+            # unsafe direct path. Keep the displacement/rate limits.
             elif (math.dist(map_target, self.last_goal) > self.p.goal_update_distance
                   and now-self.last_goal_time >= self.p.goal_update_period):
                 action, reason = 'update_goal', 'Person moved in map frame'
             else:
                 reason = 'Navigation owns velocity'
         else:
-            blocked = state == 'OBSTACLE_STOP' or self.los.blocked
+            if (self.recovery_pending and direct_clear and los_clear
+                    and front_clearance > self.p.obstacle_stop_distance+self.p.clear_margin):
+                self.recovery_pending = False
+            blocked = state == 'OBSTACLE_STOP' or self.los.blocked or self.recovery_pending
             eligible = (blocked and valid_xy(map_target)
                         and math.hypot(*target) > self.p.follow_distance+self.p.handoff_margin
                         and now >= self.retry_after)
             self.blocked_since = (now if self.blocked_since is None else self.blocked_since) if eligible else None
             if (self.blocked_since is not None
                     and now-self.blocked_since >= self.p.handoff_delay
-                    and (self.direct_since is None
+                    and (self.recovery_pending or self.direct_since is None
                          or now-self.direct_since >= self.p.min_direct_hold
                          or self.los.blocked_since is not None
                          and now-self.los.blocked_since >= self.p.min_direct_hold)):
                 self.mode, action, reason = 'NAV2', 'send_goal', 'Persistent blocked path'
         if previous != 'NAV2' and self.mode == 'NAV2':
             self.nav_since = now
+            self.recovery_pending = False
         if previous == 'NAV2' and self.mode == 'DIRECT':
             self.direct_since = now
             action = 'cancel_goal'

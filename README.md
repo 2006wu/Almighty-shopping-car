@@ -298,7 +298,11 @@ python3 scripts/check_static.py
 
 [模擬評估指標與離線報表](docs/METRICS.md) · [UWB 錨點離線研究](docs/UWB_STUDY.md) · [架構](docs/ARCHITECTURE.md) · [時程](docs/ROADMAP.md) · [協作規範](AGENTS.md)
 
-本次合併保留 develop 的 Smac2D、YAML 數值、人物模型服務與 Nav2 交接規則。一般與加寬 LOS 的檢查長度在人物距離大於跟隨距離時改為 `distance - max(los_margin, follow_distance)`；近距離仍檢查到 `distance - los_margin`。`route_around:=false` 也建立雷射到車體的 TF listener，旋轉判定不需要 map 或真值。下列舊分支設計僅保留歷史脈絡，與本段衝突時以本段及目前設定為準。
+本次合併保留 develop 的 Smac2D、YAML 數值與人物模型服務。一般與加寬 LOS 的檢查長度在人物距離大於跟隨距離時改為 `distance - max(los_margin, follow_distance)`；近距離仍檢查到 `distance - los_margin`。`route_around:=false` 也建立雷射到車體的 TF listener，旋轉判定不需要 map 或真值。下列舊分支設計僅保留歷史脈絡，與本段衝突時以本段及目前設定為準。
+
+目前 Nav2 在 LOS 經既有遲滯確認且人物距離不超過 `follow_distance=1.0` 公尺時，至少持有 1.5 秒即可返回 DIRECT，由直接跟隨在跟隨距離停止／保持；導航成功時可立即返回，不受側向淨空與朝向門檻限制。人物仍超過跟隨距離時，正常返回 DIRECT 須同時滿足：至少持有 1.5 秒、人物距離不超過 1.3 公尺、LOS 經既有遲滯確認、前方淨空大於 0.8 公尺、側向淨空達既有 `side_free_clearance=0.75` 公尺、目標朝向誤差不超過既有 `rotate_to_target_release_angle=0.25` rad，且返回條件持續 0.5 秒。側向淨空使用目前雷射的左右 30°～100° 扇區最小側向距離；此返回門檻讓 Nav2 先帶車體離開貼架位置，保留原有下游 guard 的掃掠防護。人物仍超過跟隨距離時，導航成功也須滿足相同條件；人物移動時，目標仍依原有 0.4 公尺／0.5 秒門檻搶占更新。
+
+雷射／TF 失效仍立即停止並取消 Nav2，但保留尚未完成的繞行意圖。資料恢復後，若側向或朝向尚未適合直接跟隨，DIRECT 以 `BLOCKED_WAIT` 保持零命令，人物距離超過 1.3 公尺且滿足原有交接延遲、失敗冷卻後，即使 LOS 已清楚也重新交給 Nav2；取消、動作終止與速度排空完成前不得轉送新導航命令。目標遺失、過近鎖定、停用或時間倒退會清除恢復意圖；`0bdb4c1` 的跨 DIRECT／Nav2 近停鎖定持續優先。所有控制僅使用 UWB 估測、雷射與估測 TF。此修補尚待 `follow_turns`、`follow_stop_go` 與跟隨／障礙 `fault-check` 模擬驗收，詳見[進度紀錄](docs/PROGRESS.md)。
 
 <details>
 <summary>合併前 follow-los 分支設計紀錄</summary>

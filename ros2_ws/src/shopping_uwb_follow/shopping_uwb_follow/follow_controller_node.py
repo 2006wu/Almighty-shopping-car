@@ -360,16 +360,25 @@ class FollowNode(Node):
                                         self.nav_status, map_target=point,
                                         enabled=self.enabled, scan_valid=valid,
                                         los_clear_wide=self.los_clear_wide,
-                                        near_latched=self.control.near_latched)
+                                        near_latched=self.control.near_latched,
+                                        direct_clear=(clearance >= p.side_free_clearance
+                                            and self.target is not None
+                                            and abs(math.atan2(self.target[1], self.target[0]))
+                                            <= p.rotate_to_target_release_angle))
         if (self.client is not None and self.supervisor.route_around
                 and decision.mode == 'DIRECT' and state == 'FOLLOWING'
-                and self.supervisor.los.blocked):
+                and (self.supervisor.los.blocked or self.supervisor.recovery_pending)):
             # Driving straight at a hidden person wedges the robot against shelf
             # corners where Nav2 can no longer plan; hold until the handoff fires.
             v = w = 0.0
             self.control.v = self.control.w = 0.0
-            state, reason = 'BLOCKED_WAIT', 'Line of sight blocked; holding for Nav2 handoff'
+            state, reason = 'BLOCKED_WAIT', 'Unfinished detour or blocked LOS; holding for Nav2 handoff'
         if decision.action == 'cancel_goal':
+            self.get_logger().info(
+                f'sim_time={now:.3f}s handoff_exit={decision.reason} '
+                f'side={clearance:.3f}m recovery_pending={self.supervisor.recovery_pending} '
+                f'scan_valid={valid} front={obstacle:.3f}m map_valid={point is not None} '
+                f'guard={getattr(self, "guard_state", None)} target_age={age:.3f}s')
             self.replacement = None
             self.cancel_goal()
             self.first_direct = True
