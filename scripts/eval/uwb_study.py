@@ -7,7 +7,7 @@ import time
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'ros2_ws/src/shopping_uwb_follow'))
 from shopping_uwb_follow.uwb_study import render_csv, render_markdown, run_study
 
@@ -16,8 +16,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--trials', type=int, default=None)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--out-md', type=Path, default=ROOT/'docs/UWB_STUDY.md')
-    parser.add_argument('--out-csv', type=Path, default=ROOT/'docs/uwb_study.csv')
+    parser.add_argument('--out-md', type=Path, default=ROOT/'docs/research/UWB_STUDY.md')
+    parser.add_argument('--out-csv', type=Path, default=ROOT/'docs/research/uwb_study.csv')
     parser.add_argument('--quick', action='store_true')
     args = parser.parse_args(argv)
     trials = args.trials if args.trials is not None else (3 if args.quick else 40)

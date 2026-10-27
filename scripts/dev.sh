@@ -64,7 +64,7 @@ EOF
     if [[ -z "${PYTHON:-}" && -x /workspace/scratch/venv-shop/bin/python ]]; then
       scenario_python=/workspace/scratch/venv-shop/bin/python
     fi
-    PYTHONPATH="$repo_dir/ros2_ws/src/shopping_robot_gazebo${PYTHONPATH:+:$PYTHONPATH}" "$scenario_python" "$repo_dir/scripts/scenario_list.py"
+    PYTHONPATH="$repo_dir/ros2_ws/src/shopping_robot_gazebo${PYTHONPATH:+:$PYTHONPATH}" "$scenario_python" "$repo_dir/scripts/eval/scenario_list.py"
     ;;
   build) "${compose[@]}" build "$@" ;;
   up) "${compose[@]}" up -d compute display ;;
@@ -109,7 +109,7 @@ EOF
     "${compose[@]}" run --rm --no-deps --entrypoint /bin/bash \
       -e "NAV2_FORK_COMMIT=$(git -C "$repo_dir/third_party/eurobot_nav2" rev-parse HEAD)" \
       -e "NAV2_PARALLEL_WORKERS=${NAV2_PARALLEL_WORKERS:-2}" -e "MAKEFLAGS=${MAKEFLAGS:--j3}" \
-      compute /repo/scripts/nav2_build.sh "$@"
+      compute /repo/scripts/nav2/nav2_build.sh "$@"
     ;;
   nav2-status)
     if [[ -f "$repo_dir/third_party/eurobot_nav2/src/custom_controller/package.xml" ]]; then
@@ -145,8 +145,8 @@ EOF
   follow) run xvfb-run -a -n 50 ros2 launch shopping_robot_bringup follow.launch.py "$@" ;;
   person-sync-check) run ros2 run shopping_uwb_follow person_sync_check "$@" --ros-args -p use_sim_time:=true ;;
   follow-eval) run ros2 run shopping_uwb_follow follow_eval "$@" --ros-args -p use_sim_time:=true ;;
-  yaw-check) run python3 /repo/scripts/yaw_rate_check.py "$@" ;;
-  fault-check) run python3 /repo/scripts/fault_check.py "$@" ;;
+  yaw-check) run python3 /repo/scripts/checks/yaw_rate_check.py "$@" ;;
+  fault-check) run python3 /repo/scripts/eval/fault_check.py "$@" ;;
   goto)
     [[ $# -ge 1 ]] || { echo 'Usage: dev.sh goto ZONE [--timeout S]' >&2; exit 2; }
     run ros2 run shopping_zone_manager goto_zone "$@" --ros-args -p use_sim_time:=true
@@ -164,7 +164,7 @@ EOF
     case "$mode_request" in idle|guide|follow|teleop|estop|reset) ;; *) echo 'Invalid mode' >&2; exit 2 ;; esac
     run ros2 topic pub --once /mode_manager/request std_msgs/msg/String "{data: '$mode_request'}"
     ;;
-  record) run python3 /repo/scripts/record_bag.py "$@" ;;
+  record) run python3 /repo/scripts/eval/record_bag.py "$@" ;;
   eval-bag)
     [[ $# -ge 1 && "$1" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'Use a simple bag name' >&2; exit 2; }
     name="$1"

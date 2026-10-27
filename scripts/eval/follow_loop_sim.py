@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 for package in ('shopping_uwb_follow', 'shopping_zone_manager'):
     sys.path.insert(0, str(ROOT/'ros2_ws/src'/package))
 

@@ -71,7 +71,7 @@ def test_contract_is_standard_bounded_and_documented():
     assert len({s['name'] for s in SPEC['topics'].values()}) == len(SPEC['topics'])
     ids = [s['wire_id'] for s in SPEC['topics'].values() if 'wire_id' in s]
     assert len(ids) == len(set(ids))
-    doc = (ROOT/'docs/MCU_INTERFACE.md').read_text()
+    doc = (ROOT/'docs/hardware/MCU_INTERFACE.md').read_text()
     for key, spec in SPEC['topics'].items():
         assert spec['type'].split('/')[0] in ('std_msgs', 'sensor_msgs', 'geometry_msgs')
         assert spec['depth'] > 0

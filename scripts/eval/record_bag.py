@@ -60,7 +60,7 @@ def main(argv=None):
         parser.error('Duration must be positive and finite')
     if any(not topic.startswith('/') or topic.startswith('/-') for topic in args.topics):
         parser.error('Extra topics must be absolute ROS topic names')
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     manifest = root/'ros2_ws/src/shopping_zone_manager/config/record_topics.yaml'
     topics = yaml.safe_load(manifest.read_text())['topics']
     output = root/'bags'/args.name

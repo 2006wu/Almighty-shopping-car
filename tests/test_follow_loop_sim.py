@@ -11,7 +11,7 @@ from shopping_uwb_follow.person_path import model_command_position, path_positio
 from shopping_uwb_follow.evaluation_metrics import sync_report
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('follow_loop_sim', ROOT/'scripts/follow_loop_sim.py')
+spec = importlib.util.spec_from_file_location('follow_loop_sim', ROOT/'scripts/eval/follow_loop_sim.py')
 loop = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(loop)
 

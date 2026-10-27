@@ -6,7 +6,7 @@ import sys
 
 
 def test_state_statistics_cli(tmp_path):
-    script = Path(__file__).resolve().parents[1]/'scripts/follow_state_stats.py'
+    script = Path(__file__).resolve().parents[1]/'scripts/eval/follow_state_stats.py'
     log = tmp_path/'states.log'
     log.write_text('[10.0] data: FOLLOWING: tracking\n---\n[12.0] data: BLOCKED_WAIT: holding\n')
     result = subprocess.run([sys.executable, str(script), str(log)], capture_output=True,

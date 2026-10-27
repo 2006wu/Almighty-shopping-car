@@ -153,7 +153,7 @@ UWB 估測位置誤差仍使用既有 `shopping_uwb_follow/follow_metrics.py` �
 
 ## rosbag 記錄、轉換與可重現流程
 
-`dev.sh record NAME [--duration S] [額外 topic...]` 在 compute 使用 Humble `ros2 bag record --storage sqlite3 --use-sim-time`。`S` 是牆鐘秒數，省略時以 Ctrl-C 結束；到期送 SIGINT 並等待 SQLite 與 `metadata.yaml` 寫完。不要在同一次錄製重設模擬時間。資料位於主機 `bags/NAME/`，既有名稱拒絕覆寫。清單唯一來源為 `shopping_zone_manager/config/record_topics.yaml`，由 `scripts/record_bag.py` 載入；測試另外核對各 topic 在實際程式或 bridge 中存在。
+`dev.sh record NAME [--duration S] [額外 topic...]` 在 compute 使用 Humble `ros2 bag record --storage sqlite3 --use-sim-time`。`S` 是牆鐘秒數，省略時以 Ctrl-C 結束；到期送 SIGINT 並等待 SQLite 與 `metadata.yaml` 寫完。不要在同一次錄製重設模擬時間。資料位於主機 `bags/NAME/`，既有名稱拒絕覆寫。清單唯一來源為 `shopping_zone_manager/config/record_topics.yaml`，由 `scripts/eval/record_bag.py` 載入；測試另外核對各 topic 在實際程式或 bridge 中存在。
 
 | 固定 topic | 實際型別 | 轉換用途 |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ Gazebo 排程、DDS 傳遞、Nav2 規劃、錄製起點與人物相位仍有非�
 
 本節保留合併前分支的歷史實驗。腳本明確啟用前饋 1.0 與距離保持 0.04／0.08 公尺；執行時控制器預設不啟用這些實驗參數，依 develop 的比例控制運作。下列量測不能當作合併後 Gazebo 驗收。
 
-`scripts/follow_loop_sim.py` 的距離使用 `follow_metrics.evaluate_series`，距離誤差使用 `evaluation_metrics.stats(abs(distance-follow_distance))`，直線／轉彎使用既有 `segment_kind`。誤差平均為平均絕對誤差，RMSE 與帶正負距離誤差的 RMSE 相同；不使用「平均距離減目標」替代平均絕對誤差。沒有修改 `follow-eval` 的定義或預設門檻。
+`scripts/eval/follow_loop_sim.py` 的距離使用 `follow_metrics.evaluate_series`，距離誤差使用 `evaluation_metrics.stats(abs(distance-follow_distance))`，直線／轉彎使用既有 `segment_kind`。誤差平均為平均絕對誤差，RMSE 與帶正負距離誤差的 RMSE 相同；不使用「平均距離減目標」替代平均絕對誤差。沒有修改 `follow-eval` 的定義或預設門檻。
 
 預設讀取同一份路徑的完整循環，初始車體 `(0, 0, 0)`，包含啟動暫態，控制／仲裁／看門狗 20 Hz、UWB 與雷射 10 Hz。使用無雜訊 UWB 位置加既有 EMA、理想里程計與單輪車運動學。`--world` 直接解析 SDF 軸向碰撞盒，加入人物半徑 0.25 m，雷射原點前移 0.18 m，以 181 條射線近似實際 720 條雷射，沿用前方停止、側向淨空、LOS 與遲滯純邏輯。模型在 LOS 鎖定時保持零速，沒有執行 Nav2 交接或替車體重設位置；不包含 SLAM、TF／服務排程、接觸動力學、噪聲或掉包。`without_controller_accel` 只移除控制器加速度限制，管線的速度／加速度限制仍存在。
 
@@ -239,7 +239,7 @@ JSON 的 `all` 保留所有同步樣本；`eligible` 僅保留控制器為 FOLLO
 
 預設錄製清單新增 `/safety/obstacle_state` 與 mux／guard／collision_monitor 的中間速度。bag_converter 取 guard JSON 內的模擬時間 `t`，在進入 STOP／STALE 時產生 `obstacle_guard_stop`／`obstacle_guard_stale` trigger，重複狀態不重開事件，沿用本文件 `stop_metrics` 的首次零命令／真值停止定義。同時出現的其他保護事件沿用既有合併規則。啟動即 STALE 也會產生事件；須保留它並另判讀是否有移動基線，不能拿啟動零速作為障礙停止驗收。
 
-狀態事件的延遲起點是 guard 偵測並發布狀態的模擬時間，不包含故障命令傳送到偵測的延遲。`scripts/fault_check.py --suite obstacle` 則以送出故障命令前的模擬時間開始計算，且要求移動基線、持續停止與恢復；與本文件「首次停止」統計不可混稱同一判準。減速列檢查 guard SLOW 比例與命令仍在移動，沒有自動辨識真值減速度。
+狀態事件的延遲起點是 guard 偵測並發布狀態的模擬時間，不包含故障命令傳送到偵測的延遲。`scripts/eval/fault_check.py --suite obstacle` 則以送出故障命令前的模擬時間開始計算，且要求移動基線、持續停止與恢復；與本文件「首次停止」統計不可混稱同一判準。減速列檢查 guard SLOW 比例與命令仍在移動，沒有自動辨識真值減速度。
 
 `/safety/obstacle_state.swept_clearance` 是雷射回波到要求速度掃掠範圍的保守距離，用於診斷；不取代本文件的真值矩形最小間距。既有 `clearance_metrics` 仍以世界 collision 與真值位姿計算，沿用原有錄製／轉換鏈路。`lidar_front` 假障礙沒有新增 Gazebo collision，因此真值最小間距不會包含它；不能用假障礙試驗宣稱通過實際障礙距離驗收。完整啟動、故障與 headless 程序見 [OBSTACLE_SAFETY.md](OBSTACLE_SAFETY.md)。
 

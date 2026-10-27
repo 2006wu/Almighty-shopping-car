@@ -2,7 +2,7 @@
 
 本專案目前只開發模擬；2027 年 2 月前沒有實車。介面與 MCU 型號無關，僅使用 ROS 2 Humble 標準訊息，不需要自訂 msg 建置。
 
-唯一規格來源是 [interface.yaml](../ros2_ws/src/shopping_mcu_bridge/config/interface.yaml)。節點直接讀取其 topic、型別、頻率、QoS、輪序、協定編號與時限；下表是該檔的文件呈現。修改介面時須同步本文與測試，不能另外建立互相矛盾的節點參數。
+唯一規格來源是 [interface.yaml](../../ros2_ws/src/shopping_mcu_bridge/config/interface.yaml)。節點直接讀取其 topic、型別、頻率、QoS、輪序、協定編號與時限；下表是該檔的文件呈現。修改介面時須同步本文與測試，不能另外建立互相矛盾的節點參數。
 
 ## Topic 規格
 

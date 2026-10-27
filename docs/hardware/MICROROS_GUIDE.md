@@ -133,7 +133,7 @@ docker compose -f docker/docker-compose.yaml --profile comm logs --tail=100 micr
 
 rosserial client 透過專用協定由 PC bridge 轉入 ROS；micro-ROS 讓 MCU 使用精簡的 ROS 2 C API，再由 XRCE agent 代理 DDS entities。agent 負責通訊，逾時停止仍是 client 的責任。本次 Linux client 與 STM32 韌體會使用同類的 rclc 初始化、publisher／subscription、executor 與標準訊息配置，但 Linux 程式不是可直接燒錄的 STM32 binary。
 
-[客戶端原始碼說明](../firmware/sim_client/README.md) 記錄官方 host 工具工作區、外部 app 複製位置及契約 header 產生方式。流程依 [官方 Linux 教學](https://micro.ros.org/docs/tutorials/core/first_application_linux/) 與 [Humble host 建置腳本](https://github.com/micro-ROS/micro_ros_setup/blob/humble/config/host/generic/build.sh)，使用 `micro_ros_setup` humble 分支、`create_firmware_ws.sh host`／`build_firmware.sh`，沒有板卡 SDK 或交叉編譯。
+[客戶端原始碼說明](../../firmware/sim_client/README.md) 記錄官方 host 工具工作區、外部 app 複製位置及契約 header 產生方式。流程依 [官方 Linux 教學](https://micro.ros.org/docs/tutorials/core/first_application_linux/) 與 [Humble host 建置腳本](https://github.com/micro-ROS/micro_ros_setup/blob/humble/config/host/generic/build.sh)，使用 `micro_ros_setup` humble 分支、`create_firmware_ws.sh host`／`build_firmware.sh`，沒有板卡 SDK 或交叉編譯。
 
 未來 STM32 需將 Linux DNS／UDP、POSIX clock 與容器重啟換成已確認的 transport、RTOS 時鐘及重連狀態機，將輪模型替換成獨立的控制與安全迴圈。板上必須自行在失聯時關閉馬達輸出，不能靠 agent 或 Docker 幫忙停車。外部 MCU 通常無法解析容器 DNS，還需另外明確 opt-in 的 port mapping、IP、防火牆及單一裝置配置；目前沒有對外入口或預設硬體連線。
 
@@ -170,7 +170,7 @@ UART 需要匹配 baud、8N1、電位與 GND；USB-CDC 是 USB device transport�
 
 兩條路互斥：micro-ROS MCU 使用 XRCE agent；純 serial MCU 使用本專案 codec／serial_bridge。不能同時開啟同一埠，也不能把本專案二進位訊框送 agent。
 
-micro-ROS serial agent 的範本是 [docker-compose.serial.yaml](../docker/docker-compose.serial.yaml)。只有使用者確認硬體與埠後，複製成自己的 override，取消該單一 devices mapping 註解，設定 `MICROROS_SERIAL_DEVICE` 為同一個已確認埠，再明確執行：
+micro-ROS serial agent 的範本是 [docker-compose.serial.yaml](../../docker/docker-compose.serial.yaml)。只有使用者確認硬體與埠後，複製成自己的 override，取消該單一 devices mapping 註解，設定 `MICROROS_SERIAL_DEVICE` 為同一個已確認埠，再明確執行：
 
 ```bash
 docker compose -f docker/docker-compose.yaml -f /path/to/confirmed-serial.yaml --profile comm up -d microros_agent

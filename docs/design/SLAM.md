@@ -60,11 +60,11 @@
 
 ```bash
 # Execute inside compute, with the repository's Python dependencies available.
-python3 /repo/scripts/map_geometry_check.py \
+python3 /repo/scripts/checks/map_geometry_check.py \
   --map /ws/src/shopping_robot_navigation/maps/store_trial.yaml \
   --json /repo/output/slam-map-geometry.json
 ```
 
 幾何檢查比較格網占據格中心與 SDF 貨架／牆面，列出位移、旋轉、尺寸倍率與邊緣覆蓋；遮蔽、缺面與雙邊緣會限制推論，不能只看平均值。`loc-check` 另外使用模擬真值檢查六區定位；不可用 SLAM 自己的 TF 當作獨立真值。
 
-目前參數針對小型商店的重複貨架，限制 scan matching 與閉環搜尋範圍，降低錯接相隔 2.4 公尺走道的風險。還沒驗證真實雷射、地面滑移與長時間漂移，也不保證任意大型商店適用。Mac arm64 實測與尚未完成項目統一記錄於 [本次驗收](VALIDATION_ARM64.md)。
+目前參數針對小型商店的重複貨架，限制 scan matching 與閉環搜尋範圍，降低錯接相隔 2.4 公尺走道的風險。還沒驗證真實雷射、地面滑移與長時間漂移，也不保證任意大型商店適用。Mac arm64 實測與尚未完成項目統一記錄於 [本次驗收](../hardware/VALIDATION_ARM64.md)。

@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]/
                        'ros2_ws/src/shopping_robot_gazebo'))
 from shopping_robot_sim.fault_check import Sample, evaluate_trial, moving, planar_sample
 

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'ros2_ws/src/shopping_uwb_follow'))
 from shopping_uwb_follow.follow_metrics import parse_state_log, state_statistics
 

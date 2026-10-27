@@ -73,7 +73,7 @@
 
 - `goto` 的 SUCCEEDED 另驗證區域座標系的定位 TF：`arrival_xy_tolerance` 預設 0.25 公尺、`arrival_yaw_tolerance` 預設 0.35 弧度、`arrival_max_tf_age` 預設 0.5 秒，沿用 t68 審查值；Nav2 Loose goal checker 仍為 0.15 公尺／0.25 弧度。缺 TF、過期或超差會回報 ABORTED。
 - `guide slam_mode:=map_server` 另外要求 AMCL 樣本：`arrival_max_xy_std` 預設 0.15 公尺（平面最大主軸標準差）、`arrival_max_yaw_std` 0.35 弧度、`arrival_max_amcl_age` 5 秒。缺失、非有限、無效或過期信心皆拒絕成功；SLAM-only 不強制 AMCL。請保存 AMCL 警告，檢查定位／通道後再發目標，不會自動重試或重定位。此檢查只在成功結果時執行，不會自動中止行進；低協方差仍可能錯位，不能取代真值驗收。t71 第一次受推即是低協方差假定位，後續兩次假成功才有足以拒絕的協方差。
-- 分析動態失敗時，除既有安全狀態與 mux／guard／最終命令，須保存 `/amcl_pose`、`/plan` 及兩份 costmap；先比對雷射人物是否同時被全域與局部地圖標為障礙，再檢查定位、重規劃與 STOP 的時間關係。新 bag 不覆寫舊失敗；本批根因與重跑項目見 [動態情境分析](DYNAMIC_SCENARIOS_REVIEW.md)。
+- 分析動態失敗時，除既有安全狀態與 mux／guard／最終命令，須保存 `/amcl_pose`、`/plan` 及兩份 costmap；先比對雷射人物是否同時被全域與局部地圖標為障礙，再檢查定位、重規劃與 STOP 的時間關係。新 bag 不覆寫舊失敗；本批根因與重跑項目見 [動態情境分析](../research/DYNAMIC_SCENARIOS_REVIEW.md)。
 
 - 所有回合保留成功、取消、拒絕、失敗與逾時；每個預期抵達目標 90 秒內 SUCCEEDED，最終真值位置誤差建議 ≤0.20 公尺、yaw 誤差 ≤0.20 弧度。
 - 靜態及人物 `minimum > 0` 為無幾何接觸的最低條件，建議 >0.10 公尺。行人 topic 必須有完整覆蓋、人數與順序正確，不能以 null 或缺 topic 判定通過；檢查 `.meta.json`。

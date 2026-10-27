@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT/'scripts'/f'{name}.py')
+    spec = importlib.util.spec_from_file_location(name, ROOT/'scripts/checks'/f'{name}.py')
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -124,7 +124,7 @@ def test_fit_rejects_invalid_or_stalled_rotation(rows):
 
 
 def test_dev_entry():
-    assert 'yaw-check) run python3 /repo/scripts/yaw_rate_check.py "$@" ;;' in (ROOT/'scripts/dev.sh').read_text()
+    assert 'yaw-check) run python3 /repo/scripts/checks/yaw_rate_check.py "$@" ;;' in (ROOT/'scripts/dev.sh').read_text()
 
 
 @pytest.mark.parametrize('failure,expected', [(KeyboardInterrupt, 130), (RuntimeError, 1)])
