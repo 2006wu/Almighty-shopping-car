@@ -175,6 +175,11 @@ controller_server:
       gentle_min_speed_scale: 0.2
       gentle_stop_dist: 0.12
       gentle_wait_before_replan: 1.5
+      gentle_footprint_clearance: true
+      gentle_resume_margin: 0.05
+      gentle_transform_pose_to_plan: true
+      gentle_bounded_local_checks: true
+      gentle_ignore_local_map_boundary: true
       gentle_max_speed_near_people: 0.15
     Fast:
       plugin: teb_controller::TebController
@@ -207,6 +212,11 @@ controller_server:
       gentle_min_speed_scale: 0.2
       gentle_stop_dist: 0.12
       gentle_wait_before_replan: 1.5
+      gentle_footprint_clearance: true
+      gentle_resume_margin: 0.05
+      gentle_transform_pose_to_plan: true
+      gentle_bounded_local_checks: true
+      gentle_ignore_local_map_boundary: true
       gentle_max_speed_near_people: 0.15
 planner_server:
   ros__parameters:
@@ -214,11 +224,13 @@ planner_server:
     expected_planner_frequency: 5.0
     planner_plugins: [GridBased]
     GridBased:
-      plugin: nav2_navfn_planner/NavfnPlanner
+      plugin: nav2_smac_planner/SmacPlanner2D
       # Follow goals coincide with the person obstacle; permit a nearby free endpoint.
       # Shared with guide mode: blocked zone goals may also end up to 0.8 m away.
       tolerance: 0.8
-      use_astar: false
+      downsample_costmap: false
+      max_planning_time: 2.0
+      cost_travel_multiplier: 2.0
       allow_unknown: true
 smoother_server:
   ros__parameters:
@@ -240,7 +252,8 @@ behavior_server:
     behavior_plugins: [shrink, wait]
     shrink:
       plugin: nav2_behaviors/Shrink
-      costmap_tolerance: 50
+      # OccupancyGrid: 99 is inscribed, 100 lethal; inflated traversable cells are <= 98.
+      costmap_tolerance: 98
       timer_duration: 20
       # Fork opt-in safe mode (shopping-car only): numeric radius, restore on exit, 0.40 m floor.
       safe_recovery: true
@@ -253,6 +266,9 @@ behavior_server:
       # Eurobot-only layers absent here; listed so Shrink skips them quickly.
       optional_services: ["/rival_layer/set_mode", "/object_layer/set_mode"]
       optional_service_timeout: 0.05
+      # Wall-clock waits tolerate simulation CPU contention; bounded restore retries.
+      service_timeout: 3.0
+      restore_attempts: 2
     wait: {plugin: nav2_behaviors/Wait}
     global_frame: odom
     robot_base_frame: base_footprint
@@ -311,7 +327,7 @@ local_costmap:
         radius_service_name: /local_costmap/inflation_layer/set_radius
         shrink_to: 0.45
         min_inflation_radius: 0.40
-        inscribed_radius_floor: 0.40
+        inscribed_radius_floor: 0.25  # footprint half-width; the fork uses this as the inscribed radius
       always_send_full_costmap: true
 global_costmap:
   global_costmap:
@@ -338,5 +354,5 @@ global_costmap:
         radius_service_name: /global_costmap/inflation_layer/set_radius
         shrink_to: 0.45
         min_inflation_radius: 0.40
-        inscribed_radius_floor: 0.40
+        inscribed_radius_floor: 0.25  # footprint half-width; the fork uses this as the inscribed radius
       always_send_full_costmap: true

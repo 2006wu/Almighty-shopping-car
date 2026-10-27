@@ -53,7 +53,7 @@ def generate_launch_description():
         DeclareLaunchArgument('initial_mode', default_value='follow'),
         DeclareLaunchArgument('odom_source', default_value='ekf', choices=['ekf', 'ground_truth']),
         DeclareLaunchArgument('headless', default_value='true'),
-        DeclareLaunchArgument('nav2_stack', default_value='apt', choices=['auto', 'fork', 'apt']),
+        DeclareLaunchArgument('nav2_stack', default_value='auto', choices=['auto', 'fork', 'apt']),
         DeclareLaunchArgument('slam_mode', default_value='mapping'),
         DeclareLaunchArgument('map', default_value=''),
         DeclareLaunchArgument('route_around', default_value='true'),

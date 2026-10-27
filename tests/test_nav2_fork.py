@@ -113,20 +113,67 @@ def test_fork_params_and_tree():
                  'min_inflation_radius', 'inscribed_radius_floor'}
     for name in ('local_costmap', 'global_costmap'):
         layer = params[name][name]['ros__parameters']['inflation_layer']
-        assert layer['min_inflation_radius'] >= 0.4 and layer['inscribed_radius_floor'] >= 0.4
+        # The floor alone sets the 253 plateau. min_inflation_radius only limits
+        # inflation support; it does not enlarge the inscribed radius.
+        assert layer['min_inflation_radius'] >= 0.4
+        assert layer['inscribed_radius_floor'] == 0.25
         assert layer['radius_service_name'] == shrink[name.split('_')[0]+'_inflation_radius_service']
         assert layer['mode_service_name'] == shrink[name.split('_')[0]+'_inflation_service']
         for key in fork_only:
             layer.pop(key)
-    for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator', 'planner_server'}:
+    assert shrink['costmap_tolerance'] == 98
+    assert shrink['service_timeout'] == 3.0 and shrink['restore_attempts'] == 2
+    for key in set(apt) - {'controller_server', 'behavior_server', 'bt_navigator'}:
         assert apt[key] == params[key]
     assert apt['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
-    assert params['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
+    assert params['planner_server']['ros__parameters']['GridBased']['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
+    planner = params['planner_server']['ros__parameters']['GridBased']
+    assert planner == dict(plugin='nav2_smac_planner/SmacPlanner2D', tolerance=0.8,
+                           downsample_costmap=False, max_planning_time=2.0,
+                           cost_travel_multiplier=2.0, allow_unknown=True)
     assert 'behavior_trees' in (NAV/'CMakeLists.txt').read_text()
     for path in (NAV/'config').glob('*.yaml'):
         for node in yaml.safe_load(path.read_text()).values():
             p = node.get('ros__parameters', node.get(next(iter(node)), {}).get('ros__parameters', {}))
             assert p.get('use_sim_time') is True
+
+
+def inflation_probe():
+    spec = importlib.util.spec_from_file_location('inflation_probe', ROOT/'tools/nav2_inflation_probe.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_saved_map_cannot_reproduce_logged_inscribed_goals():
+    result = inflation_probe().report()
+    assert result['apt_inscribed'] == pytest.approx(0.26)
+    assert result['normal_radius'] == 0.8 and result['shrink_radius'] == 0.45
+    for row in result['goals']:
+        household = row['zone'] == 'household'
+        assert row['distance_m'] == pytest.approx(0.75 if household else 0.80)
+        assert row['nearest_occupied'] == (103 if household else 54, row['cell'][1])
+        assert row['fork_cost'] == (119 if household else 110)
+        assert row['fork_floor_040_cost'] == (149 if household else 138)
+        assert row['apt_cost'] == (120 if household else 112)
+        assert row['fork_shrink_cost'] == 0
+        if row['coordinates'] == 'saved_map_world':
+            assert row['cell'] == ((118, 152) if household else (70, 102))
+
+
+def test_inflation_clearance_and_navfn_diagnostic_semantics():
+    probe = inflation_probe()
+    layer = dict(inflation_radius=0.8, min_inflation_radius=0.4,
+                 inscribed_radius_floor=0.25)
+    assert probe.effective_radius(layer, 0.01) == 0.4
+    cost = probe.inflation_cost
+    assert cost(0, 0.05, 0.25, 0.4, 1.5) == 254
+    assert cost(5, 0.05, 0.25, 0.4, 1.5) == 253
+    assert cost(6, 0.05, 0.25, 0.4, 1.5) == 233
+    # A larger support floor still does not turn a 0.75 m goal into 253.
+    assert cost(15, 0.05, 0.25, 0.8, 1.5) == 119
+    assert [probe.fork_navfn_cost(c) for c in (0, 119, 252, 253, 254, 255)] == [
+        1, 119, 252, 253, 253, 253]
 
 
 def test_build_configuration():
@@ -141,7 +188,7 @@ def test_build_configuration():
     assert entry.index('/opt/ros/humble') < entry.index('/nav2_ws/install') < entry.index('/ws/install')
     packages = (ROOT/'docker/nav2_fork_packages.txt').read_text().split()
     assert {'nav2_bt_navigator', 'nav2_behavior_tree', 'nav2_behaviors', 'nav2_controller',
-            'nav2_core', 'nav2_util', 'nav2_msgs', 'nav2_costmap_2d', 'nav2_navfn_planner',
+            'nav2_core', 'nav2_util', 'nav2_msgs', 'nav2_costmap_2d', 'nav2_navfn_planner', 'nav2_smac_planner',
             'custom_controller', 'custom_nav_to_pose'} <= set(packages)
     assert not any(p.startswith(('opennav_', 'custom_layer')) for p in packages)
     assert not {'navigation2_run', 'camera_offset_publisher', 'nav2_rviz_plugins', 'nav2_amcl'} & set(packages)
@@ -174,6 +221,44 @@ def test_contract_preflight():
     spec.loader.exec_module(module)
     assert module.missing_parameters('') == list(module.PARAMETERS)
     assert not module.missing_parameters(' '.join(f'".{p}"' for p in module.PARAMETERS))
+
+
+@pytest.mark.parametrize('layout', ['nav2_smac_planner/lib', 'lib'])
+def test_smac_requires_fork_2d_library(tmp_path, monkeypatch, layout):
+    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    import check_nav2_contract as contract
+    import check_nav2_linkage as linkage
+
+    params = (NAV/'config/nav2_params_fork.yaml').read_text()
+    install = tmp_path/'install'
+    library_dir = install/layout
+    library_dir.mkdir(parents=True)
+    # Hybrid alone is insufficient; pluginlib needs the 2D library.
+    (library_dir/'libnav2_smac_planner.so').touch()
+    for check in (contract.check_planner_install, linkage.check_planner_install):
+        with pytest.raises(RuntimeError, match='refusing apt plugin fallback.*ABI mixing'):
+            check(params, install)
+        check('plugin: nav2_navfn_planner/NavfnPlanner', install)
+    plugin = library_dir/'libnav2_smac_planner_2d.so'
+    plugin.symlink_to(library_dir/'missing.so')
+    with pytest.raises(RuntimeError, match='libnav2_smac_planner_2d.so'):
+        contract.check_planner_install(params, install)
+    plugin.unlink()
+    plugin.touch()
+    contract.check_planner_install(params, install)
+
+
+def test_linkage_rejects_missing_smac_before_ldd(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    import check_nav2_linkage as linkage
+
+    monkeypatch.setattr(linkage, 'FORK_PARAMS', NAV/'config/nav2_params_fork.yaml')
+    monkeypatch.setattr(linkage, 'Path', lambda path: tmp_path/path.lstrip('/'))
+    def unexpected_ldd(*args, **kwargs):
+        pytest.fail('Missing fork Smac must fail before running ldd on apt libraries')
+    monkeypatch.setattr(linkage.subprocess, 'run', unexpected_ldd)
+    with pytest.raises(RuntimeError, match='refusing apt plugin fallback'):
+        linkage.main()
 
 
 def test_truth_metrics_and_comparison():
@@ -213,3 +298,14 @@ def test_available_fork_libraries_and_nonrecovery_structure():
     def structure(node):
         return node.tag, node.attrib, [structure(child) for child in node]
     assert structure(original) == structure(shopping)
+
+
+def test_gentle_slow_and_fast_enable_the_same_safety_options():
+    params = yaml.safe_load((NAV/'config/nav2_params_fork.yaml').read_text())
+    controller = params['controller_server']['ros__parameters']
+    for name in ('Slow', 'Fast'):
+        profile = controller[name]
+        for option in ('gentle_footprint_clearance', 'gentle_transform_pose_to_plan',
+                       'gentle_bounded_local_checks', 'gentle_ignore_local_map_boundary'):
+            assert profile[option] is True
+        assert profile['gentle_resume_margin'] == 0.05

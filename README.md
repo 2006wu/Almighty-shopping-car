@@ -128,9 +128,9 @@ ros2 run shopping_zone_manager localization_check --ros-args -p use_sim_time:=tr
 ./scripts/dev.sh nav-check --tolerance-check --max-final-error 0.35
 ```
 
-檢查工具會實際移動模擬機器人，請先結束既有導航，保持常駐節點閒置，並互斥使用鍵盤、跟隨與其他導航客戶端。工具使用同一套區域節點程式，但不重複建立指令訂閱與取消服務，依序檢查未知區域不送 action、不可達目標（`unreachable goal`）遭 `ABORTED`／`REJECTED`、遠端目標有至少 0.15 公尺進展後取消、取消後 2 秒內收到 `CANCELED` 且新鮮 `/odom` 速度接近零（各平面分量低於 0.02）、有效目標成功，以及第二個目標回覆 `BUSY`。最後印出 PASS／FAIL 表，任何失敗皆回傳非零；無法取消舊目標時停止後續案例。不可達目標使用 map 座標 `(50, 50)`，NavFn 容許值讀取安裝的 `shopping_robot_navigation/config/nav2_params.yaml`；送出前從安裝的 `supermarket.sdf` 牆面盒體取得商店外框，並讀取 `/global_costmap/costmap`，確認目標距離兩個外框皆超過「容許值＋1 公尺」。成本地圖外框涵蓋所有格子，因此也保證距離每個自由格子超過此門檻；缺少成本地圖、座標框架或幾何假設不符時回報失敗，不送出此目標。單項等待保留 `--case-timeout`（預設 120 秒），逾時後要求取消。這是待容器實測的工具，離線測試不代表模擬驗收。
+檢查工具會實際移動模擬機器人，請先結束既有導航，保持常駐節點閒置，並互斥使用鍵盤、跟隨與其他導航客戶端。工具使用同一套區域節點程式，但不重複建立指令訂閱與取消服務，依序檢查未知區域不送 action、不可達目標（`unreachable goal`）遭 `ABORTED`／`REJECTED`、遠端目標有至少 0.15 公尺進展後取消、取消後 2 秒內收到 `CANCELED` 且新鮮 `/odom` 速度接近零（各平面分量低於 0.02）、有效目標成功，以及第二個目標回覆 `BUSY`。最後印出 PASS／FAIL 表，任何失敗皆回傳非零；無法取消舊目標時停止後續案例。不可達目標使用 map 座標 `(50, 50)`，Smac2D 容許值讀取安裝的 `shopping_robot_navigation/config/nav2_params.yaml`；送出前從安裝的 `supermarket.sdf` 牆面盒體取得商店外框，並讀取 `/global_costmap/costmap`，確認目標距離兩個外框皆超過「容許值＋1 公尺」。成本地圖外框涵蓋所有格子，因此也保證距離每個自由格子超過此門檻；缺少成本地圖、座標框架或幾何假設不符時回報失敗，不送出此目標。單項等待保留 `--case-timeout`（預設 120 秒），逾時後要求取消。這是待容器實測的工具，離線測試不代表模擬驗收。
 
-`--tolerance-check` 預設關閉，啟用後增加第六項 `zone tolerance`：送出一個正常區域目標，須收到 `SUCCEEDED`，再於 5 秒內取得結果之後接收的新鮮 `/odom`，計算與區域座標的平面距離。`--max-final-error` 預設 0.35 公尺，超標即失敗；PASS 與超標 FAIL 的表格都列出實測誤差與門檻，用來檢查共用 NavFn 0.8 公尺容許值是否使導覽提早停止。此量測直接將 odom 與 map 座標比較，僅適用模擬初始原點與朝向對齊且漂移可忽略的情況；不補償 AMCL／SLAM 的 map→odom 修正，不能當作一般定位精度驗收。
+`--tolerance-check` 預設關閉，啟用後增加第六項 `zone tolerance`：送出一個正常區域目標，須收到 `SUCCEEDED`，再於 5 秒內取得結果之後接收的新鮮 `/odom`，計算與區域座標的平面距離。`--max-final-error` 預設 0.35 公尺，超標即失敗；PASS 與超標 FAIL 的表格都列出實測誤差與門檻，用來檢查共用 Smac2D 0.8 公尺容許值是否使導覽提早停止。此量測直接將 odom 與 map 座標比較，僅適用模擬初始原點與朝向對齊且漂移可忽略的情況；不補償 AMCL／SLAM 的 map→odom 修正，不能當作一般定位精度驗收。
 
 停止其他移動流程後測試 UWB 跟隨（包含建圖與 Nav2 繞行）：
 
@@ -259,7 +259,7 @@ ros2 topic pub --once /sim/fault std_msgs/msg/String '{data: "clear"}'
 
 跟隨模式可將持續受阻的有效目標交給 Nav2 繞行。一般 LOS 走廊半寬為 0.25 公尺；連續受阻 0.3 秒才進入 `BLOCKED_WAIT`，此前維持 `FOLLOWING` 並減速。已判定受阻後，須以加寬至 0.35 公尺的走廊連續暢通 0.6 秒才能解除，避免貨架末端的雷射擦邊反覆停車。人物距離超過 1.3 公尺且判定受阻再持續 0.5 秒後交接；前方障礙停止仍立即生效，不等待 LOS 計時。`/follow/state` 發布 `STATE: 原因`，`/follow/handoff_goal` 為人物 map 座標的 PoseStamped，可加入 RViz。
 
-NAV2 至少保持 1.5 秒；之後須 LOS 遲滯確認暢通、人物距離不超過 1.3 公尺、前方淨空大於 0.8 公尺，並持續 0.5 秒才恢復 DIRECT。人物已在 1.0 公尺跟隨距離內時，可略過額外 0.5 秒，仍須 LOS 確認與最短保持時間。導航成功／失敗／取消或安全事件可立即結束保持時間。恢復 DIRECT 後至少保持 1 秒才再次交接；若 LOS 已連續判定受阻達 1 秒，可提前交接，但仍須滿足受阻交接延遲。導航中停止直接追逐，由跟隨節點轉送經安全檢查的 Nav2 命令；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。apt Smac2D 與 fork NavFn 的容差皆為 0.8 公尺，目標未偏移；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。
+NAV2 至少保持 1.5 秒；之後須 LOS 遲滯確認暢通、人物距離不超過 1.3 公尺、前方淨空大於 0.8 公尺，並持續 0.5 秒才恢復 DIRECT。人物已在 1.0 公尺跟隨距離內時，可略過額外 0.5 秒，仍須 LOS 確認與最短保持時間。導航成功／失敗／取消或安全事件可立即結束保持時間。恢復 DIRECT 後至少保持 1 秒才再次交接；若 LOS 已連續判定受阻達 1 秒，可提前交接，但仍須滿足受阻交接延遲。導航中停止直接追逐，由跟隨節點轉送經安全檢查的 Nav2 命令；遺失、過近、停用或雷射失效時立即取消並輸出零 Twist。目標更新直接使用 Nav2 搶占；切回時等待動作終止，且外部速度命令安靜 0.3 秒或最新命令近零，終止後最多等 2 秒，第一筆直接命令為零。apt 與 fork 的 Smac2D 共用容差 0.8 公尺，目標未偏移；引導模式受阻的區域目標也可能停在較遠處，不能只依成功狀態認定到達原始座標。
 
 新增的 `uwb_follow.yaml`／節點參數如下；時間單位為秒、距離為公尺、角度為弧度。LOS 與保持時間及額外寬度接受有限非負值；減速比例限於 0～1，側向角度須滿足 `0 <= min < max <= pi`，側向距離須滿足 `0 <= slow < free`。
 
@@ -498,7 +498,7 @@ git submodule update --init third_party/eurobot_nav2
 
 **目前固定版本：** fork `shopping-car` 分支 `bf60ee0` 已含非全向／gentle TEB 參數合約與 opt-in 的 Shrink `safe_recovery`（遵守 `shrink_to`、0.40 m 下限、local／global 各自的 inflation service、optional rival／object layer 逾時、結束或取消時還原）。建置前檢查仍會拒絕缺少合約的版本。2026-10-24 模擬中 fork 建置、連結、lifecycle、BT 與 Shrink 均正常，但 gentle TEB 在店內走道仍常判定阻擋、未能抵達區域目標，因此 launch 預設維持 `apt`（見 PROGRESS）。
 
-`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `apt`（fork TEB 尚在調參，2026-10-24 起需明確指定 `fork` 或 `auto`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
+`guide`、`follow` 與直接的 `shopping_robot_navigation navigation.launch.py` 都接受 `nav2_stack:=auto|fork|apt`，預設 `auto`（2026-10-27 起：已建置 fork underlay 就用 fork TEB＋Smac2D，否則自動回退 apt；要比對 apt 請明確指定 `nav2_stack:=apt`），啟動日誌會顯示結果；明確選 `fork` 而找不到兩個套件時會失敗並提示建置。`apt` 保留既有 `nav2_params.yaml` 與 RPP；即使 fork 已建置，也會在移除 fork 搜尋路徑的子程序重新啟動導航，使用 apt binaries。先停掉上一個 bringup，再執行另一種模式：
 
 ```bash
 ./scripts/dev.sh guide nav2_stack:=fork slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
@@ -506,7 +506,7 @@ git submodule update --init third_party/eurobot_nav2
 ./scripts/dev.sh guide nav2_stack:=apt slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml
 ```
 
-fork 使用 `Slow`（0.30 m/s）／`Fast`（0.40 m/s）TEB、`holonomic: false`、`avoidance_mode: gentle` 與 `use_rival_topic: false`，預設 selector 選 `Slow`／`Loose`，不需額外發布者。`Loose` 維持區域目標 0.15 m／0.25 rad 容差；`NonStopGoalChecker` 沿用 fork 中以 `SimpleGoalChecker` 定義、忽略朝向的 profile 名稱，不是獨立 plugin class。NavFn 的既有 0.8 m 可接受終點容差維持不變，仍須量測原始目標誤差。跟隨交接、區域引導、nav-check 與 map-tour 都使用 `NavigateToPose`，空白 `behavior_tree` 會選新的預設樹。
+fork 使用 `Slow`（0.30 m/s）／`Fast`（0.40 m/s）TEB、`holonomic: false`、`avoidance_mode: gentle` 與 `use_rival_topic: false`，預設 selector 選 `Slow`／`Loose`，不需額外發布者。`Loose` 維持區域目標 0.15 m／0.25 rad 容差；`NonStopGoalChecker` 沿用 fork 中以 `SimpleGoalChecker` 定義、忽略朝向的 profile 名稱，不是獨立 plugin class。Smac2D 的既有 0.8 m 可接受終點容差維持不變，仍須量測原始目標誤差。跟隨交接、區域引導、nav-check 與 map-tour 都使用 `NavigateToPose`，空白 `behavior_tree` 會選新的預設樹。
 
 to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wait)`，沒有 Escape。Shrink 使用 fork 的 `safe_recovery: true`：BT `shrink_to=0.45 m`，下限 0.40 m（大於 0.60 × 0.50 m 車體半對角線約 0.391 m），兩個 costmap 各用自己的 inflation service，結束或取消時還原；缺少的 rival／object layer service 只等待 0.05 s 即略過。詳見 [架構文件](docs/ARCHITECTURE.md)。
 
@@ -546,6 +546,6 @@ to_pose 與 through_poses recovery 皆為 `GoalUpdated` 或 `Sequence(Shrink, Wa
 
 錄製命令會阻塞，`goto` 請在第三個終端機執行。每次僅啟動一個移動流程，前一情境 Ctrl-C 完全結束後才啟動下一個。導航情境建議先用標準座標的已存地圖；線上建圖仍可選用。`alt_start` 的 EKF 初始狀態、Gazebo 出生姿態、AMCL `/initialpose` 與 slam_toolbox 定位起點同步選取；`loc-check` 如需再次發布起點，必須加 `-p scenario:=alt_start`。所有驗收仍待維護者在 Fortress 容器實測，操作表與通過條件見 [模擬情境驗收程序](docs/SCENARIOS.md) 及 [評估指標](docs/METRICS.md#模擬情境與動態行人)。
 
-情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設仍為 `apt`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
+情境可與 `nav2_stack:=apt|fork|auto` 同時選用，預設為 `auto`；`mcu_comm` 維持預設 `false`。已有 fork underlay 而明確選 apt 時，隔離的導航子程序會保留情境出生姿態，供 slam_toolbox 定位使用。人物同步與跟隨評估若用於非 default 情境，須以 `--person-path` 指定本次 launch 產生的同一份人物路徑；不能套用預設路徑的解析值。
 
 SLAM 建圖、專用 RViz 視圖、四檔儲存與重載定位的完整操作見 [SLAM 操作說明](docs/SLAM.md)；Mac arm64 的本次實測記錄見 [驗收報告](docs/VALIDATION_ARM64.md)。
