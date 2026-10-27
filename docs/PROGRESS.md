@@ -1997,7 +1997,26 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 - 本輪改善：guard 改為反應期間定速、之後線／角速度各自減速至零的煞停軌跡掃掠，保留足跡、取樣保守補償、旋轉圓盤、margin、STOP／STALE 與解除遲滯；線減速度 0.6→1.2 m/s²，仍小於 Fortress DiffDrive 的 2.0 m/s²，真實硬體必須重新量測。跟隨增加 `follow_time_headway=0.4 s`，有效距離為基礎 1.2 m 加上正向目標估速乘時距；另以 0.25 秒反應及 1.2 m/s² 減速度，將命令限制在前方雷射／目標距離扣除 0.7 m 後可煞停的速度，淨空縮小時立即夾限。SLOW 保留估速供時距計算，但仍停用速度前饋。基礎跟隨距離內零前進、過近／障礙／遺失停止、0.15 m/s 近人上限與不可繞過的下游 guard 保留。
 - `follow_eval` 與 `person_sync_check` 共用新增 `--scenario NAME`，從情境 YAML 的 `person_path` 讀取速度與路徑；未指定時沿用共用預設路徑，與 `--person-path` 同時指定時拒絕歧義。INFO 列增加基礎跟隨距離、時距及按情境速率推算的移動目標間距；此推算值假設目標朝車頭方向行走，實際控制使用新鮮估測前向分量。原有誤差定義及所有 PASS／FAIL 門檻不變。
 - 低優先轉角調整暫緩：保留 45° 進入／0.25 rad 解除原地轉向的遲滯與 `max(0, cos(bearing))`，避免同時改變貨架轉角安全行為；小於進入角度且未鎖定時仍可邊轉邊走。
-- 模擬結果：待填
+- 模擬結果（2026-10-27 18:22–19:25 臺北時間，盒內 Linux amd64 Docker，Fortress，fork Nav2；距離為真值機器人到人物中心）：
+
+| 情境 | develop 7729cd1 | 15402ef（第一輪） | e3ca200（第二輪） |
+| --- | --- | --- | --- |
+| follow_fast_1_0（人 1.0 m/s）平均／最大距離 | 2.59／4.36 m，追蹤 FAIL | 2.53／4.25 m，FAIL | 1.92／2.66 m，追蹤 PASS（目標 1.6 m） |
+| follow_fast_1_2（人 1.2 m/s）平均／最大距離 | 未測 | 2.52／4.35 m，FAIL | 2.07／3.02 m，追蹤 PASS（目標 1.68 m） |
+| 機器人平均速度（1.0／1.2 m/s 情境） | 未測 | 0.31 m/s（guard STOP 約 12%） | 0.72 m/s（1.0 m/s 情境） |
+
+| 回歸（e3ca200） | 結果 | develop 參考 |
+| --- | --- | --- |
+| 跟隨 fault-check | **FAIL 0/7**（無移動基準；預設貨架情境反覆進入 NAV2_HANDOFF，Nav2 follow_path 多次中止，18:48 一次 controller_server 心跳逾時） | 7/7 |
+| follow_turns | **FAIL**：平均 2.40 m、最大 5.55 m、最小 0.39 m，near_stop 2 次違規 | 平均 1.33 m、誤差 RMSE 0.59 m，PASS |
+| follow_stop_go | **FAIL**：追蹤 PASS（平均 0.99 m），near_stop 2 次違規（最小 0.43 m） | PASS |
+| 障礙 fault-check | PASS 4/4 | 4/4 |
+| nav-check default | PASS 6/6，終點誤差 0.060 m | 6/6 |
+| nav-check alt_start | PASS 6/6，終點誤差 0.114 m | 6/6 |
+| loc-check | PASS 六區 | PASS |
+
+- 結論：開放區域的高速跟隨明顯改善，但貨架走道情境出現安全與穩定性回歸（近距停止違規、故障檢查無法建立移動基準）。本分支**不開 PR、不合併**，保留在 `codex/faster-follow` 待下一輪修正。可能方向：高速只在開放區域啟用（依側邊淨空或 LOS 降速）、近人時使用更保守的煞停上限、檢查 Fast TEB 在貨架交接時的中止原因。
+- 審查者修正：watchdog 改為對稱夾限（倒車政策仍由 mux 決定）。`yaw_rate_check.py` 多速度掃描本輪未在 Fortress 執行，仍待驗證。
 
 ### 自行檢查與分析結果
 
@@ -2023,7 +2042,7 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 
 | 項目 | 結果 |
 | --- | --- |
-| 煞停掃掠、時距與情境評估修正 | 待驗證 |
+| 煞停掃掠、時距與情境評估修正 | 審查者已讀差異並重跑 pytest 1348 通過；Fortress 結果見上表，貨架情境回歸 |
 | 估速前饋、停止狀態與參數契約 | 待驗證 |
 | 高速情境、資訊指標與純 Python 比較 | 待驗證 |
 | Fortress 偏航、煞停與 apt／fork 整合 | 待驗證 |
