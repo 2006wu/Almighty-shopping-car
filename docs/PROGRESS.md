@@ -1790,3 +1790,18 @@ SDF 舊版排除安全停止 84 筆、LOS 受阻／鎖定 832 筆；修正版分
 | NAV2 寬限、失敗冷卻與等待上限 | 待驗證 |
 | 直接跟隨安全停止與側向減速 | 待驗證 |
 | AMCL／Nav2 模擬故障檢查 | 待驗證 |
+
+## 2026-10-27（t74／t76）：follow-los 模擬驗收與未合併原因
+
+| 項目 | 結果（b6afb07） | develop 基準 |
+| --- | --- | --- |
+| follow_turns 距離誤差 RMSE 直線／轉彎 | 0.628／0.638 m（不再退步） | 0.636／0.672 m |
+| follow_turns near_stop | FAIL @103.16 s：腳本人物路徑穿過機器人中心（真值距離 0.00 m @102.1 s），命令為 0、機器人被推（vx 0.011）→ 腳本人物假象，門檻不放寬 | PASS 5/5 |
+| follow_stop_go | PASS（0.343／0.352） | PASS |
+| fault-check（t76） | **FAIL 3/7**：uwb_stale／dropout／noise PASS；lidar_drop、lidar_freeze、odom_freeze、lidar_front 無移動基準 | 7/7 |
+
+fault-check 根因：map→base_link TF 精確時間查詢暫時失敗（map_valid=False）即退出 NAV2，`recovery_pending` 因側向淨空 0.43–0.47 m < 0.75 m 永不解除，節點無期限保持 BLOCKED_WAIT，機器人不動；map TF 失敗時 LOS 也被誤判為受阻。
+
+c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s、`max_blocked_wait` 4.0 s，安全停止不變；指定離線測試 672 項通過。**此修正尚未做模擬驗證**：t77（fault-check／follow_turns／follow_stop_go）因使用者 16:17 要求收尾而取消，因此本分支**未合併**進 develop。
+
+下一步：跑 t77（`/workspace/wt/logs/shop/t77.sh`），需 fault-check 7/7、turns 不退步、stopgo PASS 才能合併；可順便改腳本人物路徑避免穿過機器人中心（near_stop 假象）。
