@@ -954,5 +954,5 @@ def test_clear_guard_cannot_bypass_constrained_absolute_cap():
         node.guard_state, node.guard_time = 'CLEAR', node.now
         node.tick()
         output = node.publisher.publish.call_args.args[0]
-        assert output.linear.x <= .65
-    assert output.linear.x == pytest.approx(.65)
+        assert output.linear.x <= .5
+    assert output.linear.x == pytest.approx(.5)

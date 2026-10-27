@@ -65,7 +65,8 @@ def test_sustained_reduced_cap_cannot_track_faster_person():
 def settle(controller, distance, velocity=(0, 0), factor=1):
     for _ in range(60):
         result = controller.step((distance, 0), 0, math.inf, 0.05,
-                                 target_velocity=velocity, speed_factor=factor)
+                                 target_velocity=velocity, speed_factor=factor,
+                                 clearance=math.inf)
     return result
 
 

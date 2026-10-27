@@ -61,7 +61,7 @@ class ControllerParams:
     obstacle_stop_rotate: bool = True
     lost_timeout: float = 0.5
     max_linear: float = 1.0
-    constrained_max_linear: float = 0.65
+    constrained_max_linear: float = 0.5
     open_side_clearance: float = 0.5
     near_person_distance: float = 1.2
     near_person_max_linear: float = 0.35
@@ -112,11 +112,16 @@ class FollowController:
         self.near_clear_time = 0.0
         self.aligning = False
 
+    def open_area(self, clearance=math.nan, scan_valid=True, los_clear=True):
+        """Open area: valid scan, clear LOS and enough side clearance on both sides."""
+        return (scan_valid and los_clear and not math.isnan(clearance)
+                and clearance >= self.p.open_side_clearance)
+
     def linear_cap(self, obstacle, clearance=math.nan, scan_valid=True, los_clear=True):
         """Absolute caps remain authoritative regardless of guard slowdown state."""
         p = self.p
-        cap = p.max_linear if (scan_valid and los_clear and not math.isnan(clearance)
-                               and clearance >= p.open_side_clearance) else min(p.max_linear, p.constrained_max_linear)
+        cap = (p.max_linear if self.open_area(clearance, scan_valid, los_clear)
+               else min(p.max_linear, p.constrained_max_linear))
         if obstacle < p.near_person_distance:
             cap = min(cap, p.near_person_max_linear)
         return cap
@@ -173,8 +178,11 @@ class FollowController:
         velocity_valid = (target_velocity is not None and len(target_velocity) == 2
                           and math.isfinite(velocity_age) and 0 <= velocity_age <= p.lost_timeout
                           and all(math.isfinite(v) for v in target_velocity))
+        # Near shelves, crowds or with uncertain LOS drop the time headway so the
+        # robot stays close enough not to lose the person around shelf corners.
+        headway = p.follow_time_headway if self.open_area(clearance, scan_valid, los_clear) else 0.0
         estimated_forward = target_velocity[0] if velocity_valid else 0.0
-        effective_distance = p.follow_distance+p.follow_time_headway*max(0.0, estimated_forward)
+        effective_distance = p.follow_distance+headway*max(0.0, estimated_forward)
         error = distance-effective_distance
         if abs(error) <= p.distance_hysteresis_enter:
             self.holding_distance = True

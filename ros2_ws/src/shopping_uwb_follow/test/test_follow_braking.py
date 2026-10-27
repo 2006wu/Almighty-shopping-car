@@ -75,14 +75,26 @@ def test_slow_guard_retains_headway_without_feedforward():
     control = FollowController()
     for _ in range(100):
         v, _, _, _ = control.step((2, 0), 0, math.inf, .05,
-                                  target_velocity=(1, 0), feedforward_enabled=False)
+                                  target_velocity=(1, 0), feedforward_enabled=False,
+                                  clearance=math.inf)
     assert v == pytest.approx(2-1.2-.4)
+
+
+def test_constrained_area_drops_headway_and_caps_speed():
+    control = FollowController()
+    for _ in range(100):
+        v, _, _, _ = control.step((1.4, 0), 0, math.inf, .05, target_velocity=(.3, 0),
+                                  feedforward_enabled=False, clearance=.3)
+    assert v == pytest.approx(1.4-1.2)
+    for _ in range(100):
+        v, _, _, _ = control.step((1.4, 0), 0, math.inf, .05, target_velocity=(1, 0), clearance=.3)
+    assert v == pytest.approx(.5)
 
 
 @pytest.mark.parametrize('clearance,valid,los,expected', [
     (.5, True, True, 1.0), (math.inf, True, True, 1.0),
-    (.49, True, True, .65), (math.nan, True, True, .65),
-    (1., False, True, .65), (1., True, False, .65)])
+    (.49, True, True, .5), (math.nan, True, True, .5),
+    (1., False, True, .5), (1., True, False, .5)])
 def test_absolute_open_area_cap_applies_even_during_ramp_down(clearance, valid, los, expected):
     control = FollowController()
     control.v = 1.0
