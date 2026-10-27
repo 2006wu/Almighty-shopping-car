@@ -20,9 +20,9 @@ def start(context):
     if mode != 'mapping' and not map_file:
         raise ValueError('Selected localization mode requires map:=...')
     stack = select_stack(LaunchConfiguration('nav2_stack').perform(context), get_packages_with_prefixes())
-    speed = float(LaunchConfiguration('rpp_desired_speed', default='0.4').perform(context))
-    if not 0 < speed <= 0.5:
-        raise ValueError('rpp_desired_speed must be finite and within (0, 0.5] m/s')
+    speed = float(LaunchConfiguration('rpp_desired_speed', default='0.8').perform(context))
+    if not 0 < speed <= 1.3:
+        raise ValueError('rpp_desired_speed must be finite and within (0, 1.3] m/s')
     share = get_package_share_directory('shopping_robot_navigation')
     if stack == 'apt' and '/nav2_ws/' in os.environ.get('AMENT_PREFIX_PATH', ''):
         # Re-exec so both Python ament lookup and spawned binaries use apt.
@@ -50,7 +50,7 @@ def start(context):
             'default_nav_to_pose_bt_xml': share + '/behavior_trees/navigate_to_pose_shopping.xml',
             'default_nav_through_poses_bt_xml': share + '/behavior_trees/navigate_through_poses_shopping.xml'},
             convert_types=True)
-    elif speed != 0.4:
+    elif speed != 0.8:
         params = RewrittenYaml(source_file=params, root_key='',
                                param_rewrites={'desired_linear_vel': str(speed)}, convert_types=True)
     nav = get_package_share_directory('nav2_bringup')+'/launch/'
@@ -79,7 +79,7 @@ def generate_launch_description():
                               DeclareLaunchArgument('use_mux', default_value='true', choices=['true', 'false']),
                               DeclareLaunchArgument('use_sim_time', default_value='true'),
                               DeclareLaunchArgument('nav2_stack', default_value='auto', choices=['auto', 'fork', 'apt']),
-                              DeclareLaunchArgument('rpp_desired_speed', default_value='0.4'),
+                              DeclareLaunchArgument('rpp_desired_speed', default_value='0.8'),
                               DeclareLaunchArgument('map', default_value=''),
                               DeclareLaunchArgument('spawn_x', default_value=''),
                               DeclareLaunchArgument('spawn_y', default_value=''),

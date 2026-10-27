@@ -100,12 +100,12 @@ def test_final_recovery_limiter_preserves_curvature_and_immediate_clamps():
     limiter = SafetyVelocityLimiter()
     assert limiter.step((0.5, 1), 0) == (0, 0)
     v, w = limiter.step((0.5, 1), .1)
-    assert 0 < v <= .06 and w == 2*v
+    assert 0 < v <= .08 and w == 2*v
     v, w = limiter.step((.01, .02), .15)
     assert (v, w) == (.01, .02)
     assert limiter.step((0, 0), .16) == (0, 0)
     v, w = limiter.step((-.5, 1), .2)
-    assert -.0241 <= v < 0 and w == -2*v
+    assert -.0301 <= v < 0 and w == -2*v
 
 
 @pytest.mark.parametrize('now,stamp,wall,received,expected', [

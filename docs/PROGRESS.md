@@ -1977,3 +1977,39 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | Mac arm64 原生完整建置 | 待驗證 |
 | README 快速開始與單元測試 | 待驗證 |
 | 帶路模擬與文件索引 | 待驗證 |
+
+## 2026-10-27：codex/faster-follow 高速跟隨與速度前饋
+
+- 基準為 develop `7729cd1` 的本工作樹；只修改工作樹，未提交或推送。依要求不使用網路、Docker、Gazebo 或硬體。
+- 跟隨節點以 UWB 量測時間查詢 `odom → base_link`，接上 TargetVelocityEstimator；估測上限由 0.6 提高至 1.5 m/s。速度保持於 odom 座標，輸出時轉至目前車體座標，以車頭方向分量做前饋。TF 缺失／過期、無效量測、時間倒退及估速過期時前饋歸零；只有新鮮 CLEAR guard 狀態允許前饋，SLOW／STOP／STALE 均不允許。停用時重設估速，不讀取任何模擬真值主題。
+- 預設前饋 0→0.9；跟隨距離 1.0→1.2 m、過近停止 0.6→0.7 m、kp_distance 0.7→1.0、線速上限 0.5→1.2 m/s、線加速度 0.4→0.8 m/s²、角速上限 1.0→1.5 rad/s。小於設定跟隨距離時禁止前進，避免前饋或原本減速斜坡持續逼近。過近鎖定、遺失、雷射失效、guard STOP／STALE 的停止流程保留；障礙停止的既有安全旋轉逃脫條件不變，不允許前進。
+- mux／獨立 watchdog／Gazebo／MCU 模擬模型上限同步為 1.3 m/s、1.8 rad/s；一般加速度 0.8 m/s²、1.5 rad/s²。watchdog 自行夾限並禁止倒車；MCU 的產生式 `firmware/sim_client/contract.h` 同步重新產生。Gazebo 增加正加速度 0.8／1.5、負加速度 -2.0／-3.0，理想命令煞停由 1.2 m/s 需 0.6 秒，實際動力學尚未驗證。
+- 前方固定障礙停止距離保留 0.65 m；下游 ObstacleGuard 既有 0.25 秒反應、0.6 m/s² 保守減速度的速度相關掃掠、停止與解除遲滯皆不放寬。原有命令停止 ≤0.8 秒、真值停止 ≤1.5 秒等驗收門檻不變；提高速度後必須實測。
+- fork 兩棵 BT 的預設 ControllerSelector 改為 Fast，保留 Slow 與原本主題選擇介面。Fast 線速 0.4→1.0 m/s、線加速度 0.4→0.6 m/s²、角速 0.8→1.5 rad/s；Slow 維持 0.3 m/s，兩者近人上限維持 0.15 m/s。apt RPP 0.4→0.8 m/s，follow／runtime role 傳入值同步 0.8；launch 覆寫上限 0.5→1.3。兩套 smoother 線／角速 0.5／1.0→1.2／1.5、線加減速度 ±0.4→±0.8；auto 選擇及 apt 隔離流程保留。
+- 新增 `follow_fast_1_0`／`follow_fast_1_2`：南側開放區域、最長 7.5 m 直線、人物 1.0／1.2 m/s，無額外行人；沿用情境框架產生本輪唯一 person_path.yaml。SDF 每線段取 101 點，最小碰撞盒淨空 0.80 m；標準地圖佔用格中心最小距離 0.795 m。新增情境註冊、幾何回歸與繁中操作文件。
+- follow_eval 增加 INFO 指標：設定人物速度、讀自跟隨設定的目標距離、初始 5 秒暖機後排除人物暫停的距離絕對誤差平均／RMSE，以及整輪最大真值間距。INFO 不影響既有 PASS／FAIL／NOT_COVERED 判定，未增加或放寬評估門檻。
+
+### 自行檢查與分析結果
+
+- `nice -n 10 /workspace/scratch/venv-shop/bin/python -m pytest -q`：1305 passed、1 skipped、1 個既有 xacro 棄用警告。新增估速過期／無效／TF 失敗、目前朝向投影、距離內不前進、guard 零命令、高速閉迴路、資訊指標與 watchdog 獨立夾限測試。原有參數斷言同步更新。
+- `scripts/checks/check_static.py`：PASS，33 YAML/RViz、15 XML/SDF/xacro、157 Python、7 Bash、9 情境；2／3 錨點 × ekf／ground_truth 共四種 xacro 展開、TF 所有權及錨點一致性通過。新增跨套件速度、加速度、MCU／Gazebo／smoother／BT 與 0.15 m/s 近人上限契約檢查。
+- `scripts/checks/map_geometry_check.py` 與 `git diff --check` 通過。`scripts/nav2/check_nav2_contract.py --source-only` 未完成：沙盒缺少 `/nav2_ws/src/custom_controller/src/teb_controller.cpp`，工作樹的 fork 子模組也沒有原始碼；未下載或假稱完成 fork 安裝／ABI 檢查。
+- ROS-free 60 秒、初始人物在車前 1.5 m、理想里程計、10 Hz UWB 濾波、20 Hz 控制，使用 `scripts/eval/follow_loop_sim.py --straight --person-speed SPEED --duration 60`。比較原有參數／mux 限速與目前預設；以下誤差從第 5 秒起計，最大間距包含起步：
+
+| 人物速度 | 距離誤差平均：修改前→後 | 誤差 RMSE：修改前→後 | 最大間距：修改前→後 |
+| --- | --- | --- | --- |
+| 1.0 m/s | 17.052→0.102 m | 18.812→0.103 m | 31.802→2.150 m |
+| 1.2 m/s | 23.552→1.230 m | 26.046→1.230 m | 43.802→2.430 m |
+
+- 同一新參數但關閉前饋時，1.0 m/s 平均誤差約 1.000 m，加入前饋降至 0.102 m。1.2 m/s 已達機器人線速上限，前饋無法追回起步落差，開關前饋均約 1.230 m；未額外提高要求外的速度上限。
+- 未解限制：舊 0.35 m/s 貨架路徑的簡化 `--world` 模型沒有 Nav2 繞行，新預設有效追蹤比例約 0.369，低於舊控制約 0.517；有效樣本誤差平均約 0.146 m／RMSE 0.205 m 不能抵銷低覆蓋率。原有低速實驗測試明確固定其歷史參數（含 1.0 m 跟隨距離、0.5 m/s 上限與實驗遲滯），保留原誤差／覆蓋率斷言；另測目前高速預設，未以放寬門檻隱藏此限制。
+- 分析直線不在超市中，模型不含 Gazebo 動力學、下游障礙守門器、雜訊或 Nav2；新超市情境也含循環轉角，不能由分析直線推論其實測結果。yaw_rate_check 主程式需要 ROS 訂閱與已啟動的模擬，依本輪禁用 Gazebo 的要求未執行多速度掃描。
+- 下一步：Fortress 多速度偏航掃描（包含提高後的工作速度）、由 1.2 m/s 執行既有故障停止驗收、兩個高速情境、貨架跟隨覆蓋率回歸，以及 apt／fork auto 的 guide／handoff 整合與原生 amd64／arm64 建置。保留所有失敗，不調低安全或評估門檻。
+
+### 審查驗證
+
+| 項目 | 結果 |
+| --- | --- |
+| 估速前饋、停止狀態與參數契約 | 待驗證 |
+| 高速情境、資訊指標與純 Python 比較 | 待驗證 |
+| Fortress 偏航、煞停與 apt／fork 整合 | 待驗證 |

@@ -106,9 +106,9 @@ def test_saturation_no_reverse_acceleration_and_response():
     f = firmware()
     prime(f)
     f.receive_command((-1e30, 0, 0, 0, 0, 1e30), 0.23)
-    assert f.command == (0, 1.2)
+    assert f.command == (0, 1.8)
     f.receive_command((1e30, 0, 0, 0, 0, -1e30), 0.23)
-    assert f.command == (0.6, -1.2)
+    assert f.command == (1.3, -1.8)
     before = f.velocities[:]
     f.step(0.24)
     assert all(abs(a-b) <= 12*0.02+1e-9 for a, b in zip(before, f.velocities))

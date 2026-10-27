@@ -99,8 +99,8 @@ def test_navigation_guard_limits_speed_acceleration_and_no_reverse():
     previous = (0, 0)
     for _ in range(100):
         v, w = guard.step((100, -100), 2, True, 0.05)
-        assert 0 <= v <= 0.5 and -1 <= w <= 1
-        assert abs(v-previous[0]) <= 0.4*0.05+1e-12
+        assert 0 <= v <= 1.2 and -1.5 <= w <= 1.5
+        assert abs(v-previous[0]) <= 0.8*0.05+1e-12
         assert abs(w-previous[1]) <= 1.5*0.05+1e-12
         previous = v, w
     assert guard.step((-1, 0.8), 0.607, True, 0.05)[0] == 0

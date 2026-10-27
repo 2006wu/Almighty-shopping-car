@@ -42,7 +42,7 @@ def parser(mode):
 
 def result_code(rows):
     return 1 if any(r['status'] == 'FAIL' for r in rows) else (
-        2 if any(r['status'] != 'PASS' for r in rows) else 0)
+        2 if any(r['status'] not in ('PASS', 'INFO') for r in rows) else 0)
 
 
 def run(mode, args=None):

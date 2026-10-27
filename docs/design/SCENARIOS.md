@@ -28,6 +28,8 @@
 | checkout_queue | guide | `goto checkout` → `goto entrance`，櫃臺南西側一靜止、一低速排隊者；確認抵達與間距 |
 | follow_turns | follow | 不送人工目標，至少觀察一個完整人物循環，含 x=2.4 走道末端急轉及迴轉 |
 | follow_stop_go | follow | 不送人工目標，起始 0.58 公尺 TOO_CLOSE、停留、離開、走道停走；至少錄製 120 秒並保留失敗 |
+| follow_fast_1_0 | follow | 人物 1.0 m/s，南側開放區域循環；核對直線誤差、轉彎與最大間距 |
+| follow_fast_1_2 | follow | 人物 1.2 m/s，同一路徑；記錄速度飽和後無法追回的起步落差 |
 | alt_start | guide | 出生 `(-2.4,0,π/2)`，`goto drinks` → `goto entrance`，核對 AMCL／EKF 與真值起點 |
 
 逐條啟動，上一條 Ctrl-C 完全結束再執行下一條：
@@ -80,3 +82,16 @@
 - `/simulation/poses`、`/sim/pedestrians` 與雷射中的行人位置須一致；在行人位於雷射平面時能看到圓柱，且成本地圖有對應障礙。這部分必須在 Fortress 實測，XML 合法不代表雷射已驗收。
 - 相遇時安全減速／等待／繞行，離開後恢復；跟隨過近及障礙保護檢查完整零 Twist，命令／實際停止延遲依 METRICS 建議 ≤0.30／0.80 秒。純 Nav2 讓行沒有新增自動事件偵測，需核對 bag／影像與命令，不能由 action 成功單獨推定。
 - 額外圓柱由 Fortress VelocityControl 驅動，預設讓行；主要跟隨人物的 set_pose 是另一流程，亦可能有服務延遲。請驗證讓行前有行人移動、停等後恢復、缺真值停止、aggressive 旗標可還原；確認清空後兩份 costmap 清除並恢復導航，checkout 完成最終 yaw，以及 AMCL 超限時 ABORTED。接觸、雙方停等不恢復或墜出地板都記為失敗，不以零命令或 action 成功掩蓋。尚未提供完整 kidnap 偵測、自動 scenario_check、連續碰撞監測或本輪跨架構實測；本輪只有離線與靜態檢查。
+
+
+## 高速跟隨情境
+
+`follow_fast_1_0`／`follow_fast_1_2` 使用情境框架產生本輪唯一的 `person_path.yaml`，不另建控制器人物路徑來源。出生 `(-4.5,-1.8,0)`，人物從 `(-3,-1.8)` 出發，在 y=-1.8／-0.2 的南側開放區域循環，最長直線 7.5 公尺。路徑以 101 點／線段檢查 SDF 碰撞盒，最小淨空 0.80 公尺；標準地圖已佔用格中心最小距離約 0.795 公尺。這是幾何檢查，沒有驗證動態煞停或急轉。
+
+依上表逐輪啟動，例如 `./scripts/dev.sh follow scenario:=follow_fast_1_0 headless:=true slam_mode:=map_server map:=/ws/src/shopping_robot_navigation/maps/supermarket.yaml`；1.2 m/s 輪次換成 `scenario:=follow_fast_1_2`。每輪保存 bag、跟隨狀態及 guard 狀態，沿用原有停止與故障門檻。
+
+`follow_eval` 新增 `follow_performance` 資訊列：人物設定速度、設定跟隨距離、初始 5 秒暖機後且排除人物停留時的距離絕對誤差平均／RMSE，以及整輪最大真值間距。跟隨距離讀取本輪跟隨設定；空資料保留 count=0／最大間距 null。此列為 INFO，不增加或放寬既有通過門檻。真值只用於評估。
+
+純 Python 可用 `python scripts/eval/follow_loop_sim.py --straight --person-speed 1.0 --duration 60` 比較舊參數與新預設；換成 1.2 可觀察速度飽和。這條 1 公里分析直線並非超市情境，不可與 `--world` 合用。模型僅含理想里程計、UWB 濾波與速度限制，不含 Gazebo 動力學、下游障礙守門器或 Nav2；不能當作模擬驗收。1.2 m/s 與機器人速度上限相同，起步或轉彎落後後沒有速度餘裕追回。
+
+高速設定仍須在 Fortress 執行多速度 `yaw_rate_check.py`、1.2 m/s 故障煞停（命令 ≤0.8 秒、真值 ≤1.5 秒）、上述兩情境與既有貨架跟隨回歸。下游障礙守門器保留原有保守煞停掃掠與遲滯；可能因人物或貨架降速，不能用開放直線結果保證貨架環境也能維持同樣間距。

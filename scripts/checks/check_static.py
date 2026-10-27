@@ -74,7 +74,47 @@ def check_interfaces():
     return len(messages)
 
 
+def check_velocity_envelope():
+    for package in ('shopping_zone_manager', 'shopping_uwb_follow'):
+        sys.path.insert(0, str(SRC/package))
+    from shopping_zone_manager.mode_control import VelocityMux, VelocityLimiter, OutputWatchdog
+    from shopping_uwb_follow.follow_controller import ControllerParams
+    from shopping_uwb_follow.estimator import TargetVelocityEstimator
+    follow = yaml.safe_load((SRC/'shopping_uwb_follow/config/uwb_follow.yaml').read_text())['/**']['ros__parameters']
+    for key, value in vars(ControllerParams()).items():
+        assert follow.get(key, value) == value, key
+    mux, watchdog, limiter = VelocityMux(), OutputWatchdog(), VelocityLimiter()
+    assert (mux.max_linear, mux.max_angular) == (watchdog.max_linear, watchdog.max_angular) == (1.3, 1.8)
+    assert limiter.limits == (0.8, 1.5)
+    assert TargetVelocityEstimator().max_speed >= 1.5
+    mcu = yaml.safe_load((SRC/'shopping_mcu_bridge/config/interface.yaml').read_text())['model']
+    assert (mcu['max_linear'], mcu['max_angular']) == (mux.max_linear, mux.max_angular)
+    robot = ET.parse(SRC/'shopping_robot_description/urdf/shopping_robot.urdf.xacro')
+    drive = robot.find(".//plugin[@name='ignition::gazebo::systems::DiffDrive']")
+    assert float(drive.findtext('max_linear_velocity')) == mux.max_linear
+    assert float(drive.findtext('max_angular_velocity')) == mux.max_angular
+    # Command braking alone must fit the existing 1.5 s truth-stop budget.
+    assert follow['max_linear']/abs(float(drive.findtext('min_linear_acceleration'))) < 1.5
+    for name in ('nav2_params.yaml', 'nav2_params_fork.yaml'):
+        nav = yaml.safe_load((SRC/'shopping_robot_navigation/config'/name).read_text())
+        smoother = nav['velocity_smoother']['ros__parameters']
+        assert smoother['max_velocity'] == [1.2, 0.0, 1.5]
+        assert smoother['max_accel'] == [0.8, 0.0, 1.5]
+        assert smoother['max_decel'] == [-0.8, 0.0, -1.5]
+        controller = nav['controller_server']['ros__parameters']
+        if name.endswith('_fork.yaml'):
+            assert controller['Fast']['max_v'] == 1.0
+            assert controller['Slow']['max_v'] == 0.3
+            for plugin in ('Fast', 'Slow'):
+                assert controller[plugin]['gentle_max_speed_near_people'] == 0.15
+        else:
+            assert controller['FollowPath']['desired_linear_vel'] == 0.8
+    for path in (SRC/'shopping_robot_navigation/behavior_trees').glob('*.xml'):
+        assert ET.parse(path).find('.//ControllerSelector').get('default_controller') == 'Fast'
+
+
 def main():
+    check_velocity_envelope()
     message_count = check_interfaces()
 
     def owned(paths):

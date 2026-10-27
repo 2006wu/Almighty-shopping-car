@@ -154,7 +154,7 @@ def test_watchdog_emergency_latch_survives_commands_until_explicit_reset():
     clock.now = 0.1
     node.receive(moving)
     node.tick()
-    assert 0 < node.publisher.publish.call_args.args[0].linear.x <= 0.06
+    assert 0 < node.publisher.publish.call_args.args[0].linear.x <= 0.08+1e-12
     clock.now = 0.36
     node.tick()
     assert node.publisher.publish.call_args.args[0].linear.x == 0

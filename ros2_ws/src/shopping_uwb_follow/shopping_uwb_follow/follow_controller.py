@@ -49,21 +49,21 @@ def side_speed_factor(clearance, slow=0.45, free=0.9, minimum=0.4):
 
 @dataclass
 class ControllerParams:
-    follow_distance: float = 1.0
-    stop_distance: float = 0.6
+    follow_distance: float = 1.2
+    stop_distance: float = 0.7
     stop_release_margin: float = 0.15
     stop_release_time: float = 0.3
     obstacle_stop_distance: float = 0.65
     obstacle_stop_rotate: bool = True
     lost_timeout: float = 0.5
-    max_linear: float = 0.5
-    max_angular: float = 1.0
-    max_linear_accel: float = 0.4
+    max_linear: float = 1.2
+    max_angular: float = 1.5
+    max_linear_accel: float = 0.8
     max_angular_accel: float = 1.5
-    kp_distance: float = 0.7
+    kp_distance: float = 1.0
     kp_bearing: float = 1.5
-    # Optional offline experiment hooks; zero preserves the develop control law.
-    velocity_feedforward: float = 0.0
+    # Absolute target velocity feedforward; hysteresis remains optional.
+    velocity_feedforward: float = 0.9
     distance_hysteresis_enter: float = 0.0
     distance_hysteresis_exit: float = 0.0
     rotate_to_target_min_angle: float = math.pi/4
@@ -105,7 +105,7 @@ class FollowController:
         self.aligning = False
 
     def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
-             target_velocity=(0.0, 0.0), rotation_clear=False):
+             target_velocity=(0.0, 0.0), rotation_clear=False, velocity_age=0.0):
         p = self.p
         valid_target = (target is not None and math.isfinite(age) and 0 <= age <= p.lost_timeout
                         and all(math.isfinite(t) for t in target))
@@ -157,12 +157,13 @@ class FollowController:
             self.holding_distance = False
         correction = 0.0 if self.holding_distance else p.kp_distance*error
         # Velocity is the target's absolute velocity expressed in base_link.
-        # Project onto the sight line; odometry compensation belongs upstream.
-        velocity_valid = (len(target_velocity) == 2
+        # Project onto robot heading, never onto the sight line. Stale estimates
+        # and targets inside the requested separation cannot add forward demand.
+        velocity_valid = (target_velocity is not None and len(target_velocity) == 2
+                          and math.isfinite(velocity_age) and 0 <= velocity_age <= p.lost_timeout
                           and all(math.isfinite(v) for v in target_velocity))
-        radial = (sum(a*b for a, b in zip(target_velocity, target))/distance
-                  if velocity_valid else 0.0)
-        demand = max(0.0, p.velocity_feedforward*radial+correction)
+        forward = target_velocity[0] if velocity_valid and distance >= p.follow_distance else 0.0
+        demand = max(0.0, p.velocity_feedforward*forward+correction)
         cap = p.max_linear*max(0.0, min(1.0, speed_factor))
         heading = max(0.0, math.cos(bearing))
         v = min(p.max_linear, demand)*max(0.0, min(1.0, speed_factor))*heading
@@ -190,6 +191,9 @@ class FollowController:
         reason = ', '.join(limits) or 'Tracking target'
         self.v += max(-p.max_linear_accel*dt, min(p.max_linear_accel*dt, v-self.v))
         self.w += max(-p.max_angular_accel*dt, min(p.max_angular_accel*dt, w-self.w))
+        # Do not carry ramp-down motion into the person's requested separation.
+        if distance < p.follow_distance:
+            self.v = 0.0
         return self.v, self.w, state, reason
 
 

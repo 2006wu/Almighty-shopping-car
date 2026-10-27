@@ -105,9 +105,9 @@ def test_nonfinite_input_is_flagged_zero(value, axis):
 def test_clamp_reverse_and_bad_configuration():
     mux = VelocityMux()
     mux.receive('nav', 3, -4, 0)
-    assert mux.select('GUIDE', 0).velocity == (0.6, -1.2)
+    assert mux.select('GUIDE', 0).velocity == (1.3, -1.8)
     mux.receive('nav', -3, 4, 1)
-    assert mux.select('GUIDE', 1).velocity == (0, 1.2)
+    assert mux.select('GUIDE', 1).velocity == (0, 1.8)
     assert mux.select('GUIDE', 0).velocity == ZERO  # Future stamps fail closed.
     with pytest.raises(ValueError):
         VelocityMux(max_linear=math.nan)
@@ -120,9 +120,9 @@ def test_clamp_reverse_and_bad_configuration():
 def test_acceleration_bounded_and_safety_zero_immediate():
     limiter = VelocityLimiter()
     assert limiter.step((0.6, 1.2), 0) == ZERO
-    assert limiter.step((0.6, 1.2), 0.1) == pytest.approx((0.06, 0.12))
+    assert limiter.step((0.6, 1.2), 0.1) == pytest.approx((0.08, 0.15))
     assert limiter.step(ZERO, 0.11) == ZERO
-    assert limiter.step((0.6, 1.2), 0.21) == pytest.approx((0.06, 0.12))
+    assert limiter.step((0.6, 1.2), 0.21) == pytest.approx((0.08, 0.15))
     assert limiter.step((0.6, 1.2), 2) == ZERO
 
 
@@ -155,3 +155,15 @@ def test_follow_requires_guarded_relay_even_after_its_command_expires():
     mux.receive('nav', 0.5, 0.8, 0.31)
     assert mux.select('FOLLOW', 0.31).velocity == ZERO
     assert mux.select('GUIDE', 0.31).velocity == (0.5, 0.8)
+
+
+
+def test_watchdog_independently_clamps_fast_commands_and_stops_invalid_input():
+    watchdog = OutputWatchdog()
+    watchdog.receive((100., -100.), 0.)
+    assert watchdog.output(0.) == (1.3, -1.8)
+    # Reverse stays the mux policy; the watchdog only bounds magnitude.
+    watchdog.receive((-1., 0.), .1)
+    assert watchdog.output(.1) == (-1., 0.)
+    watchdog.receive((math.nan, 1.), .2)
+    assert watchdog.output(.2) == ZERO

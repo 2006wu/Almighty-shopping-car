@@ -16,7 +16,10 @@ from .mode_control import OutputWatchdog, SafetyVelocityLimiter, ZERO
 class WatchdogNode(Node):
     def __init__(self):
         super().__init__('cmd_vel_watchdog')
-        self.watchdog = OutputWatchdog(self.declare_parameter('timeout', 0.25).value)
+        self.watchdog = OutputWatchdog(
+            self.declare_parameter('timeout', 0.25).value,
+            self.declare_parameter('max_linear', 1.3).value,
+            self.declare_parameter('max_angular', 1.8).value)
         self.limiter = SafetyVelocityLimiter()
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 1)
         self.create_subscription(Twist, '/cmd_vel_mux/output', self.receive, 1)

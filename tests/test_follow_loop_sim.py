@@ -1,4 +1,5 @@
 """Closed-loop tracking and calibrated model-command timing regressions."""
+from dataclasses import replace
 import importlib.util
 import math
 from pathlib import Path
@@ -24,7 +25,11 @@ def historical_path():
 @pytest.fixture(scope='module')
 def world_runs():
     return (loop.simulate(path=historical_path(), legacy=True, world=True),
-            loop.simulate(path=historical_path(), world=True))
+            loop.simulate(path=historical_path(), world=True, params=replace(
+                ControllerParams(), follow_distance=1.0, stop_distance=0.6,
+                max_linear=0.5, max_angular=1.0, max_linear_accel=0.4,
+                kp_distance=0.7, velocity_feedforward=1.0,
+                distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08)))
 
 
 def test_open_path_feedforward_removes_proportional_lag():
@@ -39,7 +44,7 @@ def test_open_path_feedforward_removes_proportional_lag():
     assert abs(no_accel['all']['follow_distance_mean']-old['all']['follow_distance_mean']) < 0.02
 
 
-def test_world_exposes_three_metre_legacy_error_and_exclusion_coverage(world_runs):
+def test_historical_world_experiment_preserves_error_and_exclusion_coverage(world_runs):
     old, new = world_runs
     assert 2.5 < old['all']['follow_distance_mean'] < 4.0
     assert old['eligible_fraction'] < 0.65  # Do not hide the blocked path.
@@ -53,7 +58,7 @@ def test_world_exposes_three_metre_legacy_error_and_exclusion_coverage(world_run
 
 
 def test_sustained_reduced_cap_cannot_track_faster_person():
-    result = loop.simulate(path=historical_path(), speed_factor=0.4)
+    result = loop.simulate(path={**historical_path(), 'speed': 1.0}, speed_factor=0.4)
     assert result['eligible']['distance_error_m']['rmse'] > 1.0
 
 
@@ -67,24 +72,24 @@ def settle(controller, distance, velocity=(0, 0), factor=1):
 def test_feedforward_target_motion_and_physical_speed_cap():
     control = FollowController(ControllerParams(velocity_feedforward=1.0,
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
-    assert settle(control, 1, (0.35, 0))[0] == pytest.approx(0.35)
-    assert settle(control, 1)[0] == 0
-    assert settle(control, 4, (100, 0), 0.4)[0] == pytest.approx(0.2)
-    assert settle(control, 1, (-0.3, 0))[0] == 0  # Never reverse.
-    assert settle(control, 1, (math.nan, 0))[0] == 0
+    assert settle(control, 1.2, (0.35, 0))[0] == pytest.approx(0.35)
+    assert settle(control, 1.2)[0] == 0
+    assert settle(control, 4, (100, 0), 0.4)[0] == pytest.approx(0.48)
+    assert settle(control, 1.2, (-0.3, 0))[0] == 0  # Never reverse.
+    assert settle(control, 1.2, (math.nan, 0))[0] == 0
 
 
 def test_distance_hysteresis_retains_feedforward_but_suppresses_chatter():
     control = FollowController(ControllerParams(velocity_feedforward=1.0,
         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08))
-    assert settle(control, 1.03, (0.3, 0))[0] == pytest.approx(0.3)
+    assert settle(control, 1.23, (0.3, 0))[0] == pytest.approx(0.3)
     assert control.holding_distance
-    assert settle(control, 1.06, (0.3, 0))[0] == pytest.approx(0.3)
+    assert settle(control, 1.26, (0.3, 0))[0] == pytest.approx(0.3)
     assert control.holding_distance
-    assert settle(control, 1.09, (0.3, 0))[0] == pytest.approx(0.3+0.7*0.09)
+    assert settle(control, 1.29, (0.3, 0))[0] == pytest.approx(0.3+1.0*0.09)
     assert not control.holding_distance
-    assert settle(control, 1.06, (0.3, 0))[0] == pytest.approx(0.3+0.7*0.06)
-    assert settle(control, 1.02, (0.3, 0))[0] == pytest.approx(0.3)
+    assert settle(control, 1.26, (0.3, 0))[0] == pytest.approx(0.3+1.0*0.06)
+    assert settle(control, 1.22, (0.3, 0))[0] == pytest.approx(0.3)
     with pytest.raises(ValueError):
         FollowController(ControllerParams(distance_hysteresis_enter=0.2))
 
@@ -146,8 +151,9 @@ def test_model_prediction_wraps_shared_path_and_rejects_invalid_timing():
 def test_realistic_browsing_pace_exposes_sustained_narrow_cap_lag():
     path, params = loop.load_inputs()
     assert path['speed'] == 0.35
+    path = {**path, 'speed': 1.0}
     assert path['speed'] > params.max_linear*params.side_min_speed_factor
-    result = loop.simulate(speed_factor=params.side_min_speed_factor)
+    result = loop.simulate(path=path, speed_factor=params.side_min_speed_factor)
     assert result['all']['distance_error_m']['rmse'] > 1.0
     assert result['limits']['max_command_linear'] <= params.max_linear*params.side_min_speed_factor
 
@@ -159,6 +165,54 @@ def test_controller_reports_active_limits_without_changing_safety_reason():
     assert 'speed cap' in result[3] and 'linear acceleration' in result[3]
     result = control.step((1, 1), 0, math.inf, 0.05)
     assert 'heading' in result[3] and 'angular acceleration' in result[3]
-    result = settle(control, 1, (0.18, 0))
+    result = settle(control, 1.2, (0.18, 0))
     assert 'distance hold' in result[3]
     assert control.step((2, 0), 0, 0.5, 0.05) == (0, 0, 'OBSTACLE_STOP', 'Obstacle or unavailable scan')
+
+
+@pytest.mark.parametrize('speed', [1.0, 1.2])
+def test_fast_straight_runtime_defaults_and_informational_gap(speed):
+    path = dict(speed=speed, waypoints=[[1.5, 0], [1000, 0]])
+    before = loop.simulate(path=path, legacy=True, duration=60)
+    after = loop.simulate(path=path, duration=60)
+    error = after['performance']['steady_state_distance_error_m']
+    assert error['mean'] < before['performance']['steady_state_distance_error_m']['mean']
+    assert after['limits']['max_command_linear'] <= 1.2
+    assert after['performance']['person_speed_m_s'] == speed
+    assert after['performance']['follow_distance_m'] == 1.2
+    if speed == 1.0:
+        no_ff = loop.simulate(path=path, duration=60, feedforward=False)
+        assert error['mean'] < no_ff['performance']['steady_state_distance_error_m']['mean']/3
+
+
+@pytest.mark.parametrize('velocity_age', [0.51, -0.1, math.nan, math.inf])
+def test_stale_velocity_cannot_add_feedforward(velocity_age):
+    controller = FollowController()
+    for _ in range(100):
+        v, _, _, _ = controller.step((1.5, 0), 0, math.inf, .05,
+                                    target_velocity=(1.2, 0), velocity_age=velocity_age)
+    assert v == pytest.approx(.3)
+
+
+def test_velocity_projection_and_inside_follow_distance_stop():
+    controller = FollowController()
+    for _ in range(100):
+        v, _, _, _ = controller.step((1.2, .2), 0, math.inf, .05,
+                                    target_velocity=(0, 1.2))
+    distance = math.hypot(1.2, .2)
+    assert v == pytest.approx((distance-1.2)*1.2/distance)
+    controller.v = 1.2
+    assert controller.step((1.19, 0), 0, math.inf, .05, target_velocity=(1.5, 0))[0] == 0
+
+
+def test_estimator_read_rejects_stale_invalid_and_rotates_current_heading():
+    estimator = TargetVelocityEstimator(alpha=1)
+    assert estimator.update((2, 0), (0, 0, 0), 0) == (0, 0)
+    assert estimator.estimate(0, 0) == (0, 0)
+    estimator.update((2.12, 0), (0, 0, 0), .1)
+    assert estimator.estimate(.1, 0) == pytest.approx((1.2, 0))
+    assert estimator.estimate(.1, math.pi/2) == pytest.approx((0, -1.2))
+    assert estimator.estimate(.61, 0) == (0, 0)
+    assert estimator.estimate(-.1, 0) == (0, 0)
+    estimator.update((math.nan, 0), (0, 0, 0), .2)
+    assert estimator.estimate(.2, 0) == (0, 0)

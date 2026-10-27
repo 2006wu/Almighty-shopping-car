@@ -316,3 +316,18 @@ def test_disabled_or_stale_target_never_certifies_reacquisition():
     event = reacquire_events(targets, states, 7)[0]
     assert event['tracking_s'] is None
     assert event['status'] == 'NOT_COVERED'
+
+
+
+def test_informational_performance_uses_config_distance_excludes_settle_and_pauses():
+    from shopping_uwb_follow.evaluation_metrics import follow_performance
+    path = dict(speed=1., waypoints=[[0, 0], [20, 0]], pauses=[10, 0])
+    data = [(i/10, 8. if i < 100 else 1.4) for i in range(200)]
+    result = follow_performance(data, path, 1.2)
+    assert result['max_gap_m'] == 8.
+    assert result['person_speed_m_s'] == 1.
+    assert result['steady_state_distance_error_m']['mean'] == pytest.approx(.2)
+    assert result['steady_state_distance_error_m']['rmse'] == pytest.approx(.2)
+    assert follow_performance([], path, 1.2)['steady_state_distance_error_m'] == {'count': 0}
+    assert result_code([{'status': 'PASS'}, {'status': 'INFO'}]) == 0
+    assert result_code([{'status': 'FAIL'}, {'status': 'INFO'}]) == 1

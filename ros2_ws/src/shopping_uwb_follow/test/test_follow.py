@@ -89,13 +89,13 @@ def test_velocity_acceleration_and_no_reverse():
     previous = (0, 0)
     for _ in range(100):
         v, w, state, _ = controller.step((10, 5), 0, float('inf'), 0.05)
-        assert 0 <= v <= 0.5 and abs(w) <= 1
-        assert abs(v-previous[0]) <= 0.4*0.05+1e-10
+        assert 0 <= v <= 1.2 and abs(w) <= 1.5
+        assert abs(v-previous[0]) <= 0.8*0.05+1e-10
         assert abs(w-previous[1]) <= 1.5*0.05+1e-10
         previous = v, w
     for _ in range(100):
         v, w, _, _ = controller.step((-2, -2), 0, 5, 0.05)
-        assert v >= 0 and abs(w) <= 1
+        assert v >= 0 and abs(w) <= 1.5
     assert v == 0
 
 
@@ -103,7 +103,7 @@ def test_near_follow_distance_and_dt_guard():
     controller = FollowController()
     assert controller.step((0.8, 0), 0, 5, 0.1)[0] == 0
     assert controller.step((4, 0), 0, 5, -1)[0] == 0
-    assert controller.step((4, 0), 0, 5, 100)[0] <= 0.08+1e-10
+    assert controller.step((4, 0), 0, 5, 100)[0] <= 0.16+1e-10
 
 
 def test_invalid_controller_configuration():
@@ -148,7 +148,7 @@ def test_obstacle_stops_rotation_immediately_and_resume_is_limited():
         v, w, state, _ = controller.step((1, -2), 0, 0.4, 0.1)
         assert v == w == 0 and state == 'OBSTACLE_STOP'
     v, w, state, _ = controller.step((3, -1), 0, 5, 0.1)
-    assert state == 'FOLLOWING' and v == pytest.approx(0.04)
+    assert state == 'FOLLOWING' and v == pytest.approx(0.08)
     assert -0.15-1e-12 <= w < 0
 
 

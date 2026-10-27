@@ -90,7 +90,7 @@ def test_uncertain_and_side_factors_cap_speed_with_acceleration_and_safety():
         v, _, state, _ = slow.step((4, 0), 0, 3, 0.05, speed_factor=factor)
         normal.step((4, 0), 0, 3, 0.05)
     assert state == 'FOLLOWING'
-    assert v == pytest.approx(0.5*0.6*0.4) and v < normal.v
+    assert v == pytest.approx(1.2*0.6*0.4) and v < normal.v
     # Emergency stops ignore both the speed cap and acceleration ramp.
     for kwargs in [dict(target=None), dict(age=1), dict(target=(0.1, 0)),
                    dict(enabled=False), dict(obstacle=math.nan)]:
@@ -164,8 +164,8 @@ def test_safety_and_terminal_events_bypass_minimum_nav_hold(override):
 def test_uncertain_slowdown_also_applies_below_speed_limit():
     s = FollowController()
     for _ in range(50):
-        result = s.step((1.2, 0), 0, 3, 0.05, speed_factor=0.6)
-    assert result[0] == pytest.approx(0.7*0.2*0.6)
+        result = s.step((1.4, 0), 0, 3, 0.05, speed_factor=0.6)
+    assert result[0] == pytest.approx(1.0*0.2*0.6)
 
 
 def test_near_stop_latches_both_axes_through_range_noise_and_fresh_recovery():
@@ -198,12 +198,12 @@ def test_target_corner_alignment_has_hysteresis_and_preserves_acceleration_limit
     old = controller.v
     for _ in range(30):
         v, w, state, reason = controller.step((1, 2), 0, math.inf, .05)
-        assert state == 'FOLLOWING' and 0 <= old-v <= .4*.05+1e-10
+        assert state == 'FOLLOWING' and 0 <= old-v <= .8*.05+1e-10
         assert w > 0
         old = v
     assert v == 0
     for _ in range(10):
         assert controller.step((2, 1), 0, math.inf, .05)[0] == 0
     v, w, state, _ = controller.step((3, .1), 0, math.inf, .05)
-    assert state == 'FOLLOWING' and 0 < v <= .4*.05+1e-10
+    assert state == 'FOLLOWING' and 0 < v <= .8*.05+1e-10
     assert controller.step((.1, .2), 0, math.inf, .05)[:3] == (0., 0., 'TOO_CLOSE')

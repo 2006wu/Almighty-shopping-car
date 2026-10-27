@@ -436,8 +436,8 @@ def test_configured_safety_envelope_and_speed_budget():
     controller = nav['controller_server']['ros__parameters']['FollowPath']
     smoother = nav['velocity_smoother']['ros__parameters']
     assert person['speed'] == 0.35
-    # A sustained narrow/turn cap can still cause lag at a realistic pace.
-    assert follow['max_linear']*follow['side_min_speed_factor'] < person['speed']
+    # Fast walkers can still outrun a sustained narrow/turn speed cap.
+    assert person['speed'] < follow['max_linear']*follow['side_min_speed_factor'] < 1.0
     assert controller['regulated_linear_scaling_min_speed'] < person['speed']
     assert person['speed'] < controller['desired_linear_vel'] <= follow['max_linear']
     assert smoother['max_velocity'][0] == follow['max_linear']

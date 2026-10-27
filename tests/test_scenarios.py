@@ -24,7 +24,8 @@ NAMES = sorted(p.stem for p in (CONFIG/'scenarios').glob('*.yaml'))
 
 def test_required_scenarios_and_canonical_default():
     assert set(NAMES) == {'default', 'aisle_crossing', 'narrow_pass', 'checkout_queue',
-                          'follow_turns', 'follow_stop_go', 'alt_start'}
+                          'follow_turns', 'follow_stop_go', 'alt_start',
+                          'follow_fast_1_0', 'follow_fast_1_2'}
     assert load_scenario(CONFIG, 'default')['person_path'] == yaml.safe_load((CONFIG/'person_path.yaml').read_text())
     for t in (0, 1, 10, 100, 1000):
         assert path_position(load_scenario(CONFIG, 'default')['person_path'], t) == trajectory_position(load_scenario(CONFIG, 'default')['person_path'], t)
@@ -333,3 +334,27 @@ def test_actor_robot_observer_uses_stamped_world_odometry_and_bounds_history():
     assert mover.robot_history[-1] == (39., 1., 2.)
     mover.on_robot(odom(1))
     assert mover.robot_history == [(1., 1., 2.)]
+
+
+@pytest.mark.parametrize('name,speed', [('follow_fast_1_0', 1.0), ('follow_fast_1_2', 1.2)])
+def test_fast_follow_paths_stay_in_open_world_strip(name, speed):
+    scenario = load_scenario(CONFIG, name)
+    path = scenario['person_path']
+    assert path['speed'] == speed
+    assert not scenario['pedestrians']
+    boxes = []
+    for model in ET.parse(WORLD).findall('.//world/model'):
+        size = model.findtext('link/collision/geometry/box/size')
+        if size is None:
+            continue
+        x, y, z, _, _, _ = map(float, model.findtext('pose').split())
+        sx, sy, sz = map(float, size.split())
+        if z+sz/2 >= .2:
+            boxes.append((x-sx/2, x+sx/2, y-sy/2, y+sy/2))
+    assert max(math.dist(a, b) for a, b in zip(path['waypoints'], path['waypoints'][1:])) >= 7.5
+    for a, b in zip(path['waypoints'], path['waypoints'][1:]+path['waypoints'][:1]):
+        for i in range(101):
+            x, y = (u+(v-u)*i/100 for u, v in zip(a, b))
+            # Greater than the full robot corner radius plus safety margin.
+            assert min(math.hypot(max(x1-x, 0, x-x2), max(y1-y, 0, y-y2))
+                       for x1, x2, y1, y2 in boxes) >= .7

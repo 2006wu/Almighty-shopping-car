@@ -50,8 +50,8 @@ class MuxResult:
 
 
 class VelocityMux:
-    def __init__(self, timeouts=None, priorities=None, max_linear=0.6,
-                 max_angular=1.2, zero_period=0.2, allow_reverse=False):
+    def __init__(self, timeouts=None, priorities=None, max_linear=1.3,
+                 max_angular=1.8, zero_period=0.2, allow_reverse=False):
         self.timeouts = dict(timeouts or {'safety_stop': 0.5, 'teleop': 0.5,
                                         'follow': 0.3, 'nav': 0.5})
         self.priorities = dict(priorities or {'safety_stop': 100, 'teleop': 30,
@@ -106,15 +106,18 @@ class VelocityMux:
 
 
 class OutputWatchdog:
-    def __init__(self, timeout=0.25):
-        if not math.isfinite(timeout) or timeout <= 0:
+    def __init__(self, timeout=0.25, max_linear=1.3, max_angular=1.8):
+        if any(not math.isfinite(v) or v <= 0 for v in (timeout, max_linear, max_angular)):
             raise ValueError('Watchdog timeout must be positive and finite')
         self.timeout = timeout
+        self.max_linear, self.max_angular = max_linear, max_angular
         self.stamp = None
         self.velocity = ZERO
 
     def receive(self, velocity, now):
-        self.velocity = velocity if all(math.isfinite(v) for v in velocity) else ZERO
+        self.velocity = ((max(-self.max_linear, min(self.max_linear, velocity[0])),
+                          max(-self.max_angular, min(self.max_angular, velocity[1])))
+                         if all(math.isfinite(v) for v in velocity) else ZERO)
         self.stamp = now
 
     def output(self, now):
@@ -125,7 +128,7 @@ class OutputWatchdog:
 
 class VelocityLimiter:
     """Bound normal acceleration; safety zeros bypass the ramp."""
-    def __init__(self, linear_acceleration=0.6, angular_acceleration=1.2):
+    def __init__(self, linear_acceleration=0.8, angular_acceleration=1.5):
         self.limits = (linear_acceleration, angular_acceleration)
         if any(not math.isfinite(v) or v <= 0 for v in self.limits):
             raise ValueError('Acceleration limits must be positive and finite')

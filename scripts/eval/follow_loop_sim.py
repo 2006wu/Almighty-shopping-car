@@ -25,7 +25,7 @@ from shopping_uwb_follow.follow_controller import (  # noqa: E402
 from shopping_uwb_follow.estimator import Estimate, TargetFilter, TargetVelocityEstimator  # noqa: E402
 from shopping_uwb_follow.follow_handoff import line_of_sight_clear, LosDebouncer  # noqa: E402
 from shopping_uwb_follow.follow_metrics import FollowSample, evaluate_series  # noqa: E402
-from shopping_uwb_follow.evaluation_metrics import relative_position, stats, segment_kind  # noqa: E402
+from shopping_uwb_follow.evaluation_metrics import relative_position, stats, segment_kind, follow_performance  # noqa: E402
 from shopping_uwb_follow.person_path import path_position  # noqa: E402
 from shopping_zone_manager.mode_control import (  # noqa: E402
     VelocityMux, VelocityLimiter, OutputWatchdog,
@@ -120,15 +120,17 @@ def scan_world(pose, person, boxes):
 def simulate(path=None, params=None, *, legacy=False, world=False, duration=None,
              speed_factor=1.0, feedforward=True, acceleration=True):
     default_path, default_params = load_inputs()
+    if legacy and params is None:
+        params = replace(default_params, follow_distance=1.0, stop_distance=0.6,
+                         max_linear=0.5, max_angular=1.0, max_linear_accel=0.4,
+                         kp_distance=0.7, velocity_feedforward=0.0)
     path, params = path or default_path, params or default_params
     if not acceleration:
         params = replace(params, max_linear_accel=1e6, max_angular_accel=1e6)
-    # Preserve the historical feedforward experiment independently of runtime defaults.
-    if not legacy:
-        params = replace(params, velocity_feedforward=1.0,
-                         distance_hysteresis_enter=0.04, distance_hysteresis_exit=0.08)
     controller = (LegacyController if legacy else FollowController)(params)
-    mux, limiter, watchdog = VelocityMux(), VelocityLimiter(), OutputWatchdog()
+    mux = VelocityMux(max_linear=0.6, max_angular=1.2) if legacy else VelocityMux()
+    limiter = VelocityLimiter(0.6, 1.2) if legacy else VelocityLimiter()
+    watchdog = OutputWatchdog()
     filt, velocity_filter = TargetFilter(), TargetVelocityEstimator()
     length = sum(math.dist(a, b) for a, b in zip(path['waypoints'], path['waypoints'][1:]+path['waypoints'][:1]))
     duration = duration if duration is not None else length/path['speed']
@@ -209,17 +211,34 @@ def simulate(path=None, params=None, *, legacy=False, world=False, duration=None
             'limits': limits, 'excluded': reasons, 'eligible_fraction': len(eligible)/len(samples),
             'segments_distance_error_m': {k: stats(v) for k, v in segments.items()},
             'duration_s': duration, 'person_speed': path['speed'],
+            'performance': follow_performance(
+                [(s.time, math.dist(s.robot_pose[:2], s.ground_truth)) for s in samples],
+                path, params.follow_distance),
             'assumptions': 'ideal odometry; EMA UWB at 10 Hz; 181-ray scan at 10 Hz; no Nav2, dynamics or noise',
             'world': world, 'speed_factor': speed_factor}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--straight', action='store_true', help='Use a 1 km analytical straight; incompatible with --world')
+    parser.add_argument('--person-speed', type=float, help='Override canonical person speed (m/s)')
     parser.add_argument('--world', action='store_true')
     parser.add_argument('--duration', type=float)
     parser.add_argument('--speed-factor', type=float, default=1.0)
     args = parser.parse_args()
-    runs = {name: simulate(legacy=legacy, world=args.world, duration=args.duration,
+    path, current = load_inputs()
+    if args.person_speed is not None:
+        if not math.isfinite(args.person_speed) or args.person_speed <= 0:
+            parser.error('Person speed must be finite and positive')
+        path = {**path, 'speed': args.person_speed}
+    if args.straight:
+        if args.world:
+            parser.error('--straight is an analytical open-area experiment; omit --world')
+        path = {**path, 'waypoints': [[1.5, 0.0], [1000.0, 0.0]], 'pauses': [0, 0]}
+    before = replace(current, follow_distance=1.0, stop_distance=0.6, max_linear=0.5,
+                     max_angular=1.0, max_linear_accel=0.4, kp_distance=0.7,
+                     velocity_feedforward=0.0)
+    runs = {name: simulate(path=path, params=before if legacy else current, legacy=legacy, world=args.world, duration=args.duration,
                            speed_factor=args.speed_factor, feedforward=ff, acceleration=accel)
             for name, legacy, ff, accel in [('legacy', True, False, True),
                                            ('fixed', False, True, True),

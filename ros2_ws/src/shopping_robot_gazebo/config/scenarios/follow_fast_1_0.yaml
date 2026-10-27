@@ -1,0 +1,8 @@
+robot_pose:
+  x: -4.5
+  y: -1.8
+  yaw: 0.0
+person_path:
+  speed: 1.0
+  waypoints: [[-3.0, -1.8], [3.0, -1.8], [3.0, -0.2], [-4.5, -0.2], [-4.5, -1.8]]
+pedestrians: []

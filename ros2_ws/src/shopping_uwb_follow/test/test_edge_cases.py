@@ -135,7 +135,7 @@ def test_stop_boundaries_and_resume(target, age, obstacle, state):
         for _ in range(2):
             assert controller.step((3, 0), 0.5, 5, 0.1)[:3] == (0, 0, 'TOO_CLOSE')
     v, w, actual, _ = controller.step((3, 0), 0.5, 5, 0.1)
-    assert actual == 'FOLLOWING' and v == pytest.approx(0.04) and w == 0
+    assert actual == 'FOLLOWING' and v == pytest.approx(0.08) and w == 0
 
 
 def test_deceleration_turn_sign_and_clock_guard():
@@ -143,10 +143,10 @@ def test_deceleration_turn_sign_and_clock_guard():
     for _ in range(50):
         control.step((5, 1), 0, 5, 0.1)
     old_v, old_w = control.v, control.w
-    v, w, _, _ = control.step((0.8, -0.2), 0, 5, 0.1)
-    assert old_v-v <= 0.04+1e-12 and old_w-w <= 0.15+1e-12
+    v, w, _, _ = control.step((1.3, -0.2), 0, 5, 0.1)
+    assert old_v-v <= 0.08+1e-12 and old_w-w <= 0.15+1e-12
     for _ in range(50):
         v, w, _, _ = control.step((-2, -2), 0, 5, 0.1)
-    assert v == 0 and w == -1
+    assert v == 0 and w == -1.5
     for dt in (-1, 0, float('nan'), float('inf')):
         assert control.step((5, 0), 0, 5, dt)[:3] == (0, 0, 'IDLE')

@@ -29,6 +29,7 @@ from .follow_handoff import (
     line_of_sight_clear, scan_valid, transform_xy,
 )
 from .node_common import seconds
+from .estimator import TargetVelocityEstimator
 
 
 def planar_pose(transform):
@@ -45,6 +46,7 @@ class FollowNode(Node):
         defaults = ControllerParams()
         params = ControllerParams(**{k: self.declare_parameter(k, v).value for k, v in vars(defaults).items()})
         self.control = FollowController(params)
+        self.velocity_estimator = TargetVelocityEstimator(timeout=params.lost_timeout)
         self.nav_guard = NavigationGuard(params)
         self.rotation_clear = False
         self.monitor_odom = self.declare_parameter('monitor_odom', False).value
@@ -109,6 +111,7 @@ class FollowNode(Node):
     def set_enabled(self, enabled):
         self.enabled = enabled
         if not self.enabled:
+            self.velocity_estimator.reset()
             self.supervisor.step(seconds(self), 'IDLE', None, False, float('nan'), enabled=False)
             self.replacement = None
             self.cancel_goal()
@@ -146,6 +149,24 @@ class FollowNode(Node):
             return
         self.target = (msg.point.x, msg.point.y)
         self.target_time = msg.header.stamp.sec+msg.header.stamp.nanosec/1e9
+        try:
+            transform = self.tf_buffer.lookup_transform('odom', 'base_link', Time.from_msg(msg.header.stamp))
+            self.velocity_estimator.update(self.target, planar_pose(transform), self.target_time)
+        except TransformException:
+            self.velocity_estimator.reset()
+
+    def target_velocity(self, now):
+        try:
+            transform = self.tf_buffer.lookup_transform('odom', 'base_link', Time())
+            stamp = transform.header.stamp
+            age = now-(stamp.sec+stamp.nanosec/1e9)
+            if not 0 <= age <= self.control.p.lost_timeout:
+                self.velocity_estimator.reset()
+                return (0.0, 0.0)
+            return self.velocity_estimator.estimate(now, planar_pose(transform)[2])
+        except TransformException:
+            self.velocity_estimator.reset()
+            return (0.0, 0.0)
 
     def on_scan(self, msg):
         self.scan = msg
@@ -339,6 +360,9 @@ class FollowNode(Node):
             factor *= p.los_uncertain_speed_factor
         v, w, state, reason = self.control.step(
             self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
+            target_velocity=(self.target_velocity(now) if guard_fresh
+                             and self.guard_state == 'CLEAR' else (0.0, 0.0)),
+            velocity_age=age,
             rotation_clear=(valid and self.rotation_clear
                             and (not self.supervisor.route_around or self.client is None
                                  or not self.client.server_is_ready())))

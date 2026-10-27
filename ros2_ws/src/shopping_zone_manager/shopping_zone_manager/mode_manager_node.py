@@ -30,12 +30,12 @@ class ModeMuxNode(Node):
                       [('safety_stop', 0.5), ('teleop', 0.5), ('follow', 0.3), ('nav', 0.5)]},
             priorities={s: self.declare_parameter(s+'_priority', v).value for s, v in
                         [('safety_stop', 100), ('teleop', 30), ('follow', 20), ('nav', 10)]},
-            max_linear=self.declare_parameter('max_linear', 0.6).value,
-            max_angular=self.declare_parameter('max_angular', 1.2).value,
+            max_linear=self.declare_parameter('max_linear', 1.3).value,
+            max_angular=self.declare_parameter('max_angular', 1.8).value,
             zero_period=0.05)
         self.limiter = VelocityLimiter(
-            self.declare_parameter('linear_acceleration', 0.6).value,
-            self.declare_parameter('angular_acceleration', 1.2).value)
+            self.declare_parameter('linear_acceleration', 0.8).value,
+            self.declare_parameter('angular_acceleration', 1.5).value)
         self.manage_follow = self.declare_parameter('manage_follow', False).value
         initial = self.declare_parameter('initial_mode', 'idle').value
         self.output = self.create_publisher(Twist, '/cmd_vel_mux/output', 1)

@@ -2,7 +2,7 @@
 version: 1
 wheel_names: [front_left_joint, rear_left_joint, front_right_joint, rear_right_joint]
 timing: {command_timeout: 0.3, heartbeat_timeout: 0.5, recovery_count: 3}
-model: {response_time: 0.12, wheel_acceleration: 12.0, max_linear: 0.6, max_angular: 1.2, ticks_per_revolution: 4096}
+model: {response_time: 0.12, wheel_acceleration: 12.0, max_linear: 1.3, max_angular: 1.8, ticks_per_revolution: 4096}
 # track = (width - wheel_width) * skid_track_factor from description xacro.
 topics:
   cmd: {name: /cmd_vel, type: geometry_msgs/msg/Twist, direction: pc_to_mcu, rate: 20, reliability: reliable, depth: 1, unit: 'm/s; rad/s', frame: base_footprint, wire_id: 1, format: 6d}

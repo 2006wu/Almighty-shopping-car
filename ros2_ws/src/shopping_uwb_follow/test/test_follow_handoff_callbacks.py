@@ -12,6 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from shopping_uwb_follow.estimator import TargetVelocityEstimator
 from shopping_uwb_follow.follow_controller import FollowController, NavigationGuard, rotation_scan_clear, side_clearance, side_speed_factor
 from shopping_uwb_follow.follow_handoff import GoalBook, VelocityDrain, HandoffSupervisor
 
@@ -30,7 +31,8 @@ def node_class():
     tree = ast.parse(source.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FollowNode')
     cls.bases = []
-    namespace = dict(math=math, json=json, rotation_scan_clear=rotation_scan_clear,
+    namespace = dict(Time=type('Time', (), {'from_msg': staticmethod(lambda stamp: stamp)}), TransformException=RuntimeError,
+                     planar_pose=lambda transform: transform.pose, math=math, json=json, rotation_scan_clear=rotation_scan_clear,
                      side_clearance=side_clearance,
                      side_speed_factor=side_speed_factor, seconds=lambda node: node.now,
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
@@ -47,6 +49,9 @@ def make_node():
     node = cls.__new__(cls)
     node.now, node.last_time = 0.0, -0.05
     node.control = FollowController()
+    node.velocity_estimator = TargetVelocityEstimator()
+    node.tf_buffer = Mock()
+    node.tf_buffer.lookup_transform.side_effect = RuntimeError('Missing TF')
     node.nav_guard = NavigationGuard(node.control.p)
     node.rotation_clear = False
     node.supervisor = HandoffSupervisor()
@@ -463,7 +468,7 @@ def test_diagnostics_throttle_clock_reset_and_nav_command_reporting():
     node.now = node.target_time = node.scan_time = 1.1
     node.on_cmd_vel(NS(linear=NS(x=0.3), angular=NS(z=-0.2)))
     node.tick()
-    assert 'command_v=0.080 command_w=-0.200' in logger.info.call_args.args[0]
+    assert 'command_v=0.160 command_w=-0.200' in logger.info.call_args.args[0]
 
 
 @pytest.mark.parametrize('context_ok,race', [(False, False), (True, False), (True, True)])
@@ -487,7 +492,7 @@ def test_fallback_clearance_and_los_slowdowns_multiply():
     node.control.v = 0.2
     node.obstacle = 2
     node.tick()
-    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.18)
+    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.24)
 
 
 @pytest.mark.parametrize('follow_distance,return_range,clear', [
@@ -559,7 +564,7 @@ def test_node_relays_rotation_at_fixed_front_shelf_then_translation_and_expires(
 def configure_rotation_scan(node):
     node.update_rotation_clearance = type(node).update_rotation_clearance.__get__(node)
     namespace = type(node).update_rotation_clearance.__globals__
-    namespace.update(Time=NS(from_msg=lambda stamp: stamp),
+    namespace.update(Time=type('Time', (), {'from_msg': staticmethod(lambda stamp: stamp)}),
                      TransformException=RuntimeError, planar_pose=lambda transform: transform)
     node.robot_half_width = 0.4
     node.tf_buffer = Mock()
@@ -639,7 +644,7 @@ def test_direct_rotation_resumes_following_after_front_clears():
     node.now = 0.1
     node.obstacle = 0.9
     node.tick()
-    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.04)
+    assert node.publisher.publish.call_args.args[0].linear.x == pytest.approx(0.08)
     assert node.state.publish.call_args.args[0].data.startswith('FOLLOWING:')
 
 
@@ -883,3 +888,36 @@ def test_transient_map_loss_keeps_navigation_without_sending_missing_pose():
     node.now = node.target_time = node.scan_time = 1.55
     node.tick()
     assert node.supervisor.mode == 'DIRECT' and node.cancel_requested
+
+
+@pytest.mark.parametrize('state', ['CLEAR', 'SLOW', 'STOP', 'STALE'])
+def test_guard_suppresses_feedforward_except_fresh_clear(state):
+    node = make_node()
+    node.client = None
+    node.supervisor.route_around = False
+    node.guard_state, node.guard_time = state, node.now
+    node.target_velocity = Mock(return_value=(1.2, 0))
+    node.control.step = Mock(return_value=(.2, .1, 'FOLLOWING', 'tracking'))
+    node.tick()
+    assert node.control.step.call_args.kwargs['target_velocity'] == ((1.2, 0) if state == 'CLEAR' else (0, 0))
+    if state in ('STOP', 'STALE'):
+        command = node.publisher.publish.call_args.args[0]
+        assert command.linear.x == command.angular.z == 0
+
+
+def test_target_velocity_callback_uses_timestamped_odom_tf_and_resets_on_failure():
+    node = make_node()
+    node.tf_buffer.lookup_transform.side_effect = None
+    stamp = NS(sec=0, nanosec=0)
+    node.tf_buffer.lookup_transform.return_value = NS(pose=(0., 0., 0.), header=NS(stamp=stamp))
+    node.on_target(NS(header=NS(frame_id='base_link', stamp=stamp), point=NS(x=2., y=0.)))
+    stamp = NS(sec=0, nanosec=100000000)
+    node.tf_buffer.lookup_transform.return_value.header.stamp = stamp
+    node.on_target(NS(header=NS(frame_id='base_link', stamp=stamp), point=NS(x=2.12, y=0.)))
+    assert node.tf_buffer.lookup_transform.call_args.args == ('odom', 'base_link', stamp)
+    assert node.target_velocity(.1)[0] > 0
+    assert node.target_velocity(.7) == (0, 0)
+    node.tf_buffer.lookup_transform.side_effect = RuntimeError('Missing TF')
+    node.on_target(NS(header=NS(frame_id='base_link', stamp=stamp), point=NS(x=2.12, y=0.)))
+    assert not node.velocity_estimator.valid
+    assert node.target_velocity(.1) == (0, 0)

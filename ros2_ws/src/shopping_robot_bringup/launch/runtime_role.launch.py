@@ -18,7 +18,7 @@ def start(context):
         'odom_source', 'headless', 'nav2_stack', 'slam_mode', 'map',
         'fault_injection', 'fault_schedule', 'route_around', 'person', 'mcu_transport')}
     common.update(use_sim_time='true', use_mux='true',
-                  rpp_desired_speed='0.5' if mode == 'follow' else '0.4')
+                  rpp_desired_speed='0.8')
     if role == 'localization':
         return [include('shopping_robot_gazebo', 'sim.launch.py', {
             **common, 'start_sim': 'false', 'start_localization': 'true'}),
