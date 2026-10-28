@@ -80,6 +80,12 @@ VNC 密碼讀取環境變數，未設定時為 `shopping`；主機連接埠僅�
 
 Linux 的操作與 Mac 相同（bash 或 fish 皆可）；若需 sudo，可執行 `env DOCKER='sudo docker' ./scripts/dev.sh up`。自訂世界須保留 `supermarket` 世界名稱、`person` 模型及對應橋接主題；目前 world 參數提供替換檔案路徑，尚未自動推導世界名稱。
 
+### RViz 與 Gazebo 顯示配置
+
+`./scripts/dev.sh rviz` 預設以 map 為固定框架，俯視整間商場；深色背景搭配橘色雷射、青色全域路徑與薄荷綠車體足跡。Views 面板可切換已存的商場全景與車體近景。`Optional diagnostics` 內可手動開啟 TF、Fast／Slow TEB 軌跡與區域成本圖；TEB 主題只在 fork 發布，僅 apt 時保留關閉。只有 sim、尚未發布 map→odom 時，可在 Global Options 將 Fixed Frame 改為 odom。
+
+SLAM 專用的 `slam.rviz` 採相同配色與全景尺度，姿態圖預設關閉，需要時勾選 `SLAM Pose Graph`。Gazebo 保留原有碰撞盒、模型姿態與感測器，統一地板、貨架、地標與人物材質；`./scripts/dev.sh gz-gui` 以專案的 Fortress GUI 配置啟動深色介面與商場斜俯視鏡頭，連接目前既有模擬。需要自訂配置時可設定 `GAZEBO_GUI_CONFIG`，路徑須能在顯示容器內讀取。顯示配置不等於功能驗收，實測限制仍以進度紀錄為準。
+
 ## 模擬故障注入與停車驗證
 
 重新 colcon 建置後，停止其他移動流程，只啟動一個跟隨模擬：

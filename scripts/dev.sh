@@ -55,7 +55,7 @@ Usage: ./scripts/dev.sh COMMAND [ARGS...]
   save-map NAME            Save grid and serialized SLAM pose graph
   rviz | gz-gui            Start a GUI in the display container
   novnc                    Print browser URL
-Environment: DOCKER="sudo docker", VNC_PASSWORD, ROS_DOMAIN_ID
+Environment: DOCKER="sudo docker", VNC_PASSWORD, ROS_DOMAIN_ID, GAZEBO_GUI_CONFIG
 EOF
     ;;
   scenario-list)
@@ -215,7 +215,7 @@ EOF
     run ros2 run shopping_zone_manager save_map --ros-args -p use_sim_time:=true -p "map_name:=$1"
     ;;
   rviz) "${compose[@]}" exec display /usr/local/bin/compute-entrypoint ros2 launch shopping_robot_bringup rviz.launch.py "$@" ;;
-  gz-gui) "${compose[@]}" exec display /usr/local/bin/compute-entrypoint ign gazebo -g "$@" ;;
+  gz-gui) "${compose[@]}" exec display /usr/local/bin/compute-entrypoint ign gazebo -g --gui-config "${GAZEBO_GUI_CONFIG:-/ws/src/shopping_robot_gazebo/config/gui.config}" "$@" ;;
   novnc)
     novnc_endpoint="$("${compose[@]}" port --index 1 compute 6080)"
     vnc_endpoint="$("${compose[@]}" port --index 1 compute 5900)"

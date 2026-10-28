@@ -2127,3 +2127,78 @@ t85（`bce1b07`）發現貨架情境回歸：fault-check 2/7、follow_turns 失�
 | 貨架故障、near_stop、全向避障與 Fortress 偏航 | 待驗證 |
 
 本次自行檢查：完整 `nice -n 10 /workspace/scratch/venv-shop/bin/python -m pytest -q` 為 **1408 passed、1 skipped、1 warning**（既有 xacro 棄用警告）；`/workspace/scratch/venv-shop/bin/python scripts/checks/check_static.py` 為 **PASS**，包含 36 YAML/RViz、15 XML/SDF/xacro、158 Python、7 Bash、11 情境，以及兩／三錨點 × ekf／ground_truth 四種 xacro 展開。`git diff --check` 通過。以上為自行離線檢查，審查驗證欄仍維持「待驗證」。
+
+
+## 2026-10-28：清理 Mac Docker 閒置資源
+
+- 依使用者要求盤點 Docker：無執行中容器；兩個已停止容器 navigation2／ros2-vnc 屬於其他 Eurobot 專案，其中仍有額外安裝檔，故保留容器與所屬映像。
+- 已移除無容器使用的 alpine:latest（13.5 MB），並以 `docker builder prune --all --force --filter 'until=168h'` 清除超過一週未使用的建置快取；Docker 回報快取回收 2.185 GB。後續重建相關舊層時可能耗時較長。
+- 保留本專案已驗證的 compute／display／micro-ROS client、micro-ROS agent、其他專案映像與全部資料卷；未啟動容器、未操作 6080、未提交或推送。
+- 自行檢查：清理後再次檢查 Docker 資源用量、映像清單與容器狀態；下一步依需求啟動既有開發環境。
+- 審查驗證：待驗證。
+
+
+## 2026-10-28：依後續授權移除舊 Eurobot 容器與映像
+
+- 使用者明確表示 Eurobot 資源可以刪除，已移除已停止的 navigation2／ros2-vnc 容器及其容器內檔案，並移除 johnwu0819/eurobot2027-nav2-envs:latest、vnc-ros2-vnc:latest 兩個映像。
+- 一併移除僅供這兩個容器共用、先前盤點大小為 0 B 的 ros_x11 資料卷。Mac 上綁定掛載的 Eurobot 專案資料夾未刪除。
+- 自行檢查：Docker 已無容器，兩個舊映像與 ros_x11 均不在清單；購物車／自駕車映像與其資料卷保留。未提交或推送。
+- 下一步：需要時使用保留的購物車映像啟動開發環境。
+- 審查驗證：待驗證。
+
+## 2026-10-28：Mac 驗證 codex/faster-follow 與顯示外觀整理
+
+- 依使用者要求執行 git fetch 並切至 codex/faster-follow，基準 7e3748a；保留既有 Docker 清理筆記與未追蹤 .vscode/。未提交、推送或開 PR。
+- Mac Docker 原生 aarch64；Nav2 fork 安裝標記 dd063030b9c4bee8beee1af0c9f572870c41550b 與子模組一致。重新 colcon build，9 套件完成。
+- 本次依序執行 apt／fork 的 follow_turns、follow_stop_go 與 follow_fast_0_7／0_9／1_0，各輪重建獨立容器執行環境，維持流程互斥；前兩種觀察 180 模擬秒，高速觀察 100 模擬秒。另安排 0.15 m/s 側後方近人情境。
+- 評估器門檻不變，額外唯讀記錄人物／車體真值、估測、最終與跟隨 Twist、跟隨狀態。記錄位於 output/faster-follow-mac-20261028/（不入版控）；暫存測試工具不納入產品程式碼。
+- apt follow_turns 首輪轉彎誤差 RMSE 1.8745 m，超過 1.5 m，最大跟隨距離 5.5435 m；near_stop FAIL。違規附近 trace 顯示 TOO_CLOSE 且最終與跟隨命令均為零，但真值有非零微動；尚不能只靠命令確認接觸原因。
+- 已完成下列矩陣與側後方測試，保留所有失敗與未涵蓋事件；逐筆記錄及詳細報告見本機 output/faster-follow-mac-20261028/REPORT.md。
+- 審查驗證：待驗證。
+
+
+### 本輪實測結果
+
+| 情境 | apt | fork |
+| --- | --- | --- |
+| follow_turns（180 秒） | 直線 PASS、轉彎 FAIL（誤差 RMSE 1.875 m），最大間距 5.543 m；near_stop FAIL | 直線／轉彎 FAIL（轉彎誤差 RMSE 3.132 m），最大間距 5.561 m；near_stop PASS |
+| follow_stop_go（180 秒） | 直線 PASS；near_stop FAIL | 直線 PASS；near_stop 部分未涵蓋、已完整觀察事件無違規；reacquire FAIL |
+| follow_fast_0_7（100 秒） | 直線／轉彎 PASS，最大間距 2.809 m | 直線／轉彎 PASS，最大間距 2.339 m |
+| follow_fast_0_9（100 秒） | 直線／轉彎 PASS，最大間距 2.635 m | 直線／轉彎 PASS，最大間距 2.814 m |
+| follow_fast_1_0（100 秒） | 直線 PASS、轉彎 FAIL（誤差 RMSE 2.116 m），最大間距 5.270 m | 直線／轉彎 PASS，最大間距 3.520 m |
+
+- 原追蹤誤差仍以基礎距離 1.2 m 計算，RMSE 門檻維持 1.5 m；高速名義動態距離為 1.48／1.56／1.60 m，受限空間另有降速規則。高速輪次 near_stop 均未涵蓋，不能將追蹤 PASS 寫成整體通過；stop_go 的轉彎指標也均未涵蓋。
+- apt 貨架輪次 near_stop 違規附近，最終／跟隨命令均為零、狀態為 TOO_CLOSE，但真值有微動，FAIL 保留。fork follow_turns 多次出現 TEB Failed to make progress；fork stop_go 有短暫遺失後未在期限內回到 FOLLOWING 的事件。本次只驗證，不修控制器或放寬安全門檻。
+- 額外低速側後方：人物 0.15 m/s，左右側與左右後方各以 apt／fork 執行 55 模擬秒，共八輪。人物由 1.05 m 接近 0.65 m、停留，再退回 1.05 m 沿車旁／後方繞行。以真值 ≤0.8 m、既有 0.5 秒停止期限、平面速度 ≤0.03 m/s、角速絕對值 ≤0.05 rad/s 與最終雙軸零命令檢查，16 次完整事件全部 PASS；八個紀錄末端截斷區間仍標記 NOT_COVERED。
+- 此八輪的基座主要靜止／原地轉向，未涵蓋前進中以平移速度煞停的完整動態驗證；低速人物由固定場景路徑生成，真值僅用於驗收。
+- 0.8～1.2 m 且尚未對準時，已出現的轉向命令皆朝向人物，無反向樣本；但有 2.48～8.64 秒未對準且停止轉向的區間，多為 OBSTACLE_STOP。因此使用者要求「此距離帶要轉向人」尚未完全符合。日誌顯示人物約 1.01 m、前方雷射約 0.64 m，符合觸發原 0.65 m 前方停止值的條件；近停解除也仍要求 >0.95 m 持續 0.3 秒。
+- 全十輪以約 5 Hz 真值車體矩形 0.60 × 0.50 m 對照 SDF 障礙盒，未見幾何重疊。follow_turns 的最小抽樣間隙 apt／fork 為 0.186／0.225 m；這不是連續碰撞感測器驗收，不能保證沒有更短事件。高速情境為開放區域，不能視為高速貨架過彎已通過。
+
+### 顯示外觀與實際開啟
+
+- 依使用者後續要求，全部行為測試完成後才修改外觀。RViz 採深色背景、全景俯視與已存車體近景、橘色雷射、青色全域路徑、薄荷綠足跡；TF、Fast／Slow TEB 與成本圖為可選診斷。SLAM 配置採同一配色，姿態圖預設關閉。
+- 實際檢查發現既有 MarkerArray 的 Marker Topic 欄位未被 Humble 採用，造成訂閱預設 /visualization_marker_array。已改成 Topic；重新開啟 RViz，確認訂閱 /shopping/zone_markers 與 /uwb/markers，且商場六個區域名稱實際顯示。
+- Gazebo 統一地板、貨架、地標及人物材質；世界增加背景／環境光。逐項比較原世界的 collision、geometry、pose、inertial、physics、plugin，內容完全相同。
+- 新增 config/gui.config，沿用本機 Fortress 6.18.0 官方預設 GUI 外掛，設定深色介面與商場斜俯視鏡頭。dev.sh gz-gui 預設載入它，可用 GAZEBO_GUI_CONFIG 指向顯示容器內的自訂路徑；已驗證含空白路徑及額外參數傳遞。dev.sh 以原子置換更新，避免影響仍在執行的 Bash 指令。
+- 已實際開啟預設 RViz 與 Gazebo GUI 觀察同一個 supermarket 世界。GUI 初次載入等待較久，但兩容器 Ignition 主題清單相同，探索可用，未修改網路設定。Gazebo 桌面畫面保存在 output/faster-follow-mac-20261028/gazebo-preview.jpg，內建 Screenshot 功能輸出原生場景圖 gazebo-scene.png；十輪軌跡圖為 trajectories.png。SLAM 專用 RViz 本輪做靜態檢查，未另開建圖展示。
+- 保留展示環境於本機 6081／5970：guide 使用 apt、已存地圖與 AMCL，初始模式 IDLE；已確認最終 Twist 為零。RViz 與 Gazebo GUI 可供查看。這個展示不包含自主移動；所有跟隨測試輪次均已關閉並移除其暫存情境設定。
+- 限制：Mesa indexed_8bit_image shader 連結警告仍會出現；前兩次 RViz 重啟收尾也仍有 -11。本輪畫面實際可用，但未修復既有圖形退出問題。執行環境為 Mac 原生 arm64，未測 Linux 或硬體；未提交、推送或建立 PR。
+
+### 修改後自行檢查與下一步
+
+- colcon 全工作區九套件建置完成；新增 GUI 配置後，Gazebo 套件另建置完成。情境與 launch 配置 pytest 共 59 passed（既有 pythonpath／xacro 警告）；check_static PASS、Mac Bash 3.2 語法、Compose config、GUI 配置包裹根節點解析與實際 Fortress 載入均通過。靜態檢查含 YAML／XML／Python／Bash、11 情境與兩／三錨點 × ekf／ground_truth xacro；掃描計數含忽略的本機測試產物。
+- 下一步：調查 apt 貨架轉彎、fork TEB 無進度與重新取得，以及 0.8～1.2 m 轉向和前方停止保護的衝突；保留原安全優先規則與測試門檻。尚不能宣稱本分支完成驗收。
+
+| 審查驗證項目 | 結果 |
+| --- | --- |
+| apt／fork 貨架與高速矩陣 | 待驗證 |
+| 側後方 0.8 m 停止與 0.8～1.2 m 轉向 | 待驗證 |
+| RViz 主題、Gazebo 材質與 GUI | 待驗證 |
+| 靜態檢查、情境／launch 測試與幾何不變性 | 待驗證 |
+
+## 2026-10-28：依授權提交並推送顯示整理與 Mac 驗證紀錄
+
+- 使用者要求完成後推送；本輪提交至 codex/faster-follow，包含 RViz／Gazebo 外觀、MarkerArray 主題修正、Fortress GUI 配置、操作文件與完整成功／失敗摘要。未放寬控制器或安全驗收門檻。
+- 推送前確認遠端分支與本機基準一致，既有 59 項情境／launch 測試及靜態檢查紀錄已核對，git diff --check 通過。原始量測與圖片保留在忽略的本機 output/，未追蹤 .vscode/ 保持原狀。
+- 限制與下一步：貨架轉彎、近停／恢復及距離帶轉向仍有失敗或未涵蓋項目，見上節；後續再處理功能修正。不建立 PR、不合併 develop 或 main。
+- 審查驗證：待驗證。
