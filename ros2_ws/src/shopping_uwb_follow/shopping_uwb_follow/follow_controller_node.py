@@ -75,6 +75,8 @@ class FollowNode(Node):
         self.guard_state, self.guard_time = None, None
         self.create_subscription(String, '/safety/obstacle_state', self.on_guard, 10)
         self.obstacle = float('nan')
+        # Disk around the UWB target excluded from the controller's front stop.
+        self.person_mask_radius = float(self.declare_parameter('person_mask_radius', 0.4).value)
         self.last_diagnostic = -math.inf
         self.last_nav_command = None
         self.last_time = seconds(self)
@@ -192,7 +194,30 @@ class FollowNode(Node):
             self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
             self.scan.range_min, self.scan.range_max, laser,
             max(0.4, math.hypot(0.30, 0.25), self.robot_half_width)+0.05)
+        self.base_in_scan = laser
         return laser
+
+    def person_masked_obstacle(self, raw):
+        """Front clearance ignoring returns on the tracked person.
+
+        Only used for the follow controller's own 0.65 m stop / near-object cap
+        when the person is beyond the TOO_CLOSE latch; the TOO_CLOSE latch and the
+        downstream swept-footprint guard (0.45 m) still use every return.
+        """
+        laser, scan, target = getattr(self, 'base_in_scan', None), self.scan, self.target
+        radius = getattr(self, 'person_mask_radius', 0.0)
+        p = self.control.p
+        if (radius <= 0 or laser is None or scan is None or target is None
+                or not math.isfinite(raw) or not all(math.isfinite(v) for v in target)
+                or math.hypot(*target) <= p.stop_distance+p.too_close_margin+p.stop_release_margin):
+            return raw
+        x, y, yaw = laser
+        px = x+math.cos(yaw)*target[0]-math.sin(yaw)*target[1]
+        py = y+math.sin(yaw)*target[0]+math.cos(yaw)*target[1]
+        masked = front_obstacle_distance(scan.ranges, scan.angle_min, scan.angle_increment,
+                                         range_min=scan.range_min, range_max=scan.range_max,
+                                         exclude=(px, py, radius))
+        return raw if math.isnan(masked) else max(raw, masked)
 
     def map_goal_and_los(self):
         """Compute scan LOS independently of map TF; allow a recent latest map pose."""
@@ -362,8 +387,9 @@ class FollowNode(Node):
         if self.client is not None and not los:
             # Preserve the fallback slowdown when LOS is uncertain.
             factor *= p.los_uncertain_speed_factor
+        follow_obstacle = self.person_masked_obstacle(obstacle) if valid else obstacle
         v, w, state, reason = self.control.step(
-            self.target, age, obstacle, now-self.last_time, self.enabled, speed_factor=factor,
+            self.target, age, follow_obstacle, now-self.last_time, self.enabled, speed_factor=factor,
             target_velocity=(self.target_velocity(now) if guard_fresh
                              and self.guard_state in ('CLEAR', 'SLOW') else (0.0, 0.0)),
             # SLOW retains time headway but cannot add velocity feedforward.

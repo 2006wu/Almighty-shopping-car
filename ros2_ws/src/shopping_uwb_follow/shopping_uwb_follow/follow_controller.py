@@ -3,11 +3,13 @@ from dataclasses import dataclass
 
 
 def front_obstacle_distance(ranges, angle_min, angle_increment, sector=math.pi/3,
-                            range_min=0.0, range_max=float('inf')):
+                            range_min=0.0, range_max=float('inf'), exclude=None):
     """Return front clearance; NaN means unavailable, +inf means clear.
 
     Zero and positive readings below the sensor minimum trigger a stop.
     Invalid readings never establish a clear sector by themselves.
+    ``exclude=(x, y, radius)`` (scan frame) ignores finite returns whose endpoint
+    lies inside that disk, i.e. the tracked person; everything else still counts.
     """
     if (not all(math.isfinite(v) for v in (angle_min, angle_increment, sector, range_min))
             or not 0 < sector <= 2*math.pi or range_min < 0
@@ -23,6 +25,10 @@ def front_obstacle_distance(ranges, angle_min, angle_increment, sector=math.pi/3
         if value == float('inf'):
             values.append(value)
         elif math.isfinite(value) and 0 <= value <= range_max:
+            if (exclude is not None and value >= range_min
+                    and math.hypot(value*math.cos(angle)-exclude[0],
+                                   value*math.sin(angle)-exclude[1]) <= exclude[2]):
+                continue
             values.append(0.0 if value < range_min else value)
     return min(values, default=float('nan'))
 
@@ -191,7 +197,7 @@ class FollowController:
         correction = 0.0 if self.holding_distance else p.kp_distance*error
         forward = estimated_forward if feedforward_enabled and distance >= p.follow_distance else 0.0
         demand = max(0.0, p.velocity_feedforward*forward+correction)
-        absolute_cap = self.linear_cap(obstacle, clearance, scan_valid, los_clear)
+        absolute_cap = self.linear_cap(min(obstacle, distance), clearance, scan_valid, los_clear)
         cap = min(absolute_cap, p.max_linear*max(0.0, min(1.0, speed_factor)))
         heading = max(0.0, math.cos(bearing))
         v = min(p.max_linear, demand)*max(0.0, min(1.0, speed_factor))*heading
