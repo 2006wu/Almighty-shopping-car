@@ -14,9 +14,12 @@ from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import LaserScan
+from rclpy.qos import qos_profile_sensor_data
 from .goal_tracker import GoalTracker, State
 from .zones import load_zones, lookup, arrived
-from .localization_health import amcl_healthy
+from .localization_health import amcl_healthy, MapOdomJumpMonitor, scan_map_agreement
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformListener, TransformException
 
@@ -39,6 +42,18 @@ class ZoneNavigator(Node):
         self.amcl_yaw_std = float(self.declare_parameter('arrival_max_yaw_std', 0.35).value)
         self.amcl_max_age = float(self.declare_parameter('arrival_max_amcl_age', 5.0).value)
         self.amcl_sample = None
+        self.jump_monitor = MapOdomJumpMonitor(
+            float(self.declare_parameter('arrival_max_map_odom_step', 0.3).value),
+            float(self.declare_parameter('arrival_max_map_odom_yaw_step', 0.3).value))
+        self.create_timer(0.2, self.sample_map_odom)
+        # Independent of AMCL covariance: do scan endpoints at the AMCL pose hit
+        # mapped obstacles?  Catches a confident wrong pose (wrong aisle/rotated).
+        self.min_scan_agreement = float(self.declare_parameter('arrival_min_scan_agreement', 0.5).value)
+        self.map_msg = None
+        self.scan_msg = None
+        self.create_subscription(OccupancyGrid, '/map', self.on_map, QoSProfile(
+            depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.create_subscription(LaserScan, '/scan', self.on_scan, qos_profile_sensor_data)
         self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_amcl, 10)
         self.client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.tracker = GoalTracker(self.declare_parameter('response_timeout', 5.0).value)
@@ -67,6 +82,40 @@ class ZoneNavigator(Node):
         if message.header.frame_id == 'map':
             self.amcl_sample = (Time.from_msg(message.header.stamp).nanoseconds/1e9,
                                 tuple(message.pose.covariance))
+
+    def on_map(self, msg):
+        self.map_msg = msg
+
+    def on_scan(self, msg):
+        self.scan_msg = msg
+
+    def scan_agreement(self):
+        """Return agreement ratio, or None when it cannot be judged."""
+        m, scan = getattr(self, 'map_msg', None), getattr(self, 'scan_msg', None)
+        if m is None or scan is None or m.header.frame_id != 'map':
+            return None
+        try:
+            tf = self.pose_buffer.lookup_transform('map', scan.header.frame_id, Time())
+        except TransformException:
+            return None
+        t, q = tf.transform.translation, tf.transform.rotation
+        yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
+        info = m.info
+        return scan_map_agreement(m.data, info.width, info.height, info.resolution,
+                                  (info.origin.position.x, info.origin.position.y), (t.x, t.y, yaw),
+                                  scan.ranges, scan.angle_min, scan.angle_increment, scan.range_max)
+
+    def sample_map_odom(self):
+        try:
+            tf = self.pose_buffer.lookup_transform('map', 'odom', Time())
+        except TransformException:
+            return
+        t, q = tf.transform.translation, tf.transform.rotation
+        was = self.jump_monitor.jumped
+        if (self.jump_monitor.update(t.x, t.y, math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
+                and not was):
+            self.get_logger().warning('map->odom jumped (AMCL relocalization); '
+                                      'current goal arrival will not be trusted')
 
     def localization_healthy(self):
         if self.amcl_sample is None:
@@ -123,6 +172,8 @@ class ZoneNavigator(Node):
                 goal.pose.pose.orientation.z = math.sin(zone.yaw / 2)
                 goal.pose.pose.orientation.w = math.cos(zone.yaw / 2)
                 self.last_feedback = -float('inf')
+                if getattr(self, 'jump_monitor', None) is not None:
+                    self.jump_monitor.reset()
                 self.send_count += 1
                 try:
                     self.controller_type.publish(String(data='Fast'))
@@ -213,6 +264,20 @@ class ZoneNavigator(Node):
                     xy_tolerance=self.arrival_xy_tolerance,
                     yaw_tolerance=self.arrival_yaw_tolerance,
                     max_age=self.arrival_max_age)
+                monitor = getattr(self, 'jump_monitor', None)
+                if monitor is not None and monitor.jumped:
+                    arrival_valid = False
+                    self.get_logger().warning(
+                        'Cannot verify arrival: map->odom jumped during goal '
+                        f'(max step {monitor.worst[0]:.2f} m / {monitor.worst[1]:.2f} rad)')
+                agreement = self.scan_agreement()
+                if agreement is not None and agreement < getattr(self, 'min_scan_agreement', 0.5):
+                    arrival_valid = False
+                    self.get_logger().warning(
+                        f'Cannot verify arrival: scan/map agreement {agreement:.2f} < '
+                        f'{getattr(self, "min_scan_agreement", 0.5):.2f} (localization likely wrong)')
+                elif agreement is not None:
+                    self.get_logger().info(f'Arrival scan/map agreement {agreement:.2f}')
                 if not self.localization_healthy():
                     arrival_valid = False
                     self.get_logger().warning('Cannot verify arrival: AMCL confidence missing, stale or excessive')

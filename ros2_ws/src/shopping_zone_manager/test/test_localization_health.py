@@ -42,3 +42,53 @@ def test_nonsymmetric_covariance_is_invalid():
     cov = covariance()
     cov[1] = .001
     assert not amcl_healthy(cov, .1)
+
+
+def test_map_odom_jump_monitor():
+    from shopping_zone_manager.localization_health import MapOdomJumpMonitor
+    m = MapOdomJumpMonitor(0.3, 0.3)
+    for i in range(50):
+        assert not m.update(0.004*i, 0.0, 0.002*i)  # slow drift correction is fine
+    assert m.update(5.0, 0.0, 0.1)                   # kidnap-like jump
+    m.reset()
+    assert not m.jumped and not m.update(5.01, 0.0, 0.1)
+    assert m.update(5.01, 0.0, 2.2)                  # yaw flip
+    m.reset()
+    assert m.update(float('nan'), 0.0, 0.0)
+
+
+def _box_world():
+    # 10 x 10 m room, 0.1 m cells, walls on the border, origin (-5, -5)
+    w = h = 100
+    grid = [0]*(w*h)
+    for i in range(w):
+        for j in (0, h-1):
+            grid[j*w+i] = grid[i*w+j] = 100
+    return grid, w, h
+
+
+def _ray(x, y, a, lo=-4.95, hi=4.95):
+    best = float('inf')
+    c, s = math.cos(a), math.sin(a)
+    for wall, d in ((hi, c), (lo, c)):
+        if abs(d) > 1e-9 and (wall-x)/d > 0:
+            best = min(best, (wall-x)/d)
+    for wall, d in ((hi, s), (lo, s)):
+        if abs(d) > 1e-9 and (wall-y)/d > 0:
+            best = min(best, (wall-y)/d)
+    return best
+
+
+def test_scan_map_agreement_detects_wrong_pose():
+    from shopping_zone_manager.localization_health import scan_map_agreement
+    grid, w, h = _box_world()
+    true_pose = (1.0, -2.0, 0.0)
+    n = 360
+    inc = 2*math.pi/n
+    ranges = [_ray(true_pose[0], true_pose[1], -math.pi+i*inc) for i in range(n)]
+    args = (grid, w, h, 0.1, (-5.0, -5.0))
+    good = scan_map_agreement(*args, true_pose, ranges, -math.pi, inc, 12.0)
+    assert good > 0.9
+    wrong = scan_map_agreement(*args, (-2.5, 1.5, 2.11), ranges, -math.pi, inc, 12.0)
+    assert wrong < 0.4
+    assert scan_map_agreement(*args, true_pose, [float('inf')]*n, -math.pi, inc, 12.0) is None
