@@ -2212,3 +2212,16 @@ t85（`bce1b07`）發現貨架情境回歸：fault-check 2/7、follow_turns 失�
 - 已執行 docker desktop stop，CLI 回報停止；後續無 Docker Desktop／com.docker.backend 程序。保留原始碼、映像、資料卷與測試紀錄；未重新啟動 Docker。
 - 下一步：使用者恢復工作後，再調查 AMCL 假到達與真值錯位；目前未完成乾淨環境的重測。
 - 審查驗證：待驗證。
+
+## 2026-10-29：AMCL 假到達防護、跟隨前方停止排除目標人物（模擬，codex/faster-follow）
+
+- AMCL 假到達：原到達驗證只看 map→base 姿態（即 AMCL 本身）與共變異數，AMCL 自信地錯位時無法察覺。新增兩道與共變異數無關的檢查，任一不通過即把 Nav2 SUCCEEDED 改判 ABORTED：
+  - 雷射／地圖一致率：以 AMCL 姿態投影雷射終點，計算落在已知障礙格 0.15 m 內的比例，低於 `arrival_min_scan_agreement`（0.5）拒絕。
+  - map→odom 跳變：目標執行期間 map→odom 單步變化 >0.3 m 或 >0.3 rad（重新定位／綁架）即不信任該次到達。
+  - 新增 `kidnap_check`（模擬工具，真值只用於驗收）：送錯誤 /initialpose 後導航，檢查是否出現假 SUCCEEDED。
+- 實測：正常到達一致率 0.69～1.00（SLAM 4 輪 nav-check 與 AMCL 皆 PASS，最終誤差 0.079～0.110 m）；AMCL 綁架（偏移 1.5,0.5 m／1.0 rad）時一致率 0.20。該次基準輪 Nav2 本身已 ABORTED（真值誤差 1.94 m），未重現 Mac 的假 SUCCEEDED；防護開啟輪因主機重啟中斷，未完成。0.69 的正常到達離 0.5 門檻餘裕不大，需更多樣本。
+- 跟隨：控制器自己的 0.65 m 前方停止與近物限速，排除落在 UWB 目標 0.4 m 內的雷射點（目標 >0.95 m 時才排除）；TOO_CLOSE 鎖定、下游 0.45 m 足跡防護、貨架等其他回波不變。近物限速改用 min(前方, 目標距離)，對人限速不弱化。
+- 結果（apt，同場景）：fault 7/7、obstacle 4/4、fast 0.7／0.9／1.0 追蹤 PASS（平均 1.70／1.84／1.93 m）、stop_go 追蹤 PASS（平均 1.00 m）但 near_stop 1 樣本 FAIL（186.78 s，TOO_CLOSE 雙軸零命令，人物從側邊 0.51 m 經過，與 t87 同類）。follow_turns 仍 FAIL：平均 2.45 m（前次 2.01、develop 1.33）。
+- follow_turns 根因線索：NAV2_HANDOFF 期間零命令 85/141 筆（develop 2/180），控制器報 Failed to make progress，代表 Nav2 有輸出但本節點未轉發。已加入 nav_cmd／safe／guard／pose 診斷欄位，下一輪可定位是哪個條件；RPP 跟隨速度與 develop 同為 0.5，不是主因。
+- 未完成：防護開啟的 AMCL 綁架輪、AMCL nav-check、診斷版 follow_turns 重跑，因主機約 20:55 重啟且 Docker 環境遺失而中斷。
+- 審查驗證：待驗證。

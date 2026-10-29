@@ -479,6 +479,8 @@ class FollowNode(Node):
                     and decision.mode == 'NAV2' and self.nav_status == 'active'
                     and pose is not None and not self.drain.active
                     and not (guard_fresh and self.guard_state in ('STOP', 'STALE')))
+            self.nav_debug = (f' nav_cmd={"none" if nav_command is None else f"{nav_command[0]:.2f},{nav_command[1]:.2f}"}'
+                              f' safe={int(bool(safe))} guard={getattr(self, "guard_state", None)} pose={int(pose is not None)}')
             commanded_v, commanded_w = self.nav_guard.step(
                 nav_command, obstacle, self.rotation_clear, dt, safe=safe,
                 near_latched=self.control.near_latched)
@@ -516,7 +518,8 @@ class FollowNode(Node):
             f'nav_status={self.nav_status} nav_pending={self.goal_pending} '
             f'los_blocked={self.supervisor.los.blocked} drain={self.drain.active} '
             f'rotation_clear={self.rotation_clear} near_latched={self.control.near_latched} '
-            f'near_clear_time={self.control.near_clear_time:.3f}s limit={reason}')
+            f'near_clear_time={self.control.near_clear_time:.3f}s limit={reason}'
+            + (getattr(self, 'nav_debug', '') if self.supervisor.mode == 'NAV2' else ''))
 
     def stop_before_shutdown(self):
         # SIGINT may already have invalidated the context. The independent
