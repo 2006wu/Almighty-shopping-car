@@ -158,7 +158,7 @@ H7 是系列而非單一容量，通常較有餘裕，但精確 RAM／Flash、DM
 
 UART 需要匹配 baud、8N1、電位與 GND；USB-CDC 是 USB device transport，與 ST-LINK 的虛擬 COM 或原生 UART 不同，不能因都顯示 ttyACM 就視為同一路徑。具體接法待板型確認。
 
-寒假若只測 STM32 串列通訊與左右馬達，可明確選用隔離的 [micro-ROS 實機測試](../../hardware/winter_microros/README.md)（PlatformIO／F446RE 社群實驗性路徑，採簡化契約；已編譯，尚未實機驗收）。
+寒假若只測 STM32 串列通訊與左右馬達，可明確選用隔離的 [micro-ROS 實機測試](../../hardware/winter_microros/README.md)（PlatformIO／Nucleo-G431RB（32 KB SRAM、128 KB Flash，記憶體較緊）社群實驗性路徑，採簡化契約；已編譯，尚未實機驗收）。
 
 ## 5. 常見問題與重連
 

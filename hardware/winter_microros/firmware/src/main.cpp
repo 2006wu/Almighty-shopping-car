@@ -237,7 +237,7 @@ void setup() {
   wheel.data.data = wheel_data;
   wheel.data.size = wheel.data.capacity = 4;
   Serial.begin(SERIAL_BAUD);
-  set_microros_serial_transports(Serial); // USART2 via ST-Link virtual COM; never print here.
+  set_microros_serial_transports(Serial); // LPUART1 (PA2/PA3) via ST-LINK VCP; never print here.
 }
 
 void loop() {

@@ -2002,3 +2002,24 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | 韌體編譯（預設 PWM+DIR、無 encoder） | 審查者 `pio run` 成功；RAM 22404 bytes、Flash 92960 bytes | 待驗證 |
 | 韌體編譯（IN1/IN2+PWM＋encoder） | 暫存複本 `pio run` 成功；RAM 22660 bytes、Flash 96716 bytes | 待驗證 |
 | 容器／串列／停車與重連／實機馬達 | 未執行；需依新增 README 分階段驗收 | 待驗證 |
+
+## 2026-10-30：寒假 micro-ROS 改為 Nucleo-G431RB
+
+### 本次完成
+
+- 使用者表示寒假用 STM32G431；`hardware/winter_microros/` 環境改為 `nucleo_g431rb`（仍鎖 `ststm32@20.0.0` 與 micro_ros_platformio `cfee17f`，serial transport），開發板假設為 Nucleo-G431RB，README 標明此假設並新增「記憶體餘裕」小節；MICROROS_GUIDE 與硬體索引同步。
+- 依 Arduino_Core_STM32 的 G431RB variant 核對計時器後重新分配腳位：PWM 左 D6／PB10（TIM2_CH3）、右 D9／PC7（TIM3_CH2）；DIR D4／PB5、D7／PA8；IN2 D8／PA9、D3／PB3；encoder A D2／PA10、D11／PA7，B D12／PA6、D5／PB4。此板 Arduino `Serial`＝LPUART1（PA2／PA3，ST-LINK VCP）。20 kHz PWM 與其他參數未改。
+
+### 已知限制與下一步
+
+- 靜態 RAM 用掉 68.8%，只剩約 10 KB 給 heap 與 stack，餘裕偏緊；重連時的動態配置與 stack 峰值未實測。必要時以自訂 colcon meta 減少 publisher／subscription／history／MTU（未實作）。
+- STM32 仍是 micro_ros_platformio 非官方支援的實驗性路徑。
+
+### 驗證
+
+| 項目 | 本次結果 | 審查驗證 |
+| --- | --- | --- |
+| 預設韌體編譯（G431RB，micro-ROS 函式庫重建） | `pio run` 成功；RAM 22560／32768 bytes、Flash 96748／131072 bytes | 待驗證 |
+| 啟用 encoder 暫時編譯 | 成功；RAM 22816 bytes、Flash 100432 bytes；版控維持關閉 | 待驗證 |
+| 既有 pytest 回歸 | 1284 passed、1 skipped | 待驗證 |
+| 燒錄／agent 連線／重連記憶體／實機馬達 | 未執行 | 待驗證 |

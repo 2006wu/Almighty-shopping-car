@@ -2,9 +2,24 @@
 
 ## 目的與範圍
 
-只驗證 Linux PC（ROS 2 Humble）↔ 串列 micro-ROS agent ↔ STM32 通訊，以及 PC 發布 `/cmd_vel` 能讓差速底盤左右馬達轉動。沒有導航、UWB、雷射、IMU、里程計或 TF。這是使用者明確選用的獨立實機測試，不會由既有模擬流程自動啟動。**韌體已在審查環境以 PlatformIO 編譯通過（預設設定 RAM 約 22.4 KB、Flash 約 93 KB），尚未燒錄或實機驗收。**
+只驗證 Linux PC（ROS 2 Humble）↔ 串列 micro-ROS agent ↔ STM32 通訊，以及 PC 發布 `/cmd_vel` 能讓差速底盤左右馬達轉動。沒有導航、UWB、雷射、IMU、里程計或 TF。這是使用者明確選用的獨立實機測試，不會由既有模擬流程自動啟動。**韌體已在審查環境以 PlatformIO 編譯通過（預設設定 RAM 約 22.6 KB／32 KB（68.8%）、Flash 約 96.7 KB／128 KB（73.8%）），尚未燒錄或實機驗收。**
 
-範例板為 Nucleo-F446RE，使用 Arduino／PlatformIO 與 ST-Link 虛擬 COM（USART2，通常為 PC 的 `/dev/ttyACM0`），不是 MCU 原生 USB-CDC。STM32／Nucleo 不在 micro_ros_platformio 的官方支援板清單，本路徑屬於 **community/experimental（社群／實驗性）**，可能需要處理工具鏈、靜態函式庫與記憶體相容問題。若此路徑無法建置，可改用 STM32CubeMX／CubeIDE + `micro_ros_stm32cubemx_utils` 的 Humble 路徑，另行設定 HAL、transport 與記憶體；不是直接改一個 board 名稱就能替換。
+範例板為 Nucleo-G431RB，使用 Arduino／PlatformIO 與 ST-LINK VCP（LPUART1，PA2/PA3，主機通常顯示為 `/dev/ttyACM0`），不是 MCU 原生 USB-CDC。STM32／Nucleo 不在 micro_ros_platformio 的官方支援板清單，本路徑屬於 **community/experimental（社群／實驗性）**，可能需要處理工具鏈、靜態函式庫與記憶體相容問題。若此路徑無法建置，可改用 STM32CubeMX／CubeIDE + `micro_ros_stm32cubemx_utils` 的 Humble 路徑，另行設定 HAL、transport 與記憶體；不是直接改一個 board 名稱就能替換。
+
+板型假設：使用者表示寒假用 STM32G431，此處假設為 Nucleo-G431RB；若是其他 G431 板（例如自製板或 G431KB），須重新核對腳位、序列埠與 platformio.ini 的 board。STM32G431RB 為 Cortex-M4F、170 MHz，具 32 KB SRAM 與 128 KB Flash。
+
+### 記憶體餘裕（G431RB）
+
+2026-10-30 以 `ststm32@20.0.0`、micro_ros_platformio `cfee17f`、Humble 預設 colcon meta（serial transport）編譯 `nucleo_g431rb` 的結果：
+
+| 設定 | 靜態 RAM（.data＋.bss） | Flash |
+| --- | --- | --- |
+| 預設（`USE_ENCODERS 0`） | 22,560 bytes／32,768 bytes（68.8%） | 96,748 bytes／131,072 bytes（73.8%） |
+| 啟用 encoder（`USE_ENCODERS 1`） | 22,816 bytes／32,768 bytes（69.6%） | 100,432 bytes／131,072 bytes（76.6%） |
+
+之前 F446RE（128 KB SRAM、512 KB Flash）約 22.4 KB RAM、93 KB Flash，絕對用量幾乎相同，但 G431RB 的總量小很多：靜態配置後只剩約 10 KB 給 heap（micro-ROS 建立 entities、重連時的動態配置）與 stack，Flash 約剩 30 KB。**餘裕偏緊但可建置**；編譯通過不代表執行期不會 heap／stack 不足，實機須觀察多次斷線重連後是否仍穩定。
+
+RAM 大宗是 micro-ROS 靜態池（XRCE session 與串列緩衝約 5.4 KB、靜態訊息緩衝約 8.3 KB、publisher／subscription 池約 3.2 KB）。若實機出現建立失敗、重連後當機或要再增加功能，可在 `platformio.ini` 加 `board_microros_user_meta` 自訂 colcon meta，降低 `RMW_UXRCE_MAX_PUBLISHERS`（程式最多只用 4 個）、`RMW_UXRCE_MAX_SUBSCRIPTIONS`（只用 1 個）、`RMW_UXRCE_MAX_HISTORY` 或 MTU，再執行 `pio run -t clean_microros` 重新建置；此縮減目前未實作也未驗證。
 
 ## 與完整 MCU 契約的差異
 
@@ -29,22 +44,30 @@
 
 先關閉馬達電源。所有硬體占位設定集中在 [firmware/include/robot_config.h](firmware/include/robot_config.h)，每項都有 `TODO(hardware)`。唯一必須同步的工具鏈選項是 `firmware/platformio.ini` 的板型、串列監看 baud 與燒錄方式。
 
-| 連線 | Nucleo-F446RE 預設 Arduino 排針 | 驅動器端 |
-| --- | --- | --- |
-| 左／右 PWM | D3（PB3）／D5（PB4），皆支援 PWM | PWM／ENA、ENB |
-| 左／右 DIR | D4（PB5）／D7（PA8） | DIR 或 IN1 |
-| 左／右 DIR2 | D8（PA9）／D9（PC7） | IN2，PWM+DIR 模式不使用 |
-| 選用左 encoder A／B | D2（PA10）／D6（PB10） | 左側編碼器 A／B |
-| 選用右 encoder A／B | D10（PB6）／D11（PA7） | 右側編碼器 A／B |
-| 串列 | ST-Link USB 接 PC；板上 USART2 PA2／PA3 | 不接馬達驅動器；確認 VCP 跳線／焊橋 |
-| 共地 | 板子 GND | 驅動器邏輯地、電源負端共地 |
-| 馬達供電 | 獨立、合規格且有斷電開關的電源 | 驅動器馬達供電端；不得由 Nucleo 供馬達電力 |
+| 功能／連線 | Nucleo-G431RB Arduino 腳 | MCU 腳 | 計時器／說明 | 驅動器端 |
+| --- | --- | --- | --- | --- |
+| `LEFT_PWM_PIN` | D6 | PB10 | TIM2_CH3 PWM | 左 PWM／ENA |
+| `RIGHT_PWM_PIN` | D9 | PC7 | TIM3_CH2 PWM | 右 PWM／ENB |
+| `LEFT_DIR_PIN` | D4 | PB5 | GPIO | 左 DIR／IN1 |
+| `RIGHT_DIR_PIN` | D7 | PA8 | GPIO | 右 DIR／IN1 |
+| `LEFT_DIR2_PIN` | D8 | PA9 | GPIO，僅 IN1/IN2 模式使用 | 左 IN2 |
+| `RIGHT_DIR2_PIN` | D3 | PB3 | GPIO，僅 IN1/IN2 模式使用；亦為 SWO，使用不含追蹤的 SWD 時可用 | 右 IN2 |
+| `LEFT_ENCODER_A_PIN` | D2 | PA10 | EXTI10 中斷 | 左側編碼器 A |
+| `LEFT_ENCODER_B_PIN` | D12 | PA6 | GPIO 輸入 | 左側編碼器 B |
+| `RIGHT_ENCODER_A_PIN` | D11 | PA7 | EXTI7 中斷 | 右側編碼器 A |
+| `RIGHT_ENCODER_B_PIN` | D5 | PB4 | GPIO 輸入；Arduino core 於開機時停用 UCPD dead-battery 下拉 | 右側編碼器 B |
+| `STATUS_LED_PIN` | LED_BUILTIN = D13 | PA5 | 使用者 LED LD2 | — |
+| 串列 | ST-LINK USB 接 PC | PA2/PA3 | LPUART1，ST-LINK VCP；保留，不作其他用途 | 不接馬達驅動器；確認 VCP 跳線／焊橋 |
+| 共地 | GND | — | 邏輯地 | 驅動器邏輯地、電源負端共地 |
+| 馬達供電 | 獨立、合規格且有斷電開關的電源 | — | 不得由 Nucleo 供馬達電力 | 驅動器馬達供電端 |
+
+兩個 PWM 腳分別使用 TIM2／TIM3，皆維持 20 kHz。此 variant 的 Arduino `Serial` 使用 LPUART1（PA2/PA3，ST-LINK VCP）。PA13/PA14 保留給 SWD；D14/D15（PB9/PB8）保留給未來的 I2C IMU（BNO085），其中 PB8 亦為 G4 的 BOOT0；D0/D1（PC5/PC4，USART1）保留備用。
 
 使用 3.3 V 相容的邏輯輸入與 encoder 訊號，確認模組電位與驅動能力。PWM+DIR 模式假設 PWM=0 就停止；IN1/IN2+PWM 模式適用有獨立 enable/PWM 的 L298N、TB6612 類模組，移除強制 EN 全速跳線。TB6612 的 STBY 或其他額外 enable 必須依模組資料確認接法，確保重設時停用，不可懸空；本程式沒有額外 enable 腳位控制。每側若有多顆馬達，要先核對總堵轉電流，不能直接假設模組可承受。
 
 逐一確認所有 TODO：
 
-- 板型：`nucleo_f446re` 與實際板子相符，並確認 USART2 確實連到 ST-Link VCP。
+- 板型：`nucleo_g431rb` 與實際板子相符，並確認 LPUART1（PA2/PA3）確實連到 ST-LINK VCP。
 - 驅動器：`DRIVER_TYPE` 選 `PWM_DIR` 或 `IN1_IN2_PWM`。
 - 腳位：`LEFT_PWM_PIN`、`RIGHT_PWM_PIN`、`LEFT_DIR_PIN`、`RIGHT_DIR_PIN`、`LEFT_DIR2_PIN`、`RIGHT_DIR2_PIN`，確認 PWM、排針及其他周邊沒有衝突。
 - 編碼器：`USE_ENCODERS` 預設 0；`LEFT_ENCODER_A_PIN`、`LEFT_ENCODER_B_PIN`、`RIGHT_ENCODER_A_PIN`、`RIGHT_ENCODER_B_PIN`；`ENCODER_TICKS_PER_REV` 為輸出輪每圈的 A 上升緣數（含減速比）。回報是原始符號，不受馬達反相旗標影響，必要時調整 A/B 接線。
@@ -173,11 +196,11 @@ ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0 -b 115200
 | 現象 | 檢查方向 |
 | --- | --- |
 | `/dev/ttyACM0` 不存在／權限不足 | 確認 ST-Link USB 線可傳資料、實際裝置路徑；主機使用者可用 `sudo usermod -aG dialout "$USER"` 後重新登入，確認 udev 規則；不要以 privileged 取代正確權限。改埠時明確設定 `MICROROS_SERIAL_DEVICE`。 |
-| agent 沒有 session 或卡住 | 核對兩端 115200 baud、USART2／VCP 接線，按板子 reset；確認沒有其他 agent、ModemManager 或程式占埠。**不要同時開 `pio device monitor`**。GPIO／馬達雜訊也可能造成重啟。 |
+| agent 沒有 session 或卡住 | 核對兩端 115200 baud、LPUART1（PA2/PA3）／ST-LINK VCP 接線，按板子 reset；確認沒有其他 agent、ModemManager 或程式占埠。**不要同時開 `pio device monitor`**。GPIO／馬達雜訊也可能造成重啟。 |
 | agent 有 session，但看不到 topics | 韌體 config 與 agent／tools 的 `ROS_DOMAIN_ID` 都必須為 28；改韌體值需重燒。確認 host 網路與 Linux DDS discovery／防火牆設定。 |
 | wheel／encoder echo 沒資料 | 使用 `ros2 topic echo /mcu/wheel_cmd --qos-reliability best_effort` 或 `ros2 topic echo /mcu/encoder_ticks --qos-reliability best_effort`；encoder 需先啟用並接線。 |
 | 首次建置找不到 cmake／compiler／venv | 安裝 `git cmake build-essential python3-venv`，確認 PlatformIO 所用環境可執行這些工具；保留第一筆錯誤供排查，不要混用 ROS 發行版。 |
-| STM32／micro-ROS 建置失敗 | 這是實驗性板型；提供完整錯誤、依賴版本、RAM／Flash 使用量。F446RE 只有 128 KB SRAM、512 KB Flash，須檢查 map、堆疊與重連記憶體；不夠時先關閉 encoder 或評估 CubeMX 路徑。 |
+| STM32／micro-ROS 建置失敗 | 這是實驗性板型；提供完整錯誤、依賴版本、RAM／Flash 使用量。Nucleo-G431RB 只有 32 KB SRAM、128 KB Flash，**記憶體餘裕較緊**，須檢查 map、堆疊與重連記憶體；不夠時先關閉 encoder 或評估 CubeMX 路徑。 |
 | 有 PWM 命令卻不轉 | 核對共地、外部電源、EN／STBY、DIR 模式、PWM 腳位與靜摩擦；先斷電再改線。命令回報不代表驅動器實際有輸出。 |
 
 ## 安全注意
