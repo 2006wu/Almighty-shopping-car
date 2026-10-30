@@ -1,0 +1,20 @@
+name: winter-microros
+services:
+  agent:
+    image: microros/micro-ros-agent:humble
+    command: [serial, --dev, "${MICROROS_SERIAL_DEVICE:-/dev/ttyACM0}", -b, "${SERIAL_BAUD:-115200}", -v4]
+    devices:
+      - "${MICROROS_SERIAL_DEVICE:-/dev/ttyACM0}:${MICROROS_SERIAL_DEVICE:-/dev/ttyACM0}"
+    network_mode: host
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-28}
+  tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    network_mode: host
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-28}
+    stdin_open: true
+    tty: true
+    command: [bash]

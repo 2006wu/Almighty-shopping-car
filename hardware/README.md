@@ -9,3 +9,5 @@
 - MCU 型號（STM32 H7／F446RE 等，待確認）；介面見 [docs/hardware/MCU_INTERFACE.md](../docs/hardware/MCU_INTERFACE.md)
 
 軟體介面與驗證文件在 [docs/hardware/](../docs/hardware)。
+
+明確選用的獨立實機入門：[寒假 micro-ROS 測試](winter_microros/README.md)（ROS 2 Humble，社群／實驗性；已編譯，尚未實機驗收）。

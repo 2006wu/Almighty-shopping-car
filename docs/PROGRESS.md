@@ -1977,3 +1977,28 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | Mac arm64 原生完整建置 | 待驗證 |
 | README 快速開始與單元測試 | 待驗證 |
 | 帶路模擬與文件索引 | 待驗證 |
+
+## 2026-10-30：寒假實機測試：micro-ROS 分支
+
+### 本次完成
+
+- 新增獨立的 `hardware/winter_microros/`：PlatformIO／Arduino F446RE 韌體、集中硬體 TODO 設定、串列 agent 與工具容器、繁體中文接線及逐步驗證文件；由使用者明確選用，不接入既有模擬流程。
+- 韌體採左右差速、PWM+DIR 或 IN1/IN2+PWM、命令限幅／輪速同比縮放、非法輸入停車、500 ms 命令逾時、agent 四階段重連，以及靜態訊息緩衝；選用兩側原始 encoder 計數。domain 預設 28，agent 固定 `microros/micro-ros-agent:humble`。
+- 補上硬體索引與 micro-ROS 入門第 4 節連結；未修改既有 ROS 套件、Docker 設定、腳本、模擬韌體、測試或 third_party。
+
+### 已知限制與下一步
+
+- F446RE／micro_ros_platformio 為社群實驗性路徑；已鎖定 ststm32 20.0.0 與 micro_ros_platformio `cfee17f`。審查時補上丟棄 newlib 輸出的 `_write` stub 與 rmw context 型別修正後編譯通過；GPIO／PWM、串列連線、重連與真實馬達行為皆未驗收。
+- 本測試採兩側、允許倒車、直接 `/cmd_vel`、無 PC heartbeat／加速度限制，與完整四輪 MCU 契約不同，禁止與既有通訊或移動流程在同 domain 並行。PWM 回報不是量測輪速。
+- 靜態訊息緩衝不代表完全無 heap：每次重連會重新建立 entities，需量測記憶體與停止延遲。USB 重插後可能必須以原本已確認埠重建 agent 容器。
+- 下一步先完成所有硬體 TODO，關閉馬達電源驗證 heartbeat，再架空驗證方向、逾時、agent 重啟與重插，最後才低速落地。
+
+### 驗證
+
+| 項目 | 本次結果 | 審查驗證 |
+| --- | --- | --- |
+| 既有 pytest 回歸 | 1284 passed、1 skipped、1 warning；指定沙盒虛擬環境執行 | 待驗證 |
+| 新增 YAML／PlatformIO INI／文件相對連結／差異空白檢查 | 離線解析及檢查通過 | 待驗證 |
+| 韌體編譯（預設 PWM+DIR、無 encoder） | 審查者 `pio run` 成功；RAM 22404 bytes、Flash 92960 bytes | 待驗證 |
+| 韌體編譯（IN1/IN2+PWM＋encoder） | 暫存複本 `pio run` 成功；RAM 22660 bytes、Flash 96716 bytes | 待驗證 |
+| 容器／串列／停車與重連／實機馬達 | 未執行；需依新增 README 分階段驗收 | 待驗證 |
