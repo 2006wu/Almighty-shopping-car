@@ -2002,3 +2002,19 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | 既有 pytest 回歸 | 1284 passed、1 skipped、1 個既有 xacro DeprecationWarning | 待驗證 |
 | 新增 Compose YAML／launch XML、文件相對連結與差異空白 | 離線解析／檢查通過；非 Docker Compose 執行驗收 | 待驗證 |
 | 容器／燒錄／實機通訊與馬達停止期限 | 尚未執行 | 待驗證 |
+
+## 2026-10-30：寒假 rosserial 改為 Nucleo-G431RB
+
+### 本次完成
+
+- 使用者表示寒假用 STM32G431；`hardware/winter_rosserial/` 預設環境改為 `nucleo_g431rb`（仍鎖 `ststm32@20.0.0`），開發板假設為 Nucleo-G431RB（32 KB SRAM、128 KB Flash），README 標明此假設。
+- 依 Arduino_Core_STM32 的 G431RB variant 核對計時器後重新分配腳位：PWM 左 D6／PB10（TIM2_CH3）、右 D9／PC7（TIM3_CH2）；DIR D4／PB5、D7／PA8；IN2 D8／PA9、D3／PB3；encoder A D2／PA10、D11／PA7，B D12／PA6、D5／PB4。保留 PA2／PA3（LPUART1＝ST-LINK VCP，此板 `Serial` 不是 USART2）、SWD、D14／D15（未來 I2C IMU，PB8 兼 BOOT0）。20 kHz PWM 與其他參數未改。
+
+### 驗證
+
+| 項目 | 本次結果 | 審查驗證 |
+| --- | --- | --- |
+| 預設韌體編譯（G431RB） | `pio run` 成功；RAM 2888／32768 bytes、Flash 31496／131072 bytes | 待驗證 |
+| 啟用 encoder 暫時編譯 | 成功；RAM 2972 bytes、Flash 33136 bytes；版控維持關閉 | 待驗證 |
+| 既有 pytest 回歸 | 1284 passed、1 skipped | 待驗證 |
+| 燒錄／實機串列／PWM 波形 | 未執行；實際板型與驅動器仍待確認 | 待驗證 |

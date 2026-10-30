@@ -10,18 +10,27 @@ rosserial 是 ROS 1 通訊方案，沒有 ROS 2 版本，所以主機端使用 R
 
 ## 硬體與接線
 
-先切斷馬達電源，完成接線及設定核對後再上電。預設板型為 Nucleo-F446RE，以下腳位是可編譯的範例，並非已確認的實車接線。
+先切斷馬達電源，完成接線及設定核對後再上電。預設板型為 Nucleo-G431RB（STM32G431RB、Cortex-M4F、170 MHz），以下為預設腳位規劃，並非已確認的實車接線。
 
-| 接點 | Nucleo Arduino 排針預設 | 接法／注意 |
-| --- | --- | --- |
-| 左 PWM／右 PWM | D3（PB3）／D5（PB4） | 接驅動器 PWM；L298N 接 ENA／ENB，移除常開 EN 跳線 |
-| 左 DIR／右 DIR | D4（PB5）／D7（PA8） | PWM+DIR 的方向；雙方向輸入驅動器接各側 IN1 |
-| 左 DIR2／右 DIR2 | D8（PA9）／D9（PC7） | `DRIVER_L298N` 模式各側 IN2；預設模式不使用 |
-| 左 encoder A／B | D2（PA10）／D10（PB6） | 選用，預設關閉；輸入須符合 3.3 V 電位 |
-| 右 encoder A／B | D11（PA7）／D12（PA6） | 選用，預設關閉；A 的上升及下降緣計數 |
-| 狀態 LED | LED_BUILTIN（D13／PA5） | 每次 heartbeat 翻轉，100 ms 一次，完整閃爍週期 200 ms |
-| PC USB | 板上 ST-Link USB 插座 | ST-Link 虛擬 COM 經 USART2 PA2／PA3；保留 D0／D1，不接馬達 |
-| GND | STM32 GND ↔ 驅動器 GND | 必須共地；馬達由獨立合適電源供電 |
+板型假設：使用者表示寒假用 STM32G431，此處假設為 Nucleo-G431RB；若是其他 G431 板（例如自製板或 G431KB），須重新核對腳位、序列埠與 platformio.ini 的 board。
+
+| 接點 | Nucleo Arduino 排針預設 | MCU 腳位 | 計時器／中斷 | 接法／注意 |
+| --- | --- | --- | --- | --- |
+| 左 PWM | D6 | PB10 | TIM2_CH3 PWM | 接驅動器 PWM；L298N 接 ENA，移除常開 EN 跳線 |
+| 右 PWM | D9 | PC7 | TIM3_CH2 PWM | 接驅動器 PWM；L298N 接 ENB，移除常開 EN 跳線 |
+| 左 DIR／IN1 | D4 | PB5 | GPIO | PWM+DIR 的方向；雙方向輸入驅動器接左側 IN1 |
+| 右 DIR／IN1 | D7 | PA8 | GPIO | PWM+DIR 的方向；雙方向輸入驅動器接右側 IN1 |
+| 左 DIR2／IN2 | D8 | PA9 | GPIO | 僅 IN1／IN2 模式使用；預設模式不使用 |
+| 右 DIR2／IN2 | D3 | PB3 | GPIO | 僅 IN1／IN2 模式使用；PB3 也用於 SWO，本測試使用不含追蹤的 SWD |
+| 左 encoder A | D2 | PA10 | EXTI10 | 選用，預設關閉；A 的上升及下降緣計數 |
+| 左 encoder B | D12 | PA6 | GPIO 輸入 | 選用，預設關閉；輸入須符合 3.3 V 電位 |
+| 右 encoder A | D11 | PA7 | EXTI7 | 選用，預設關閉；A 的上升及下降緣計數 |
+| 右 encoder B | D5 | PB4 | GPIO 輸入 | 選用，預設關閉；Arduino 核心於開機時停用 UCPD 無電池下拉 |
+| 狀態 LED | LED_BUILTIN（D13） | PA5 | GPIO、使用者 LED LD2 | 每次 heartbeat 翻轉，100 ms 一次，完整閃爍週期 200 ms |
+| PC USB | 板上 ST-LINK USB 插座 | PA2／PA3 | LPUART1 | Arduino `Serial` 經 ST-LINK VCP，主機通常為 `/dev/ttyACM0`；保留這兩腳，不接馬達 |
+| GND | STM32 GND ↔ 驅動器 GND | GND | — | 必須共地；馬達由獨立合適電源供電 |
+
+左右 PWM 分別使用 TIM2／TIM3，頻率均為 20 kHz。PA13／PA14 保留給 SWD；D14／D15（PB9／PB8）保留給未來的 I2C IMU（BNO085），PB8 在 G4 也用於 BOOT0。D0／D1（PC5／PC4、USART1）保留備用，不是此板的 `Serial` 路徑。
 
 `DRIVER_PWM_DIR` 適用真正的 PWM+DIR 輸入。**裸 TB6612 模組有 AIN1／AIN2、BIN1／BIN2、PWMA／PWMB**，應選 `DRIVER_L298N` 雙方向輸入模式，並依模組規格將 STBY 接到明確有效的邏輯電位；不能只接一根方向線。L298N 也使用這個模式，且須確認模組 EN、邏輯供電及電壓降。零 PWM 的實際停止／滑行行為取決於驅動器，程式不提供主動煞車。
 
@@ -29,7 +38,7 @@ rosserial 是 ROS 1 通訊方案，沒有 ROS 2 版本，所以主機端使用 R
 
 唯一硬體設定檔是 [firmware/include/robot_config.h](firmware/include/robot_config.h)，每個佔位均標有 `// TODO(hardware):`。請核對全部項目：
 
-- 板型與 ST-Link VCP 路徑；板型選擇須同步修改 `platformio.ini`。預設 `Serial` 使用 USART2，不是 MCU 原生 USB CDC。
+- 板型與 ST-Link VCP 路徑；板型選擇須同步修改 `platformio.ini`。預設 `Serial` 使用 LPUART1（PA2／PA3，經 ST-LINK VCP），不是 MCU 原生 USB CDC。
 - `DRIVER_TYPE`：PWM+DIR 或 IN1／IN2+EN；驅動器使能接法。
 - `LEFT_PWM_PIN`、`RIGHT_PWM_PIN`、`LEFT_DIR_PIN`、`RIGHT_DIR_PIN`、`LEFT_DIR2_PIN`、`RIGHT_DIR2_PIN`：依接線填寫；PWM 必須支援計時器。
 - `USE_ENCODERS`（預設 0）、四個 `*_ENCODER_*_PIN`、`ENCODER_TICKS_PER_REV`：含減速比、每個輸出輪轉一圈的 A CHANGE 計數（x2）。
@@ -56,7 +65,7 @@ pio run
 pio run -t upload
 ```
 
-預設環境 `nucleo_f446re`，以 ST-Link 燒錄；必要時安裝 PlatformIO 的 Linux udev 規則後重新插拔。`platformio.ini` 有註解掉的 F407 替代環境；它只是起點，須重新核對排針、PWM、LED、序列埠路徑與 ST-Link 接線，並明確用 `pio run -e black_f407ve` 選用。F407 板子的 USB 不保證提供 ST-Link VCP。
+預設環境 `nucleo_g431rb`，以 ST-Link 燒錄；必要時安裝 PlatformIO 的 Linux udev 規則後重新插拔。`platformio.ini` 有註解掉的 F407 替代環境；它只是起點，須重新核對排針、PWM、LED、序列埠路徑與 ST-Link 接線，並明確用 `pio run -e black_f407ve` 選用。F407 板子的 USB 不保證提供 ST-Link VCP。
 
 ## 啟動主機端
 
@@ -130,7 +139,7 @@ source /opt/ros/noetic/setup.bash
 | --- | --- |
 | 沒有 `/dev/ttyACM0`／埠錯誤 | 核對 ST-Link 插座、可傳資料 USB 線及 Linux 的 `ls -l /dev/ttyACM*`；明確修改 `SERIAL_DEVICE` 後重建容器，不自動掃描開埠 |
 | Permission denied | 查看 `ls -l /dev/ttyACM0`；Linux 使用者可執行 `sudo usermod -aG dialout "$USER"`，登出再登入；燒錄另需 ST-Link udev 規則。不要以 privileged 解決 |
-| Unable to sync with device | 核對韌體已燒錄、板型、ST-Link VCP 的 USART2 接線／跳線、兩端 baud 相同、沒有其他程序佔埠；啟動容器後可按板上 reset |
+| Unable to sync with device | 核對韌體已燒錄、板型、ST-LINK VCP 的 LPUART1（PA2／PA3）接線／跳線、兩端 baud 相同、沒有其他程序佔埠；啟動容器後可按板上 reset |
 | lost sync／雜亂資料 | 不要向 rosserial 的 Serial 寫入除協定外的除錯文字；檢查供電、共地、馬達雜訊與 USB 線；先關閉馬達電源重測 heartbeat |
 | 方向相反 | 斷開馬達電源後改對應 `*_MOTOR_INVERT` 再燒錄；不要靠混亂的正負速度補償接線 |
 | 馬達不轉或發熱 | 確認 EN／STBY、L298N 跳線、獨立電源與驅動能力；核對 `DRIVER_TYPE`、PWM 腳位與 `PWM_FREQUENCY_HZ` 規格，20 kHz 未必適合每款驅動器；謹慎校正最小 duty |
