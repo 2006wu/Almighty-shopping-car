@@ -91,3 +91,5 @@ header stamp 與 frame 由 PC 收到有效訊框時重建；這不是 MCU 時鐘
 ## Linux XRCE-DDS 子集
 
 `firmware/sim_client` 以 C／rclc 經 UDP agent 實作 command、兩向 heartbeat、wheel、status；常數由本契約與 description xacro 產生。沒有 encoder、IMU、MCU 按鈕鎖定／reset 或 `/mcu/estop`，因此不宣稱符合完整板端契約。只用於獨立、壁鐘時間的 `dev.sh comm-e2e-up`／`comm-e2e-check`，不能接入實車或當作 Gazebo 底盤控制。完整測試與限制見 [micro-ROS 入門](MICROROS_GUIDE.md)。
+
+寒假另有明確選用的 [rosserial 底盤測試](../../hardware/winter_rosserial/README.md)（ROS 1、兩側驅動、500 ms 逾時、無 PC heartbeat、允許倒車、不經 cmd_vel_watchdog），不屬於上述完整介面。

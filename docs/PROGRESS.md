@@ -1977,3 +1977,28 @@ c627756（Codex t77）修正：LOS 與 map TF 分離、`map_invalid_grace` 0.5 s
 | Mac arm64 原生完整建置 | 待驗證 |
 | README 快速開始與單元測試 | 待驗證 |
 | 帶路模擬與文件索引 | 待驗證 |
+
+## 2026-10-30：寒假實機測試：rosserial 分支
+
+### 本次完成
+
+- 在 `hw/winter-rosserial` 新增獨立的 `hardware/winter_rosserial/`：Nucleo-F446RE／Arduino PlatformIO 韌體、集中硬體佔位設定、ROS 1 Noetic Dockerfile／單一串列裝置 Compose／launch，以及繁體中文接線與測試流程。
+- 韌體直接訂閱 `/cmd_vel`，含有限值檢查、底盤速度限幅、差速換算與輪速同比縮放、PWM／方向輸出、500 ms 命令逾時與 rosserial 失聯零輸出；提供 heartbeat、輪命令回報、READY／CMD_TIMEOUT 狀態及選用 encoder 中斷累計。
+- 文件明列兩側、允許倒車、無 PC heartbeat、不經 cmd_vel_watchdog 等與完整四輪 ROS 2 契約的差異；補上硬體索引與 MCU 介面連結。既有 ros2_ws、Docker 設定、scripts、tests 與 third_party 均未修改。
+
+### 已知限制與下一步
+
+- 只有建置與離線檢查；未在此沙盒執行 Docker，未驗證 Noetic 容器啟動、實體串列、燒錄、PWM 波形、encoder、馬達或急停。須由使用者確認板型／驅動器／全部 TODO，先架空輪子，再依文件驗證逾時、拔線及慢速落地。
+- PWM 是開迴路映射，沒有輪速回授控制、加速度限制或軟體急停鎖定；滿 PWM 輪速需實測校正。MCU 斷電與重啟期間須由驅動器硬體保持停用，另設馬達電源切斷開關。
+- 審查者在全新 `.pio` 下以 PlatformIO 6.2.0 線上取得 ST STM32 平台與 Rosserial Arduino Library 0.9.1 後編譯成功；F407 替代環境、amd64／arm64 原生主機與 Noetic 容器映像均待驗收。
+- 曾嘗試以暫存 pytest／GPIO 模擬程式執行韌體安全邏輯，但環境無原生 g++，未能執行；不能將編譯成功或既有 pytest 回歸視為新韌體的執行期安全驗證。
+
+### 驗證
+
+| 項目 | 自行檢查結果 | 審查驗證 |
+| --- | --- | --- |
+| 預設 Nucleo-F446RE 韌體編譯 | pio run 成功；RAM 2736 bytes、Flash 27704 bytes | 待驗證 |
+| L298N 模式＋encoder 選用編譯 | 在 /tmp 複本啟用後建置成功；RAM 2820 bytes、Flash 29416 bytes；版控預設維持 PWM+DIR／encoder 關閉 | 待驗證 |
+| 既有 pytest 回歸 | 1284 passed、1 skipped、1 個既有 xacro DeprecationWarning | 待驗證 |
+| 新增 Compose YAML／launch XML、文件相對連結與差異空白 | 離線解析／檢查通過；非 Docker Compose 執行驗收 | 待驗證 |
+| 容器／燒錄／實機通訊與馬達停止期限 | 尚未執行 | 待驗證 |

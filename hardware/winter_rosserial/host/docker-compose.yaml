@@ -1,0 +1,14 @@
+services:
+  rosserial:
+    build: .
+    network_mode: host
+    environment:
+      ROS_MASTER_URI: http://localhost:11311
+      ROS_IP: 127.0.0.1
+    devices:
+      - "${SERIAL_DEVICE:-/dev/ttyACM0}:${SERIAL_DEVICE:-/dev/ttyACM0}"
+    command:
+      - roslaunch
+      - /winter/launch/winter_rosserial.launch
+      - port:=${SERIAL_DEVICE:-/dev/ttyACM0}
+      - baud:=${SERIAL_BAUD:-115200}
