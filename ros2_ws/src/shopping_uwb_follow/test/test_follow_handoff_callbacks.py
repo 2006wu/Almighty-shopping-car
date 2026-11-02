@@ -14,6 +14,7 @@ import pytest
 
 from shopping_uwb_follow.estimator import TargetVelocityEstimator
 from shopping_uwb_follow.follow_controller import FollowController, NavigationGuard, rotation_scan_clear, side_clearance, side_speed_factor
+from shopping_uwb_follow.follow_controller import approach_cap, radial_velocity
 from shopping_uwb_follow.follow_handoff import GoalBook, VelocityDrain, HandoffSupervisor
 
 
@@ -34,6 +35,7 @@ def node_class():
     namespace = dict(Time=type('Time', (), {'from_msg': staticmethod(lambda stamp: stamp)}), TransformException=RuntimeError,
                      planar_pose=lambda transform: transform.pose, math=math, json=json, rotation_scan_clear=rotation_scan_clear,
                      side_clearance=side_clearance,
+                     approach_cap=approach_cap, radial_velocity=radial_velocity,
                      side_speed_factor=side_speed_factor, seconds=lambda node: node.now,
                      Twist=lambda: NS(linear=NS(x=0), angular=NS(z=0)),
                      String=lambda **kwargs: NS(**kwargs),
@@ -956,3 +958,53 @@ def test_clear_guard_cannot_bypass_constrained_absolute_cap():
         output = node.publisher.publish.call_args.args[0]
         assert output.linear.x <= .5
     assert output.linear.x == pytest.approx(.5)
+
+
+@pytest.mark.parametrize('guard_state', ['CLEAR', 'SLOW'])
+@pytest.mark.parametrize('distance,velocity,expected', [
+    (1.5, -.35, 0), (1.7, -.35, 0), (2., -.35, .185),
+    (1.7, 0., .2), (1.7, .35, .2), (3., .35, .5)])
+def test_nav_relay_caps_approach_and_standoff_without_changing_angular(
+        guard_state, distance, velocity, expected):
+    node = make_node()
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.
+    node.tick()
+    node.goal_response(completed(Mock(accepted=True)), node.goals.generation)
+    node.now = node.target_time = node.scan_time = 1.05
+    node.guard_state, node.guard_time = guard_state, node.now
+    node.obstacle = math.inf
+    node.target = (distance, 0.)
+    node.target_velocity = Mock(return_value=(velocity, 0.))
+    node.nav_guard.v, node.nav_guard.w = .5, .1
+    node.on_cmd_vel(NS(linear=NS(x=.5), angular=NS(z=.1)))
+    node.tick()
+    output = node.publisher.publish.call_args.args[0]
+    assert node.supervisor.mode == 'NAV2'
+    assert output.linear.x == pytest.approx(expected)
+    assert node.nav_guard.v == pytest.approx(expected)
+    assert output.angular.z == pytest.approx(.1)
+
+
+@pytest.mark.parametrize('guard_state,guard_age', [('CLEAR', .5), ('STALE', 0.), ('STOP', 0.)])
+def test_nav_relay_ignores_approach_estimate_without_fresh_clear_or_slow_guard(guard_state, guard_age):
+    node = make_node()
+    node.tick()
+    node.now = node.target_time = node.scan_time = 1.
+    node.tick()
+    node.goal_response(completed(Mock(accepted=True)), node.goals.generation)
+    node.now = node.target_time = node.scan_time = 1.05
+    node.guard_state, node.guard_time = guard_state, node.now-guard_age
+    node.obstacle = math.inf
+    node.target = (1.7, 0.)
+    node.target_velocity = Mock(return_value=(-.35, 0.))
+    node.nav_guard.v, node.nav_guard.w = .5, .1
+    node.on_cmd_vel(NS(linear=NS(x=.5), angular=NS(z=.1)))
+    node.tick()
+    node.target_velocity.assert_not_called()
+    output = node.publisher.publish.call_args.args[0]
+    if guard_age == .5:
+        assert output.linear.x == pytest.approx(.2)
+        assert output.angular.z == pytest.approx(.1)
+    else:
+        assert output.linear.x == output.angular.z == 0

@@ -85,10 +85,10 @@ def test_constrained_area_drops_headway_and_caps_speed():
     for _ in range(100):
         v, _, _, _ = control.step((1.4, 0), 0, math.inf, .05, target_velocity=(.3, 0),
                                   feedforward_enabled=False, clearance=.3)
-    assert v == pytest.approx(1.4-1.2)
+    assert v == 0  # Inside the constrained standoff of 1.5 m.
     for _ in range(100):
         v, _, _, _ = control.step((1.4, 0), 0, math.inf, .05, target_velocity=(1, 0), clearance=.3)
-    assert v == pytest.approx(.5)
+    assert v == 0  # Receding feedforward cannot override constrained standoff.
 
 
 @pytest.mark.parametrize('clearance,valid,los,expected', [

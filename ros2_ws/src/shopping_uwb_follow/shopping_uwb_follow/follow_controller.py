@@ -2,6 +2,21 @@ import math
 from dataclasses import dataclass
 
 
+def radial_velocity(target, target_velocity):
+    """Project absolute base_link target velocity onto the cart-to-person ray."""
+    if (target is None or target_velocity is None or len(target_velocity) != 2
+            or not all(math.isfinite(v) for v in (*target, *target_velocity))):
+        return 0.0
+    distance = math.hypot(*target)
+    return sum(t/distance*v for t, v in zip(target, target_velocity)) if distance > 0 else 0.0
+
+
+def approach_cap(distance, follow_distance_eff, radial, kp_distance, velocity_feedforward):
+    """Limit forward motion by separation error and approaching target velocity."""
+    return max(0.0, kp_distance*(distance-follow_distance_eff)
+               + velocity_feedforward*min(0.0, radial))
+
+
 def front_obstacle_distance(ranges, angle_min, angle_increment, sector=math.pi/3,
                             range_min=0.0, range_max=float('inf'), exclude=None):
     """Return front clearance; NaN means unavailable, +inf means clear.
@@ -56,6 +71,8 @@ def side_speed_factor(clearance, slow=0.45, free=0.9, minimum=0.4):
 @dataclass
 class ControllerParams:
     follow_distance: float = 1.2
+    constrained_extra_distance: float = 0.3
+    approach_speed_threshold: float = 0.1
     follow_time_headway: float = 0.4
     braking_reaction: float = 0.25
     braking_deceleration: float = 1.2
@@ -132,6 +149,13 @@ class FollowController:
             cap = min(cap, p.near_person_max_linear)
         return cap
 
+    def effective_follow_distance(self, clearance=math.nan, scan_valid=True, los_clear=True,
+                                  forward_velocity=0.0):
+        """Share constrained standoff and open-area time headway with the relay."""
+        if self.open_area(clearance, scan_valid, los_clear):
+            return self.p.follow_distance+self.p.follow_time_headway*max(0.0, forward_velocity)
+        return self.p.follow_distance+self.p.constrained_extra_distance
+
     def step(self, target, age, obstacle, dt, enabled=True, speed_factor=1.0,
              target_velocity=(0.0, 0.0), rotation_clear=False, velocity_age=0.0,
              feedforward_enabled=True, clearance=math.nan, scan_valid=True, los_clear=True):
@@ -184,18 +208,23 @@ class FollowController:
         velocity_valid = (target_velocity is not None and len(target_velocity) == 2
                           and math.isfinite(velocity_age) and 0 <= velocity_age <= p.lost_timeout
                           and all(math.isfinite(v) for v in target_velocity))
-        # Near shelves, crowds or with uncertain LOS drop the time headway so the
-        # robot stays close enough not to lose the person around shelf corners.
-        headway = p.follow_time_headway if self.open_area(clearance, scan_valid, los_clear) else 0.0
+        # Constrained areas use extra standoff instead of time headway.
         estimated_forward = target_velocity[0] if velocity_valid else 0.0
-        effective_distance = p.follow_distance+headway*max(0.0, estimated_forward)
+        effective_distance = self.effective_follow_distance(
+            clearance, scan_valid, los_clear, estimated_forward)
         error = distance-effective_distance
         if abs(error) <= p.distance_hysteresis_enter:
             self.holding_distance = True
         elif abs(error) >= p.distance_hysteresis_exit:
             self.holding_distance = False
         correction = 0.0 if self.holding_distance else p.kp_distance*error
-        forward = estimated_forward if feedforward_enabled and distance >= p.follow_distance else 0.0
+        radial = radial_velocity(target, target_velocity) if velocity_valid else 0.0
+        forward = (estimated_forward if feedforward_enabled and distance >= p.follow_distance
+                   and self.open_area(clearance, scan_valid, los_clear) else 0.0)
+        # Approaching motion must reduce demand even when receding feedforward
+        # is disabled (e.g. a SLOW guard or constrained aisle).
+        if radial < -p.approach_speed_threshold:
+            forward = radial
         demand = max(0.0, p.velocity_feedforward*forward+correction)
         absolute_cap = self.linear_cap(min(obstacle, distance), clearance, scan_valid, los_clear)
         cap = min(absolute_cap, p.max_linear*max(0.0, min(1.0, speed_factor)))
@@ -239,7 +268,7 @@ class FollowController:
         # Keep turning toward the person (as develop does) so the cart is not left
         # facing a shelf when the person walks past; the TOO_CLOSE latch at
         # stop_distance+too_close_margin still zeroes both axes.
-        if distance < p.follow_distance:
+        if distance < self.effective_follow_distance(clearance, scan_valid, los_clear):
             self.v = 0.0
         return self.v, self.w, state, reason
 

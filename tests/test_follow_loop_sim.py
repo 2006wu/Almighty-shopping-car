@@ -193,7 +193,7 @@ def test_stale_velocity_cannot_add_feedforward(velocity_age):
     controller = FollowController()
     for _ in range(100):
         v, _, _, _ = controller.step((1.5, 0), 0, math.inf, .05,
-                                    target_velocity=(1.2, 0), velocity_age=velocity_age)
+                                    target_velocity=(1.2, 0), velocity_age=velocity_age, clearance=math.inf)
     assert v == pytest.approx(.3)
 
 
@@ -201,11 +201,11 @@ def test_velocity_projection_and_inside_follow_distance_stop():
     controller = FollowController()
     for _ in range(100):
         v, _, _, _ = controller.step((1.2, .2), 0, math.inf, .05,
-                                    target_velocity=(0, 1.2))
+                                    target_velocity=(0, 1.2), clearance=math.inf)
     distance = math.hypot(1.2, .2)
     assert v == pytest.approx((distance-1.2)*1.2/distance)
     controller.v = 1.2
-    assert controller.step((1.19, 0), 0, math.inf, .05, target_velocity=(1.5, 0))[0] == 0
+    assert controller.step((1.19, 0), 0, math.inf, .05, target_velocity=(1.5, 0), clearance=math.inf)[0] == 0
 
 
 def test_estimator_read_rejects_stale_invalid_and_rotates_current_heading():

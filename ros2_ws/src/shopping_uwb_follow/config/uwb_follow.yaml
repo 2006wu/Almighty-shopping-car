@@ -11,6 +11,10 @@
     seed: 42
     lost_timeout: 0.5
     follow_distance: 1.2
+    # Add standoff near shelves or with uncertain scan/LOS; omit receding feedforward.
+    constrained_extra_distance: 0.3
+    # Apply radial approach braking above this speed, including under a SLOW guard.
+    approach_speed_threshold: 0.1
     follow_time_headway: 0.4
     # Keep these consistent with ObstacleGuard; re-measure on real hardware.
     braking_reaction: 0.25
