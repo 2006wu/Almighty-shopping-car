@@ -367,6 +367,14 @@ class FollowNode(Node):
                            GoalStatus.STATUS_CANCELED: 'canceled'}.get(status, 'failed')
         self.drain.terminal(seconds(self))
 
+    def escape_odom_xy(self):
+        try:
+            t = self.tf_buffer.lookup_transform('odom', 'base_link', Time()).transform.translation
+            xy = (float(t.x), float(t.y))
+        except Exception:  # TF unavailable or test double: use the commanded integral.
+            return None
+        return xy if all(math.isfinite(v) for v in xy) else None
+
     def reset_rotation_escape(self):
         """Reset an episode; only a clear disk releases an exhausted budget."""
         self.escape_distance = self.escape_v = 0.0
@@ -436,11 +444,19 @@ class FollowNode(Node):
                 self.escape_v = min(getattr(self, 'rotation_escape_speed', 0.15), p.max_linear,
                                     p.max_linear if speed_cap is None else speed_cap,
                                     self.escape_v+p.max_linear_accel*min(dt, 0.2), remaining/dt)
-                self.escape_distance += self.escape_v*dt
-                if self.escape_distance >= getattr(self, 'rotation_escape_max_distance', 0.5)-1e-12:
-                    self.escape_exhausted = True
                 if not was_active:
                     self.escape_started = now
+                    self.escape_origin = self.escape_odom_xy()
+                # The guard scales the creep beside a shelf, so budget the travel
+                # actually made (odom), falling back to the commanded integral.
+                origin, here = getattr(self, 'escape_origin', None), self.escape_odom_xy()
+                if origin is not None and here is not None:
+                    self.escape_distance = math.hypot(here[0]-origin[0], here[1]-origin[1])
+                else:
+                    self.escape_distance += self.escape_v*dt
+                if (self.escape_distance >= getattr(self, 'rotation_escape_max_distance', 0.5)-1e-12
+                        or now-self.escape_started > getattr(self, 'rotation_escape_timeout', 12.0)):
+                    self.escape_exhausted = True
                 self.escape_active = True
                 return (self.escape_v, 0.0), True
             self.escape_exhausted = True

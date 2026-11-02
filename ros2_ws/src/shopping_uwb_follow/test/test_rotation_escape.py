@@ -277,3 +277,27 @@ def test_parallel_shelf_beside_cart_does_not_escape():
 def test_converging_shelf_ahead_does_not_escape():
     scan = wall_scan(0.45, -0.25)
     assert not rotation_escape_ok(*scan_args(scan, (-0.18, 0, 0)), 3.0, 1.15)
+
+
+@pytest.mark.parametrize('mode', ['DIRECT', 'NAV2'])
+def test_budget_uses_odom_travel_when_guard_slows_creep(mode):
+    node = escape_node(mode)
+    position = [0.0]
+    node.escape_odom_xy = lambda: (position[0], 0.0)
+    # Guard-scaled creep: 0.01 m per tick although 0.15 m/s is commanded.
+    for i in range(30):
+        assert tick(node, i*0.1)[0] > 0
+        position[0] += 0.01
+    assert node.escape_distance == pytest.approx(0.29)
+    assert not getattr(node, 'escape_exhausted', False)
+
+
+@pytest.mark.parametrize('mode', ['DIRECT', 'NAV2'])
+def test_escape_times_out_without_progress(mode):
+    node = escape_node(mode)
+    node.escape_odom_xy = lambda: (0.0, 0.0)
+    assert tick(node, 0)[0] > 0
+    assert tick(node, 6.0)[0] > 0
+    tick(node, 12.5)
+    assert node.escape_exhausted
+    assert tick(node, 12.6) == (0, 0)
