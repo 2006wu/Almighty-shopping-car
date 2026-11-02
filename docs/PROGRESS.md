@@ -2225,3 +2225,30 @@ t85（`bce1b07`）發現貨架情境回歸：fault-check 2/7、follow_turns 失�
 - follow_turns 根因線索：NAV2_HANDOFF 期間零命令 85/141 筆（develop 2/180），控制器報 Failed to make progress，代表 Nav2 有輸出但本節點未轉發。已加入 nav_cmd／safe／guard／pose 診斷欄位，下一輪可定位是哪個條件；RPP 跟隨速度與 develop 同為 0.5，不是主因。
 - 未完成：防護開啟的 AMCL 綁架輪、AMCL nav-check、診斷版 follow_turns 重跑，因主機約 20:55 重啟且 Docker 環境遺失而中斷。
 - 審查驗證：待驗證。
+
+## 2026-11-02：faster-follow 的 follow_turns（apt）回歸調查與旋轉脫困 WIP
+
+環境：盒子重開機後 Docker 消失，改用 download.docker.com 靜態版 29.9.2 與 compose v5.6.1，iptables 由 Debian 套件手動安裝（overlayfs 儲存驅動），重建 shopnav2 映像、Nav2 underlay 與工作區。`third_party/eurobot_nav2` 由本機另一個 worktree 的同一 commit（dd06303）還原，未提交刪除。
+
+結果（Fortress，supermarket map_server，apt Nav2）：
+
+| 編號 | 情境 | 結果 |
+| --- | --- | --- |
+| t95 | turnsapt 預設 | FAIL，平均距離 2.21 m（develop 1.33） |
+| t95 | AMCL map_server kidnap 關／開 + nav-check | 兩者皆 PASS（無錯誤到達）；nav-check 6/6 PASS。注意：AMCL 下兩次都沒有產生錯誤到達，測試無法區分防護是否生效 |
+| t97 | 跟隨交接改用 develop 的 velocity_smoother（0.5 m/s、±0.4） ×2 | FAIL 2.42／2.43，排除平滑器因素，已還原 |
+| t98 | 旋轉脫困 v1 ×2 | FAIL 2.43；第二次 straight PASS 1.97、turn FAIL 2.26，脫困未觸發 |
+| t100 | 脫困 v2（前進可清空旋轉圓才觸發）×2 | FAIL 2.23／2.30 |
+| t101 | 脫困 v3（以 odom 計算實際行程，12 s 逾時）×2 | FAIL 2.13／2.23 |
+
+發現：
+- 原本「RPP 0.8 vs 0.4」的假設不成立：`follow.launch.py` 在 develop 與本分支都把跟隨交接固定為 `rpp_desired_speed:=0.5`，0.4／0.8 只影響導引模式。
+- 實際卡死機制：人從車旁走過並往車後方離開後，車停在貨架側邊 0.45–0.49 m 處。Nav2 RPP（與 DIRECT）只要求原地旋轉，ObstacleGuard 對純旋轉要求半徑 hypot(0.30, 0.25)+0.10 = 0.49 m 的旋轉圓淨空；STOP 鎖定後，解除需要 0.49+0.05 遲滯 = 0.54 m。v=w=0 時 guard 回報 SLOW，跟隨節點又送旋轉，形成 STOP／SLOW 抖動，最長約 30 s 不動。跟隨節點自身的 rotation_clear 用 0.45 m，與 guard 不一致。
+- WIP 旋轉脫困（commits 8129657、76b17ca 與本次）：旋轉圓被側邊／後方回波擋住、前方淨空超過 1.15 m、且直行 ≤0.5 m 可淨空時，以 0.15 m/s 直行（guard 仍會檢查每個命令）。t100／t101 中有觸發，消除了部分卡死，但 follow_turns 仍 FAIL。剩餘 STOP 有兩類：(a) 旋轉圓 0.49 m 已淨空，但 guard 仍鎖在 STOP，因為解除需要 0.54 m；(b) 擋住的回波在前方，或直行無法淨空。
+- 本分支尚不可合併到 develop。
+
+下一步選項（待使用者決定）：
+1. 把脫困判斷半徑改成 guard 的解除半徑 0.54 m（處理 (a)，一行參數），再跑一次 turnsapt ×2。
+2. 讓 guard 對純旋轉的 STOP 解除不加遲滯，或把旋轉安全距離 0.10 m 降到約 0.05 m。這會降低全向避障裕度，依既定原則需使用者同意。
+3. 在跟隨模式降低靠近人時的速度與接近距離，避免車停到貨架旁。可能影響 1.0 m/s 開闊區跟隨的結果。
+4. 暫停這個方向，只把 develop 現有的 follow_turns 表現當基準。
