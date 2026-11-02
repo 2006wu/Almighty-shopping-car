@@ -610,9 +610,6 @@ class FollowNode(Node):
                     clearance, valid, self.client is None or los, target_velocity[0])
                 radial = (radial_velocity(self.target, target_velocity)
                           if math.isfinite(age) and 0 <= age <= p.lost_timeout else 0.0)
-                # Same approach threshold as DIRECT; slower drift is not braked.
-                if radial >= -p.approach_speed_threshold:
-                    radial = 0.0
                 commanded_v = min(commanded_v, approach_cap(
                     math.hypot(*self.target), effective_distance, radial,
                     p.kp_distance, p.velocity_feedforward))
