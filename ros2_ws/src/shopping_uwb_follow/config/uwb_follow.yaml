@@ -24,8 +24,9 @@
     obstacle_stop_rotate: true
     # Bounded forward escape when only rear returns block an in-place turn.
     rotation_escape_enabled: true
-    # Match ObstacleGuard: hypot(0.30, 0.25) + 0.10 m margin (~0.4905 m).
-    guard_rotation_radius: 0.4905
+    # Match the ObstacleGuard rotation STOP release: hypot(0.30, 0.25) + 0.10 margin
+    # + 0.05 hysteresis (~0.5405 m). Also used for the follow rotation_clear check.
+    guard_rotation_radius: 0.5405
     rotation_escape_speed: 0.15
     rotation_escape_max_distance: 0.5
     # Required raw front clearance is obstacle_stop_distance + escape distance.

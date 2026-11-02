@@ -50,7 +50,7 @@ class FollowNode(Node):
         self.nav_guard = NavigationGuard(params)
         self.rotation_clear = False
         self.rotation_escape_enabled = self.declare_parameter('rotation_escape_enabled', True).value
-        self.guard_rotation_radius = self.declare_parameter('guard_rotation_radius', 0.4905).value
+        self.guard_rotation_radius = self.declare_parameter('guard_rotation_radius', 0.5405).value
         self.rotation_escape_speed = self.declare_parameter('rotation_escape_speed', 0.15).value
         self.rotation_escape_max_distance = self.declare_parameter('rotation_escape_max_distance', 0.5).value
         if any(not math.isfinite(v) or v <= 0 for v in (
@@ -206,7 +206,7 @@ class FollowNode(Node):
         self.rotation_clear = rotation_scan_clear(
             self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
             self.scan.range_min, self.scan.range_max, laser,
-            max(0.4, math.hypot(0.30, 0.25), self.robot_half_width)+0.05)
+            max(getattr(self, 'guard_rotation_radius', 0.5405), self.robot_half_width+0.05))
         self.base_in_scan = laser
         return laser
 
@@ -397,7 +397,7 @@ class FollowNode(Node):
         laser = getattr(self, 'base_in_scan', None)
         scan_args = ((self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
                       self.scan.range_min, self.scan.range_max, laser,
-                      getattr(self, 'guard_rotation_radius', 0.4905))
+                      getattr(self, 'guard_rotation_radius', 0.5405))
                      if valid and laser is not None else None)
         disk_clear = scan_args is not None and rotation_scan_clear(*scan_args)
         if disk_clear:
