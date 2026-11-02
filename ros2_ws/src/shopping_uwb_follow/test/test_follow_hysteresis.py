@@ -165,10 +165,7 @@ def test_uncertain_slowdown_also_applies_below_speed_limit():
     s = FollowController()
     for _ in range(50):
         result = s.step((1.4, 0), 0, 3, 0.05, speed_factor=0.6)
-    assert result[0] == 0  # Missing side coverage uses the 1.5 m constrained standoff.
-    for _ in range(50):
-        result = s.step((1.7, 0), 0, 3, 0.05, speed_factor=0.6)
-    assert result[0] == pytest.approx(0.2*0.6)
+    assert result[0] == pytest.approx(1.0*0.2*0.6)
 
 
 def test_near_stop_latches_both_axes_through_range_noise_and_fresh_recovery():

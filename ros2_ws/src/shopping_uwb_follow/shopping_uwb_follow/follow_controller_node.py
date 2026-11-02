@@ -23,7 +23,6 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from .follow_controller import (
     FollowController, ControllerParams, NavigationGuard, rotation_scan_clear, rotation_escape_ok,
     front_obstacle_distance, side_clearance, side_speed_factor,
-    approach_cap, radial_velocity,
 )
 from .follow_handoff import (
     GoalBook, VelocityDrain, HandoffParams, HandoffSupervisor,
@@ -501,12 +500,11 @@ class FollowNode(Node):
             # Preserve the fallback slowdown when LOS is uncertain.
             factor *= p.los_uncertain_speed_factor
         follow_obstacle = self.person_masked_obstacle(obstacle) if valid else obstacle
-        target_velocity = (self.target_velocity(now) if guard_fresh
-                           and self.guard_state in ('CLEAR', 'SLOW') else (0.0, 0.0))
         v, w, state, reason = self.control.step(
             self.target, age, follow_obstacle, now-self.last_time, self.enabled, speed_factor=factor,
-            target_velocity=target_velocity,
-            # SLOW retains headway and approach braking, without receding feedforward.
+            target_velocity=(self.target_velocity(now) if guard_fresh
+                             and self.guard_state in ('CLEAR', 'SLOW') else (0.0, 0.0)),
+            # SLOW retains time headway but cannot add velocity feedforward.
             feedforward_enabled=(guard_fresh and self.guard_state == 'CLEAR'),
             velocity_age=age, clearance=clearance, scan_valid=valid,
             los_clear=(self.client is None or los),
@@ -605,14 +603,6 @@ class FollowNode(Node):
                 near_latched=self.control.near_latched)
             commanded_v = min(commanded_v, self.control.linear_cap(
                 obstacle, clearance, valid, self.client is None or los))
-            if self.target is not None:
-                effective_distance = self.control.effective_follow_distance(
-                    clearance, valid, self.client is None or los, target_velocity[0])
-                radial = (radial_velocity(self.target, target_velocity)
-                          if math.isfinite(age) and 0 <= age <= p.lost_timeout else 0.0)
-                commanded_v = min(commanded_v, approach_cap(
-                    math.hypot(*self.target), effective_distance, radial,
-                    p.kp_distance, p.velocity_feedforward))
             self.nav_guard.v = commanded_v
             # Relay the guarded Nav2 command on the higher-priority follow input.
             # Raw Nav2 must never bypass the front gate or command expiry.
