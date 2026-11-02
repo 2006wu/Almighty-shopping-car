@@ -21,7 +21,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 from .follow_controller import (
-    FollowController, ControllerParams, NavigationGuard, rotation_scan_clear,
+    FollowController, ControllerParams, NavigationGuard, rotation_scan_clear, rotation_escape_ok,
     front_obstacle_distance, side_clearance, side_speed_factor,
 )
 from .follow_handoff import (
@@ -49,6 +49,16 @@ class FollowNode(Node):
         self.velocity_estimator = TargetVelocityEstimator(timeout=params.lost_timeout)
         self.nav_guard = NavigationGuard(params)
         self.rotation_clear = False
+        self.rotation_escape_enabled = self.declare_parameter('rotation_escape_enabled', True).value
+        self.guard_rotation_radius = self.declare_parameter('guard_rotation_radius', 0.4905).value
+        self.rotation_escape_speed = self.declare_parameter('rotation_escape_speed', 0.15).value
+        self.rotation_escape_max_distance = self.declare_parameter('rotation_escape_max_distance', 0.5).value
+        if any(not math.isfinite(v) or v <= 0 for v in (
+                self.guard_rotation_radius, self.rotation_escape_speed, self.rotation_escape_max_distance)):
+            raise ValueError('Rotation escape parameters must be positive and finite')
+        self.escape_distance = self.escape_v = 0.0
+        self.escape_active = self.escape_exhausted = self.last_rotation_requested = False
+        self.escape_context = None
         self.monitor_odom = self.declare_parameter('monitor_odom', False).value
         self.odom_time = None
         if self.monitor_odom:
@@ -114,6 +124,8 @@ class FollowNode(Node):
         self.set_enabled(msg.data)
 
     def set_enabled(self, enabled):
+        if self.enabled != enabled:
+            self.reset_rotation_escape()
         self.enabled = enabled
         if not self.enabled:
             self.velocity_estimator.reset()
@@ -183,6 +195,7 @@ class FollowNode(Node):
     def update_rotation_clearance(self):
         """Check the swept disk without requiring map TF or a Nav2 server."""
         self.rotation_clear = False
+        self.base_in_scan = None
         if self.scan is None:
             return None
         try:
@@ -354,6 +367,89 @@ class FollowNode(Node):
                            GoalStatus.STATUS_CANCELED: 'canceled'}.get(status, 'failed')
         self.drain.terminal(seconds(self))
 
+    def reset_rotation_escape(self):
+        """Reset an episode; only a clear disk releases an exhausted budget."""
+        self.escape_distance = self.escape_v = 0.0
+        self.escape_active = self.last_rotation_requested = False
+
+    def rotation_escape_command(self, command, requested, eligible, mode, age, valid,
+                                obstacle, dt, guard_fresh, speed_cap=None):
+        """Override a turn with bounded forward travel; retain guard stop authority."""
+        # Partially constructed nodes must fail closed for this optional motion.
+        if not getattr(self, 'rotation_escape_enabled', False):
+            self.reset_rotation_escape()
+            self.escape_context = None
+            return command, False
+        p = self.control.p
+        was_active = getattr(self, 'escape_active', False)
+        target_valid = (self.target is not None and 0 <= age <= p.lost_timeout
+                        and all(math.isfinite(v) for v in self.target))
+        aligned = target_valid and abs(math.atan2(self.target[1], self.target[0])) <= p.rotate_to_target_release_angle
+        context = (mode, self.enabled, self.rotation_escape_enabled)
+        laser = getattr(self, 'base_in_scan', None)
+        scan_args = ((self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
+                      self.scan.range_min, self.scan.range_max, laser,
+                      getattr(self, 'guard_rotation_radius', 0.4905))
+                     if valid and laser is not None else None)
+        disk_clear = scan_args is not None and rotation_scan_clear(*scan_args)
+        if disk_clear:
+            self.escape_exhausted = False
+        if disk_clear or aligned or not target_valid or context != getattr(self, 'escape_context', None):
+            self.reset_rotation_escape()
+        self.escape_context = context
+        guard_stop = guard_fresh and getattr(self, 'guard_state', None) == 'STOP'
+        guard_stale = guard_fresh and getattr(self, 'guard_state', None) == 'STALE'
+        # STOP in response to forward escape must never be treated as the old
+        # rotation STOP. Latch it until the disk has been observed clear.
+        # The guard releases a rotation STOP only after its clear_time (0.3 s) and
+        # observes our command with latency, so a STOP right after the switch to
+        # forward is still the old rotation STOP. STALE always ends the episode.
+        started = getattr(self, 'escape_started', None)
+        now = seconds(self)
+        stopped_escape = was_active and (guard_stale or (
+            guard_stop and started is not None
+            and now-started > getattr(self, 'rotation_escape_stop_grace', 1.0)))
+        if stopped_escape:
+            self.escape_exhausted = True
+        pure_rotation = abs(command[0]) < 1e-3 and abs(command[1]) > 1e-3
+        requested_rotation = (requested is not None and abs(requested[0]) < 1e-3
+                              and abs(requested[1]) > 1e-3)
+        retry_rotation = (guard_stop and command == (0.0, 0.0)
+                          and getattr(self, 'last_rotation_requested', False) and requested_rotation)
+        self.last_rotation_requested = requested_rotation
+        can_escape = (self.rotation_escape_enabled and self.enabled and eligible
+                      and target_valid and not aligned and not self.control.near_latched
+                      and not guard_stale and not stopped_escape
+                      and math.isfinite(dt) and dt > 0
+                      and (pure_rotation or retry_rotation)
+                      and scan_args is not None
+                      and rotation_escape_ok(*scan_args, obstacle,
+                                             p.obstacle_stop_distance+getattr(self, 'rotation_escape_max_distance', 0.5),
+                                             getattr(self, 'rotation_escape_max_distance', 0.5)))
+        self.escape_debug = (f' esc=[elig={int(bool(eligible))} tgt={int(target_valid)} al={int(bool(aligned))}'
+                             f' pure={int(pure_rotation)} retry={int(bool(retry_rotation))} scan={int(scan_args is not None)}'
+                             f' disk={int(bool(disk_clear))} ok={int(bool(scan_args is not None and rotation_escape_ok(*scan_args, obstacle, p.obstacle_stop_distance+getattr(self, "rotation_escape_max_distance", 0.5), getattr(self, "rotation_escape_max_distance", 0.5))))}'
+                             f' exh={int(bool(getattr(self, "escape_exhausted", False)))} stop={int(bool(stopped_escape))}]')
+        if can_escape and not getattr(self, 'escape_exhausted', False):
+            remaining = getattr(self, 'rotation_escape_max_distance', 0.5)-self.escape_distance
+            if remaining > 1e-12:
+                self.escape_v = min(getattr(self, 'rotation_escape_speed', 0.15), p.max_linear,
+                                    p.max_linear if speed_cap is None else speed_cap,
+                                    self.escape_v+p.max_linear_accel*min(dt, 0.2), remaining/dt)
+                self.escape_distance += self.escape_v*dt
+                if self.escape_distance >= getattr(self, 'rotation_escape_max_distance', 0.5)-1e-12:
+                    self.escape_exhausted = True
+                if not was_active:
+                    self.escape_started = now
+                self.escape_active = True
+                return (self.escape_v, 0.0), True
+            self.escape_exhausted = True
+        self.escape_v = 0.0
+        self.escape_active = False
+        if stopped_escape or (can_escape and getattr(self, 'escape_exhausted', False)):
+            return (0.0, 0.0), False
+        return command, False
+
     def tick(self):
         now = seconds(self)
         age = now-self.target_time if self.target_time is not None else float('inf')
@@ -406,6 +502,7 @@ class FollowNode(Node):
             self.diagnose(now, 'IDLE', 0.0, 0.0, 'Disabled', factor, obstacle, age)
             self.state.publish(String(data='IDLE: Disabled'))
             return
+        direct_requested = (v, w)
         if guard_fresh and self.guard_state in ('STOP', 'STALE'):
             v = w = 0.0
             self.control.v = self.control.w = 0.0
@@ -456,6 +553,8 @@ class FollowNode(Node):
             self.cancel_goal()
         waiting = self.busy() or not self.drain.ready(now)
         commanded_v = commanded_w = 0.0
+        escape_eligible = False
+        requested = None
         if decision.direct_publish and not waiting:
             self.nav_guard.step(None, obstacle, False, dt)
             self.drain.reset()
@@ -463,8 +562,8 @@ class FollowNode(Node):
             if not self.first_direct:
                 cmd.linear.x, cmd.angular.z = v, w
             commanded_v, commanded_w = cmd.linear.x, cmd.angular.z
-            self.publisher.publish(cmd)
-            self.last_own_publish = seconds(self)
+            requested = direct_requested
+            escape_eligible = not self.first_direct and not decision.blocked_wait
             if self.first_direct:
                 self.control.v = self.control.w = 0.0
             self.first_direct = False
@@ -477,12 +576,14 @@ class FollowNode(Node):
                     and math.hypot(*self.target) >= p.follow_distance
                     and state not in ('LOST', 'TOO_CLOSE', 'IDLE')
                     and decision.mode == 'NAV2' and self.nav_status == 'active'
-                    and pose is not None and not self.drain.active
-                    and not (guard_fresh and self.guard_state in ('STOP', 'STALE')))
+                    and pose is not None and not self.drain.active)
+            escape_eligible = safe
+            safe = safe and not (guard_fresh and self.guard_state in ('STOP', 'STALE'))
             self.nav_debug = (f' nav_cmd={"none" if nav_command is None else f"{nav_command[0]:.2f},{nav_command[1]:.2f}"}'
                               f' safe={int(bool(safe))} guard={getattr(self, "guard_state", None)} pose={int(pose is not None)}')
             commanded_v, commanded_w = self.nav_guard.step(
-                nav_command, obstacle, self.rotation_clear, dt, safe=safe,
+                nav_command, obstacle, self.rotation_clear, dt,
+                safe=safe,
                 near_latched=self.control.near_latched)
             commanded_v = min(commanded_v, self.control.linear_cap(
                 obstacle, clearance, valid, self.client is None or los))
@@ -491,9 +592,18 @@ class FollowNode(Node):
             # Raw Nav2 must never bypass the front gate or command expiry.
             cmd = Twist()
             cmd.linear.x, cmd.angular.z = commanded_v, commanded_w
-            self.publisher.publish(cmd)
-            self.last_own_publish = seconds(self)
-        if decision.mode == 'NAV2' and valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE'):
+            requested = nav_command if escape_eligible else None
+        (commanded_v, commanded_w), escaping = self.rotation_escape_command(
+            (commanded_v, commanded_w), requested,
+            escape_eligible and state not in ('LOST', 'TOO_CLOSE', 'IDLE'),
+            decision.mode, age, valid, obstacle, dt, guard_fresh,
+            speed_cap=self.control.linear_cap(obstacle, clearance, valid, self.client is None or los))
+        cmd.linear.x, cmd.angular.z = commanded_v, commanded_w
+        self.publisher.publish(cmd)
+        self.last_own_publish = seconds(self)
+        if escaping:
+            state, reason = 'ROTATION_ESCAPE', 'Rotation disk blocked behind; creeping forward'
+        elif decision.mode == 'NAV2' and valid and state not in ('LOST', 'TOO_CLOSE', 'IDLE'):
             state = 'NAV2_HANDOFF'
             reason = (decision.reason if obstacle > p.obstacle_stop_distance else
                       'Forward blocked; rotation allowed' if self.rotation_clear else
@@ -519,7 +629,8 @@ class FollowNode(Node):
             f'los_blocked={self.supervisor.los.blocked} drain={self.drain.active} '
             f'rotation_clear={self.rotation_clear} near_latched={self.control.near_latched} '
             f'near_clear_time={self.control.near_clear_time:.3f}s limit={reason}'
-            + (getattr(self, 'nav_debug', '') if self.supervisor.mode == 'NAV2' else ''))
+            + (getattr(self, 'nav_debug', '') if self.supervisor.mode == 'NAV2' else '')
+            + getattr(self, 'escape_debug', ''))
 
     def stop_before_shutdown(self):
         # SIGINT may already have invalidated the context. The independent

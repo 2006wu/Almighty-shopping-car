@@ -252,14 +252,8 @@ def rotation_scan_clear(ranges, angle_min, angle_increment, range_min, range_max
     to return endpoints: an occluder inside the disk cannot establish free space.
     The scan origin must lie inside the disk. Missing/partial coverage fails shut.
     """
-    from .follow_handoff import scan_valid
-
-    if (not scan_valid(ranges, angle_min, angle_increment, range_min, range_max)
-            or len(base_in_scan) != 3
-            or not all(math.isfinite(v) for v in (*base_in_scan, radius))
-            or radius <= math.hypot(*base_in_scan[:2])
-            or abs(angle_increment) > 0.05
-            or abs(angle_increment)*(len(ranges)-1) < 2*math.pi-abs(angle_increment)-1e-6):
+    if not _rotation_scan_valid(ranges, angle_min, angle_increment, range_min, range_max,
+                                base_in_scan, radius):
         return False
     x, y = base_in_scan[:2]
     for i, value in enumerate(ranges):
@@ -270,6 +264,61 @@ def rotation_scan_clear(ranges, angle_min, angle_increment, range_min, range_max
         if value < range_min or min(value, range_max) <= boundary:
             return False
     return True
+
+
+def _rotation_scan_valid(ranges, angle_min, angle_increment, range_min, range_max,
+                         base_in_scan, radius):
+    from .follow_handoff import scan_valid
+
+    return (scan_valid(ranges, angle_min, angle_increment, range_min, range_max)
+            and len(base_in_scan) == 3
+            and all(math.isfinite(v) for v in (*base_in_scan, radius))
+            and radius > math.hypot(*base_in_scan[:2])
+            and abs(angle_increment) <= 0.05
+            and abs(angle_increment)*(len(ranges)-1) >= 2*math.pi-abs(angle_increment)-1e-6)
+
+
+def rotation_escape_ok(ranges, angle_min, angle_increment, range_min, range_max,
+                       base_in_scan, radius, front_obstacle, min_front, max_distance=0.5,
+                       step=0.05, ahead_tolerance=0.15):
+    """Allow a bounded forward escape only if it would clear the rotation disk.
+
+    The disk of `radius` around base_link must be blocked now, and translating
+    base_link straight forward by some d <= max_distance must leave every current
+    return outside the disk (e.g. the cart sits at a slight angle beside a shelf
+    that diverges ahead). Blockers more than ahead_tolerance ahead of base_link,
+    or that forward travel cannot clear, fail. base_in_scan is the base pose in laser coordinates. Forward
+    collision safety stays with the front stop and the downstream swept guard.
+    """
+    if (not _rotation_scan_valid(ranges, angle_min, angle_increment, range_min, range_max,
+                                 base_in_scan, radius)
+            or not math.isfinite(front_obstacle) or not math.isfinite(min_front)
+            or front_obstacle <= min_front
+            or not math.isfinite(max_distance) or max_distance <= 0 or step <= 0):
+        return False
+    x, y, yaw = base_in_scan
+    c0, s0 = math.cos(yaw), math.sin(yaw)
+    points = []
+    for i, value in enumerate(ranges):
+        if value < range_min:
+            # Subminimum returns cannot prove free space.
+            return False
+        if not math.isfinite(value) or value >= range_max:
+            continue
+        angle = angle_min+i*angle_increment
+        dx, dy = value*math.cos(angle)-x, value*math.sin(angle)-y
+        points.append((c0*dx+s0*dy, -s0*dx+c0*dy))
+    inside = [(px, py) for px, py in points if math.hypot(px, py) <= radius]
+    # Escape only from side/rear blockers: anything inside the disk more than
+    # ahead_tolerance ahead of base_link is one that forward travel approaches.
+    if not inside or any(px > ahead_tolerance for px, _ in inside):
+        return False
+    distance = step
+    while distance <= max_distance+1e-9:
+        if all(math.hypot(px-distance, py) > radius for px, py in points):
+            return True
+        distance += step
+    return False
 
 
 class NavigationGuard:
